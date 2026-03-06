@@ -19,6 +19,14 @@ import time
 import sys
 from typing import Optional, Tuple, List
 
+try:
+    from ble_battery import read_razer_battery_ble, HAS_COREBLUETOOTH
+except ImportError:
+    HAS_COREBLUETOOTH = False
+
+    def read_razer_battery_ble(**kwargs):
+        return None
+
 # Constants
 USB_VENDOR_ID_RAZER = 0x1532
 BT_VENDOR_ID_RAZER = 0x068e
@@ -425,14 +433,40 @@ class RazerMouse:
     # --- Battery ---
 
     def get_battery(self) -> Optional[Tuple[int, bool]]:
-        """Get battery level (0-100) and charging status."""
+        """Get battery level (0-100) and charging status.
+
+        Tries USB HID feature report first. If that fails and the device
+        is connected via Bluetooth, falls back to BLE Battery Service.
+        """
         request = self._create_report(CMD_CLASS_MISC, CMD_GET_BATTERY, 0x02)
         response = self._send_command(request)
         if response and response[0] == STATUS_SUCCESS and len(response) >= 10:
             charging = response[8] == 1
             level = int((response[9] / 255.0) * 100)
             return (level, charging)
+
+        # BLE fallback for Bluetooth devices
+        if self.vendor_id == BT_VENDOR_ID_RAZER:
+            self._dbg("USB battery read failed, trying BLE Battery Service fallback")
+            ble_level = self.get_battery_ble()
+            if ble_level is not None:
+                return (ble_level, False)  # BLE Battery Service doesn't report charging
+
         return None
+
+    def get_battery_ble(self) -> Optional[int]:
+        """Get battery level via BLE Battery Service (0x180F).
+
+        Uses CoreBluetooth to connect to the paired Razer device and read
+        the standard Battery Level characteristic. Only works on macOS with
+        pyobjc-framework-CoreBluetooth installed.
+
+        Returns battery percentage (0-100) or None.
+        """
+        level = read_razer_battery_ble(timeout_s=5.0, debug=self.debug_hid)
+        if level is not None:
+            self._dbg(f"BLE battery level: {level}%")
+        return level
 
     def sniff_bt_dpi_values(self, timeout_s: float = 8.0) -> List[int]:
         """Collect unique DPI values seen in passive BT input reports."""
@@ -591,6 +625,8 @@ Note: USB/dongle is most reliable. Bluetooth HID support is experimental.
                         help='Minimal output')
     parser.add_argument('--debug-hid', action='store_true',
                         help='Enable verbose HID transport debug output')
+    parser.add_argument('--battery-ble', action='store_true',
+                        help='Read battery level via BLE Battery Service (macOS only)')
     parser.add_argument('--sniff-dpi', nargs='?', const=8.0, type=float, metavar='SECONDS',
                         help='Bluetooth: sniff passive DPI reports for N seconds (default: 8)')
 
@@ -666,6 +702,19 @@ Note: USB/dongle is most reliable. Bluetooth HID support is experimental.
         else:
             print("  Failed!")
             return 1
+
+    if args.battery_ble:
+        if not HAS_COREBLUETOOTH:
+            print("\n--battery-ble requires pyobjc-framework-CoreBluetooth.")
+            print("Install with: pip install pyobjc-framework-CoreBluetooth")
+            return 1
+        print("\nReading battery via BLE Battery Service...")
+        level = mouse.get_battery_ble()
+        if level is not None:
+            print(f"  Battery: {level}%")
+        else:
+            print("  Could not read battery via BLE.")
+            print("  Make sure the mouse is connected via Bluetooth.")
 
     if args.sniff_dpi is not None:
         if mouse.vendor_id != BT_VENDOR_ID_RAZER:

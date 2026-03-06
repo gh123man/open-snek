@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developer.nordicsemi.com)",
+      "WebFetch(domain:docs.nordicsemi.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:goodix-ble-wiki-en.readthedocs.io)",
+      "WebFetch(domain:mysupport.razer.com)",
+      "WebFetch(domain:www.silabs.com)",
+      "WebFetch(domain:hackaday.io)",
+      "WebFetch(domain:affix.sourceforge.net)",
+      "WebFetch(domain:docs.kernel.org)",
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(ioreg:*)"
+    ]
+  }
+}

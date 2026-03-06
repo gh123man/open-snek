@@ -10,6 +10,7 @@ This document describes the USB HID protocol used by Razer mice, based on revers
 - [Implemented Commands](#implemented-commands)
 - [Unimplemented Commands](#unimplemented-commands)
 - [Device-Specific Notes](#device-specific-notes)
+- [BLE Protocol](#ble-bluetooth-low-energy-protocol)
 - [References](#references)
 
 ---
@@ -340,6 +341,105 @@ Effects:
 
 ---
 
+## BLE (Bluetooth Low Energy) Protocol
+
+The standard 90-byte USB HID Feature Report protocol does **NOT** work over BLE. Testing with the Basilisk V3 X HyperSpeed (BT PID `0x00BA`) on macOS revealed a completely different transport.
+
+### BLE HID Report Descriptor
+
+The BLE HID descriptor contains **only Input reports** — zero Feature or Output reports. This means the USB feature report protocol cannot be used over BLE.
+
+### GATT Services Discovered
+
+Three services are present on the Basilisk V3 X HyperSpeed over BLE:
+
+| Service | UUID | Purpose |
+|---------|------|---------|
+| Battery Service | `0x180F` | Standard battery level (0-100%) |
+| HID Service | `0x1812` | Mouse input reports (movement, buttons, DPI status) |
+| Vendor Service | `52401523-F97C-7F90-0E7F-6C6F4E36DB1C` | Razer vendor-specific (lighting, config?) |
+
+### Battery Service (0x180F) — Working
+
+The standard BLE Battery Service provides battery level readings:
+
+```
+Service:        0x180F (Battery Service)
+Characteristic: 0x2A19 (Battery Level)
+  Properties:   Read, Notify
+  Value:        uint8 (0-100 percentage)
+```
+
+This is the most reliable way to read battery on BLE-connected Razer devices. It does not require the 90-byte Razer protocol and works directly via GATT.
+
+**Limitation**: No charging status is available — only the level percentage.
+
+### Passive HID Input Reports — Working (Read-Only)
+
+DPI status can be read passively from HID input reports:
+
+```
+Report ID: 0x05
+Format:    05 05 02 XX XX YY YY 00 00
+  Byte 0:    Report ID (0x05)
+  Byte 1:    Length/type (0x05)
+  Byte 2:    Subtype (0x02 = DPI status)
+  Bytes 3-4: DPI X (big-endian)
+  Bytes 5-6: DPI Y (big-endian)
+  Bytes 7-8: Reserved (0x00)
+```
+
+These reports are emitted when DPI changes (e.g., DPI button press). They can be read via `hidapi` on the BLE HID device path.
+
+### Vendor GATT Service — Partially Explored
+
+```
+Service:        52401523-F97C-7F90-0E7F-6C6F4E36DB1C
+Characteristics:
+  Write:        52401524-F97C-7F90-0E7F-6C6F4E36DB1C (write-without-response)
+  Notify 1:     52401525-F97C-7F90-0E7F-6C6F4E36DB1C (notify)
+  Notify 2:     52401526-F97C-7F90-0E7F-6C6F4E36DB1C (notify)
+```
+
+This vendor service has been confirmed working for **lighting control on Razer keyboards** (BlackWidow V3 Mini uses the same service UUID). On mice, writes are accepted but DPI changes have not been achieved — likely requires an authentication handshake or different command format.
+
+**Prior art**: The [razer-macos](https://github.com/1kc/razer-macos) project and community BlackWidow V3 Mini BLE tools use this same vendor service for keyboard lighting over BLE.
+
+### macOS BLE Discovery
+
+macOS hides paired BLE HID devices from normal BLE scans (`CBCentralManager.scanForPeripherals`). To find them, use:
+
+```objc
+// Objective-C / CoreBluetooth
+[centralManager retrieveConnectedPeripheralsWithServices:@[batteryServiceUUID]];
+```
+
+```python
+# Python via pyobjc
+battery_uuid = CBUUID.UUIDWithString_("180F")
+peripherals = manager.retrieveConnectedPeripheralsWithServices_([battery_uuid])
+```
+
+### What's Not Yet Possible Over BLE
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| DPI write | Not working | Vendor GATT service accepts writes but no effect on DPI |
+| DPI stages write | Not working | Same issue |
+| Poll rate read/write | Not working | No known BLE path |
+| Button remapping | Not working | No known BLE path |
+| RGB lighting (mice) | Unknown | Vendor service may work (works for keyboards) |
+
+### Future Work
+
+To enable DPI/config writes over BLE:
+1. Set up Windows VM with Razer Synapse and a BLE sniffer (e.g., nRF Sniffer)
+2. Capture the Synapse BLE communication when changing DPI
+3. Look for authentication handshake on the vendor GATT service
+4. Document the command format for mice vs keyboards
+
+---
+
 ## Reverse Engineering New Commands
 
 To discover undocumented commands:
@@ -365,4 +465,5 @@ See: [OpenRazer Reverse Engineering Guide](https://github.com/openrazer/openraze
 
 ## Changelog
 
+- **2026-03-06**: Added BLE protocol section (Battery Service, vendor GATT service, passive HID reports)
 - **2024-03-05**: Initial documentation based on OpenRazer and testing with Basilisk V3 X HyperSpeed
