@@ -39,3 +39,7 @@ Thumbs.db
 
 # Project specific
 *.log
+*.bin
+*.apmx64
+*.PNF
+*.exe

@@ -570,25 +570,156 @@ peripherals = manager.retrieveConnectedPeripheralsWithServices_([battery_uuid])
 | Poll rate | Not possible on macOS | No known BLE path |
 | Button remapping | Not possible on macOS | No known BLE path |
 
-### Future Investigation
+---
 
-1. Test on Linux where BLE HID service (0x1812) may be accessible directly
-2. Capture Razer Synapse BLE traffic on Windows to see if DPI uses a different transport
-3. Investigate Android Razer app BLE traffic (Frida/jadx decompilation)
-4. Test whether firmware updates have changed GATT behavior
+## Windows BLE Driver Architecture
+
+Analysis of the Razer driver stack on Windows 11 reveals how Synapse communicates
+with the mouse over BLE. This is critical for understanding the config write path.
+
+### GATT Services (from Windows device enumeration)
+
+| Service | UUID | GATT Handle | Windows Driver |
+|---------|------|-------------|----------------|
+| Generic Access | `0x1800` | 1 | UmPass |
+| Generic Attribute | `0x1801` | 10 | UmPass |
+| Device Information | `0x180A` | 14 | UmPass |
+| Battery Service | `0x180F` | 19 | UmPass |
+| **HID Service** | **`0x1812`** | **23** | **mshidumdf** (+ Razer filter) |
+| Vendor Service | `52401523...` | 59 | UmPass |
+
+The HID service (handle 23) is the only one with a specialized driver stack.
+All other services use the generic `UmPass` (User-Mode Pass-through) driver.
+
+### Driver Stack
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Razer Synapse (usermode)                            │
+│  Communicates via IOCTLs to RZCONTROL device         │
+├──────────────────────────────────────────────────────┤
+│  RzCommon.sys                                        │
+│  Manages RZCONTROL virtual bus device                │
+│  Custom class GUID: {1750F915-5639-497C-...}         │
+├──────────────────────────────────────────────────────┤
+│  RzDev_00ba.sys  (UPPER filter on Col01 mouse)       │
+│  Creates RZCONTROL child device                      │
+│  Sets: ControlDevice=1, DeviceType=1                 │
+├──────────────────────────────────────────────────────┤
+│  HID Collection 01 (Mouse)                           │
+│  + Col02 (Pointer), Col03-05, Col06 (Keyboard)       │
+├──────────────────────────────────────────────────────┤
+│  mshidumdf  (Microsoft HID minidriver for UMDF)      │
+├──────────────────────────────────────────────────────┤
+│  RzDev_00ba.sys  (LOWER filter on BLE HID parent)    │
+│  Flags: DkmKeyDevice, DkmMouseDevice, MouseExDevice  │
+├──────────────────────────────────────────────────────┤
+│  WudfRd + HidOverGatt  (Microsoft BLE-to-HID)        │
+│  Translates HID reports to/from GATT characteristics  │
+├──────────────────────────────────────────────────────┤
+│  BthLEEnum  (Windows BLE enumerator)                 │
+│  GATT transport layer                                │
+└──────────────────────────────────────────────────────┘
+```
+
+### Key Observations
+
+1. **`RzDev_00ba.sys` sits at TWO levels**: lower filter on the BLE HID parent device
+   AND upper filter on HID Collection 01 (mouse) and Collection 06 (keyboard).
+
+2. **RZCONTROL virtual bus**: The upper filter creates a child device on the RZCONTROL
+   bus (`RZCONTROL\VID_068E&PID_00BA&MI_00`). Synapse communicates through this device
+   via IOCTLs, which flow down through `RzDev_00ba` to `HidOverGatt` to GATT writes.
+
+3. **HidOverGatt**: Microsoft's WUDF driver that translates HID Feature/Output reports
+   into GATT write operations on the HID service's Report characteristics. This is how
+   Razer's 90-byte protocol reaches the mouse over BLE.
+
+4. **Six HID Collections** (from the BLE HID Report Map):
+   - Col01: Mouse (Generic Desktop / Mouse)
+   - Col02: Pointer (Generic Desktop / Pointer)
+   - Col03: Consumer Control
+   - Col04: System Control
+   - Col05: Vendor (Generic Desktop / Undefined) — Report ID 4
+   - Col06: Keyboard (Generic Desktop / Keyboard)
+
+5. **The INF files** (`razer_bt_dump/oem64.inf`, `oem66.inf`) contain the full
+   driver configuration. `oem64.inf` installs the lower filter with `MouseEx_ReportId=1`.
+
+### BLE HID Report Descriptor (254 bytes)
+
+Extracted via IOKit on macOS. Six report IDs, **all Input-only**:
+
+| Report ID | Collection | Size | Type |
+|-----------|-----------|------|------|
+| 1 | Mouse (buttons + X/Y/wheel) | 9 bytes | Input |
+| 2 | Consumer Control | 7 bytes | Input |
+| 3 | System Control | 8 bytes | Input |
+| 4 | Vendor (Generic Desktop, Usage 0x00) | 8 bytes | Input |
+| 5 | Vendor (Generic Desktop, Usage 0x00) | 8 bytes | Input |
+| 6 | Keyboard | 7 bytes | Input |
+
+**Critical**: The descriptor declares `MaxFeatureReportSize=1` and `MaxOutputReportSize=1`.
+There are **zero Feature Reports and zero Output Reports** in the BLE HID descriptor.
+
+This means the HID Report Map visible to the OS does NOT include Razer's 90-byte
+protocol. On Windows, `HidOverGatt` + `RzDev_00ba` likely inject or intercept
+reports at the driver level, writing directly to GATT characteristics that have
+Feature-type Report Reference descriptors — even though the Report Map doesn't
+advertise them.
+
+### What This Means
+
+The 90-byte Razer protocol almost certainly travels over BLE through **GATT
+characteristics within the HID service (0x1812)** that have Feature-type Report
+Reference descriptors. These characteristics exist at the GATT level but are NOT
+described in the HID Report Map. The Razer Windows driver (`RzDev_00ba.sys`) knows
+about them because it's purpose-built for this device — it doesn't rely on the
+Report Map to discover writable characteristics.
 
 ---
 
-## Reverse Engineering New Commands
+## What We Need To Uncover Next
 
-To discover undocumented commands:
+### 1. Enumerate HID Service GATT Characteristics (Linux/Steam Deck)
 
-1. **Setup**: Windows VM with Razer Synapse, Wireshark with USBPcap
-2. **Capture**: Filter by device VID/PID (`usb.idVendor == 0x1532`)
-3. **Analyze**: Look for 90-byte feature reports
-4. **Decode**: Map bytes to the report structure above
+**This is the critical next step.** We need to see the actual GATT characteristics
+inside the HID service (0x1812) — specifically looking for:
 
-See: [OpenRazer Reverse Engineering Guide](https://github.com/openrazer/openrazer/wiki/Reverse-Engineering-USB-Protocol)
+- Report characteristics (`0x2A4D`) with **Feature-type** (0x03) or **Output-type**
+  (0x02) Report Reference descriptors (`0x2908`)
+- Their GATT handles and properties (read/write/notify)
+
+**Why Linux**: macOS hides the HID service entirely from CoreBluetooth. Windows
+restricts raw GATT access when a HID driver is loaded. Linux (BlueZ) provides
+unrestricted access to all GATT characteristics.
+
+**Tool**: `enumerate_hid_gatt_linux.py` — designed to run on a Steam Deck or any
+Linux machine with BlueZ and Python 3. It discovers Razer devices, enumerates all
+characteristics in the HID service, reads Report Reference descriptors, and identifies
+Feature/Output reports.
+
+**Expected outcome**: We should find 1-2 Report characteristics with Feature-type
+references. Their GATT handles are what `HidOverGatt` writes the 90-byte protocol to.
+
+### 2. Test 90-byte Protocol on Discovered Feature Reports
+
+Once we know the GATT handles of Feature Report characteristics:
+
+1. Write a 90-byte Razer "get serial" command to the Feature Report characteristic
+2. Read back from the same characteristic after ~100ms
+3. If we get a valid response (status 0x02, matching TxID), the protocol works
+
+### 3. Verify DPI Write Over BLE
+
+If step 2 succeeds, send a DPI set command and verify the mouse changes DPI.
+This would confirm the full write path works without any OS-specific driver.
+
+### 4. Port Back to macOS (If Possible)
+
+If the GATT handles are known, we might be able to write to them from macOS using
+IOKit at a lower level than CoreBluetooth — potentially via `IOBluetoothDevice`
+or by opening the GATT service's IOService entry directly. This is speculative.
 
 ---
 
@@ -604,6 +735,12 @@ See: [OpenRazer Reverse Engineering Guide](https://github.com/openrazer/openraze
 
 ## Changelog
 
+- **2026-03-06**: Added Windows BLE driver architecture:
+  - Documented full driver stack (RzDev_00ba.sys filter driver, RZCONTROL virtual bus, HidOverGatt)
+  - Mapped all 6 GATT services with handles from Windows device enumeration
+  - Analyzed BLE HID Report Descriptor (254 bytes, 6 report IDs, all Input-only)
+  - Identified that Razer protocol uses GATT Feature Report characteristics not advertised in Report Map
+  - Added concrete "What We Need To Uncover Next" section with actionable steps
 - **2026-03-06**: Comprehensive BLE vendor GATT protocol documentation:
   - Confirmed 4 working modes (10/03 lighting, 10/04 dangerous, 10/05 unknown, 10/06 unknown)
   - Documented session state/recovery behavior (BT power cycle required)

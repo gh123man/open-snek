@@ -1,119 +1,85 @@
 # Claude Code Instructions
 
-This file provides context and instructions for Claude Code when working on this project.
-
 ## Project Overview
 
-This is a **Razer Mouse macOS Configuration Tool** - a Python-based utility that communicates with Razer mice via USB HID to configure settings without Razer Synapse.
+**open-snek** — a Python tool to configure Razer mice without Razer Synapse. Works over USB HID (full control) and BLE (partial, actively being reverse engineered).
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `razer_poc.py` | Main CLI tool for configuring mice |
-| `explore_ble.py` | BLE exploration script (experimental) |
-| `PROTOCOL.md` | **USB protocol documentation - ALWAYS REFERENCE THIS** |
-| `README.md` | User-facing documentation |
-| `requirements.txt` | Python dependencies |
+| `razer_poc.py` | Main CLI tool — DPI, poll rate, battery, stages |
+| `ble_battery.py` | BLE battery reading via CoreBluetooth (macOS) |
+| `explore_ble.py` | BLE GATT service explorer (macOS) |
+| `enumerate_hid_gatt.py` | HID service GATT enumeration (Windows/bleak) |
+| `enumerate_hid_gatt_linux.py` | HID service GATT enumeration (Linux/Steam Deck) |
+| `collect_razer_bt.ps1` | Windows driver/device data collector |
+| `razer_bt_dump/` | Collected Windows driver INFs, handles, registry dumps |
+| `PROTOCOL.md` | **Complete protocol documentation — ALWAYS REFERENCE THIS** |
 
 ## Important: Protocol Documentation
 
-**ALWAYS read `PROTOCOL.md` before making protocol-related changes.**
-
-This file documents:
-- The 90-byte USB HID report structure
-- All known command classes and command IDs
-- Device-specific transaction IDs
-- What IS and IS NOT implemented
-- References to OpenRazer for deeper research
-
-### When to Update PROTOCOL.md
-
-Update the protocol documentation when:
-1. **New commands are discovered** via USB capture or testing
-2. **New devices are tested** with different transaction IDs or behaviors
-3. **Bugs are found** in the documented protocol
-4. **OpenRazer adds new features** that we should track
+**ALWAYS read `PROTOCOL.md` before making protocol-related changes.** It documents:
+- 90-byte USB HID report structure and all known commands
+- BLE vendor GATT service protocol (lighting)
+- Windows BLE driver architecture (RzDev_00ba.sys, RZCONTROL, HidOverGatt)
+- BLE HID Report Descriptor analysis
+- What works, what doesn't, and what to investigate next
 
 ## Architecture
 
+### USB Path (working)
 ```
-┌─────────────────┐
-│  razer_poc.py   │  CLI interface
-├─────────────────┤
-│   RazerMouse    │  Device abstraction class
-│   - get_dpi()   │
-│   - set_dpi()   │
-│   - etc.        │
-├─────────────────┤
-│  _send_command  │  USB HID communication via hidapi
-│  _create_report │  90-byte report construction
-└─────────────────┘
+razer_poc.py → RazerMouse._send_command() → hidapi → USB HID Feature Report (90 bytes)
 ```
 
-## Current Capabilities
+### BLE Path (partial)
+```
+Battery:  ble_battery.py → CoreBluetooth → GATT Battery Service (0x180F)
+DPI read: razer_poc.py --sniff-dpi → hidapi → passive HID Input Report (ID 0x05)
+Lighting: explore_ble.py → CoreBluetooth → Vendor GATT (52401523...) → 8+10 byte writes
+Config:   ??? → needs GATT Feature Report characteristics in HID service (0x1812)
+```
 
-### Implemented ✅
-- DPI read/write
-- DPI stages read/write (1-5 presets)
-- Poll rate read/write (125/500/1000 Hz)
-- Battery level read
-- Device enumeration
+### Windows Driver Stack (how Synapse does it)
+```
+Synapse → RZCONTROL IOCTL → RzDev_00ba.sys → HidOverGatt → GATT write to HID service
+```
 
-### Not Implemented ❌
-- Button remapping (protocol partially known, needs USB capture)
-- RGB lighting control (documented in OpenRazer)
-- Profile/onboard memory management (undocumented)
-- Macro support (undocumented)
+## Current State
+
+### Working
+- USB: DPI read/write, DPI stages, poll rate, battery, device enumeration
+- BLE: Battery read, DPI read (passive), lighting control
+
+### Not Working (yet)
+- BLE: DPI write, poll rate, button remapping — requires Feature Report GATT handles
+- USB: Button remapping, RGB (protocol known from OpenRazer, not implemented)
+
+### Active Investigation
+The BLE HID Report Descriptor has **zero Feature/Output reports**. The Razer Windows
+driver writes to GATT characteristics that have Feature-type Report Reference descriptors
+but are NOT in the Report Map. We need to enumerate these from Linux (macOS hides
+the HID service). See PROTOCOL.md "What We Need To Uncover Next".
+
+## Device IDs
+
+| Connection | VID | PID | Transaction ID |
+|------------|-----|-----|----------------|
+| USB/Dongle | `0x1532` | `0x00B9` | `0x1F` |
+| Bluetooth | `0x068E` | `0x00BA` | `0x1F` |
 
 ## Development Guidelines
 
-### Adding New Commands
+1. **Read `PROTOCOL.md` first** before any protocol changes
+2. **Document before implementing** — add commands to PROTOCOL.md before coding
+3. **Test with real hardware** — protocol changes can brick device state (BLE power cycle recovery)
+4. USB Feature Report path: `hidapi.send_feature_report()` / `get_feature_report()`
+5. BLE vendor GATT path: CoreBluetooth write-with-response to `...1524`, notify on `...1525`
 
-1. **Research**: Check `PROTOCOL.md` and OpenRazer source
-2. **Document**: Add command to `PROTOCOL.md` BEFORE implementing
-3. **Implement**: Add method to `RazerMouse` class
-4. **Test**: Verify with actual hardware
-5. **Update docs**: Mark as implemented in `PROTOCOL.md`
+## References
 
-### Testing
-
-```bash
-cd /Users/brian/dev/razer-macos-poc
-source venv/bin/activate
-python razer_poc.py           # Show current settings
-python razer_poc.py --help    # Show all options
-```
-
-### USB Capture for Reverse Engineering
-
-To discover new commands:
-1. Set up Windows VM with Razer Synapse
-2. Use Wireshark with USBPcap
-3. Capture while using Synapse features
-4. Analyze 90-byte feature reports
-5. Document findings in `PROTOCOL.md`
-
-## Key Technical Details
-
-### Transaction IDs
-- Basilisk V3 X HyperSpeed: `0x1F`
-- Most modern mice: `0x1F` or `0x3F`
-- Older devices: `0xFF`
-
-### Bluetooth Limitation
-Bluetooth HID does NOT support the configuration protocol. USB dongle or cable required.
-
-### Storage Modes
-- `NOSTORE (0x00)`: Apply immediately, don't persist
-- `VARSTORE (0x01)`: Apply and save to device memory
-
-## Related Resources
-
-- [OpenRazer](https://github.com/openrazer/openrazer) - Linux driver, protocol reference
-- [OpenRazer Wiki](https://github.com/openrazer/openrazer/wiki/Reverse-Engineering-USB-Protocol)
-- [razer-macos](https://github.com/1kc/razer-macos) - macOS RGB tool using IOKit
-
-## Contact
-
-This project was created with assistance from Claude (Anthropic). The protocol documentation is based on OpenRazer's reverse engineering work.
+- [OpenRazer](https://github.com/openrazer/openrazer) — Linux driver, protocol reference
+- [OpenRazer Protocol Wiki](https://github.com/openrazer/openrazer/wiki/Reverse-Engineering-USB-Protocol)
+- [razer-macos](https://github.com/1kc/razer-macos) — macOS IOKit reference
+- [RazerBlackWidowV3MiniBluetoothControllerApp](https://github.com/JiqiSun/RazerBlackWidowV3MiniBluetoothControllerApp) — BLE vendor GATT reference

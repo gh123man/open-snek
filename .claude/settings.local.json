@@ -14,7 +14,19 @@
       "WebFetch(domain:docs.kernel.org)",
       "Bash(python3:*)",
       "Bash(source:*)",
-      "Bash(ioreg:*)"
+      "Bash(ioreg:*)",
+      "Bash(git commit:*)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pip3 install:*)",
+      "Bash(pip3 list:*)",
+      "Bash(/tmp/ble_dpi_v6.py:*)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(system_profiler SPBluetoothDataType:*)",
+      "Bash(sudo python3:*)"
     ]
   }
 }
