@@ -43,3 +43,4 @@ Thumbs.db
 *.apmx64
 *.PNF
 *.exe
+gatt_enumeration_results.json

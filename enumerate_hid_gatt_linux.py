@@ -5,11 +5,21 @@ BLE HID GATT Enumerator for Razer Mouse - Linux
 Enumerates ALL GATT characteristics within the BLE HID service (0x1812)
 to find Feature/Output Report characteristics used for Razer's config protocol.
 
+IMPORTANT: BlueZ's HOGP plugin claims the HID service by default, hiding it
+from applications. Run with --disable-hogp to temporarily restart bluetoothd
+without the input plugin so the HID service is visible. The mouse will not
+work as a mouse during enumeration — normal bluetooth is restored after.
+
+Usage:
+  python3 enumerate_hid_gatt_linux.py --disable-hogp
+  python3 enumerate_hid_gatt_linux.py --disable-hogp CE:BF:9B:2A:EF:80
+  python3 enumerate_hid_gatt_linux.py --disable-hogp --clear-cache
+
 Setup (Ubuntu/Debian):
   sudo apt install python3 python3-venv bluez
   python3 -m venv ~/venv && source ~/venv/bin/activate
   pip install bleak
-  python3 enumerate_hid_gatt_linux.py
+  sudo python3 enumerate_hid_gatt_linux.py --disable-hogp
 
 Setup (Steam Deck / Arch):
   sudo steamos-readonly disable   # Steam Deck only
@@ -17,22 +27,15 @@ Setup (Steam Deck / Arch):
   sudo steamos-readonly enable    # Steam Deck only
   python3 -m venv ~/venv && source ~/venv/bin/activate
   pip install bleak
-  python3 enumerate_hid_gatt_linux.py
+  sudo python3 enumerate_hid_gatt_linux.py --disable-hogp
 
-If the mouse is already paired, the script will find it automatically.
-If not, pair it first: bluetoothctl -> scan on -> pair XX:XX -> trust XX:XX -> connect XX:XX
-
-Troubleshooting:
-  - "Permission denied": add your user to the bluetooth group:
-      sudo usermod -aG bluetooth $USER  (then log out/in)
-  - "org.bluez.Error.NotReady": bluetooth service not running:
-      sudo systemctl start bluetooth
-  - GATT cache stale: run with --clear-cache
+Pair first if needed: bluetoothctl -> scan on -> pair XX:XX -> trust XX:XX -> connect XX:XX
 """
 
 import asyncio
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -152,6 +155,95 @@ def check_bluetooth_service():
         sys.exit(1)
     except Exception as e:
         log(f"bluetoothctl check failed: {e}", "WARN")
+
+# ─── HOGP Plugin Management ──────────────────────────────────────────────────
+
+def find_bluetoothd():
+    """Find the bluetoothd binary path."""
+    for path in ["/usr/lib/bluetooth/bluetoothd", "/usr/libexec/bluetooth/bluetoothd"]:
+        if os.path.exists(path):
+            return path
+    # Try which
+    try:
+        result = subprocess.run(["which", "bluetoothd"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def disable_hogp():
+    """Stop normal bluetoothd and restart without the input (HOGP) plugin.
+    Returns the PID of the custom bluetoothd process, or None on failure."""
+    bluetoothd = find_bluetoothd()
+    if not bluetoothd:
+        log("Could not find bluetoothd binary!", "ERROR")
+        print("  Searched: /usr/lib/bluetooth/bluetoothd, /usr/libexec/bluetooth/bluetoothd")
+        return None
+
+    log(f"Found bluetoothd at: {bluetoothd}")
+
+    # Check we have root
+    if os.geteuid() != 0:
+        log("--disable-hogp requires root. Re-run with sudo.", "ERROR")
+        print(f"  sudo {sys.executable} {' '.join(sys.argv)}")
+        sys.exit(1)
+
+    # Stop the normal bluetooth service
+    log("Stopping bluetooth service...")
+    subprocess.run(["systemctl", "stop", "bluetooth"], timeout=10)
+    time.sleep(1)
+
+    # Kill any remaining bluetoothd
+    subprocess.run(["killall", "bluetoothd"], capture_output=True, timeout=5)
+    time.sleep(1)
+
+    # Start bluetoothd without the input plugin (which handles HOGP)
+    log("Starting bluetoothd with --noplugin=input (HOGP disabled)...")
+    proc = subprocess.Popen(
+        [bluetoothd, "--noplugin=input", "--debug"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(3)  # Give it time to initialize
+
+    if proc.poll() is not None:
+        log("bluetoothd failed to start!", "ERROR")
+        restore_hogp(None)
+        return None
+
+    log(f"bluetoothd running (PID {proc.pid}) with HOGP disabled")
+
+    # Power on the adapter
+    time.sleep(1)
+    subprocess.run(["bluetoothctl", "power", "on"], capture_output=True, timeout=5)
+    time.sleep(1)
+
+    return proc
+
+
+def restore_hogp(proc):
+    """Kill the custom bluetoothd and restart the normal bluetooth service."""
+    log("Restoring normal bluetooth service...")
+
+    if proc and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    # Kill any remaining
+    subprocess.run(["killall", "bluetoothd"], capture_output=True, timeout=5)
+    time.sleep(1)
+
+    # Restart normal service
+    subprocess.run(["systemctl", "start", "bluetooth"], timeout=10)
+    time.sleep(2)
+
+    log("Normal bluetooth restored. Mouse should reconnect shortly.")
+
 
 # ─── Main Logic ──────────────────────────────────────────────────────────────
 
@@ -529,94 +621,136 @@ async def main():
     print("=" * 70)
     print()
 
-    # Check bluetooth
-    check_bluetooth_service()
+    args = sys.argv[1:]
+    flags = [a for a in args if a.startswith("--")]
+    positional = [a for a in args if not a.startswith("--")]
 
-    # Find device
-    address = None
+    use_hogp_disable = "--disable-hogp" in flags
+    use_clear_cache = "--clear-cache" in flags
 
-    # Check command-line argument first
-    if len(sys.argv) > 1:
-        address = sys.argv[1]
-        log(f"Using address from command line: {address}")
+    hogp_proc = None
+
+    if use_hogp_disable:
+        log("HOGP disable mode: will restart bluetoothd without input plugin")
+        log("Mouse will NOT work as a pointer during enumeration")
+        print()
+        hogp_proc = disable_hogp()
+        if not hogp_proc:
+            log("Failed to start bluetoothd without HOGP. Aborting.", "ERROR")
+            sys.exit(1)
     else:
-        address = await find_razer_device()
+        check_bluetooth_service()
 
-    if not address:
+    try:
+        # Find device
+        address = positional[0] if positional else None
+
+        if address:
+            log(f"Using address from command line: {address}")
+        else:
+            address = await find_razer_device()
+
+        if not address:
+            print()
+            log("Could not find Razer mouse!", "ERROR")
+            print()
+            print("Make sure the mouse is:")
+            print("  1. Powered on and in BT mode (not USB dongle mode)")
+            print("  2. Paired with this machine:")
+            print("     bluetoothctl")
+            print("     > scan on")
+            print("     > pair CE:BF:9B:2A:EF:80")
+            print("     > trust CE:BF:9B:2A:EF:80")
+            print("     > connect CE:BF:9B:2A:EF:80")
+            print()
+            print("Then re-run this script, or pass the address directly:")
+            print("  python3 enumerate_hid_gatt_linux.py CE:BF:9B:2A:EF:80")
+            if use_hogp_disable:
+                print()
+                print("TIP: With --disable-hogp, the device needs to reconnect.")
+                print("Try: bluetoothctl connect CE:BF:9B:2A:EF:80")
+            sys.exit(1)
+
         print()
-        log("Could not find Razer mouse!", "ERROR")
+
+        if use_clear_cache:
+            await clear_gatt_cache(address)
+
+        # If HOGP disabled, we may need to explicitly reconnect the device
+        if use_hogp_disable:
+            log("Attempting to connect device (HOGP disabled, may need explicit connect)...")
+            subprocess.run(
+                ["bluetoothctl", "connect", address],
+                capture_output=True, text=True, timeout=15
+            )
+            await asyncio.sleep(3)
+
+        # Enumerate
+        results = await enumerate_gatt(address)
+
+        # Save results
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), OUTPUT_FILE)
+        with open(out_path, "w") as f:
+            json.dump(results, f, indent=2)
         print()
-        print("Make sure the mouse is:")
-        print("  1. Powered on and in BT mode (not USB dongle mode)")
-        print("  2. Paired with this machine:")
-        print("     bluetoothctl")
-        print("     > scan on")
-        print("     > pair CE:BF:9B:2A:EF:80")
-        print("     > trust CE:BF:9B:2A:EF:80")
-        print("     > connect CE:BF:9B:2A:EF:80")
+        log(f"Results saved to {out_path}")
+
+        # Final summary
         print()
-        print("Then re-run this script, or pass the address directly:")
-        print("  python3 enumerate_hid_gatt_linux.py CE:BF:9B:2A:EF:80")
-        sys.exit(1)
+        print("=" * 70)
+        print("FINAL SUMMARY")
+        print("=" * 70)
+        n_svc = len(results["services"])
+        n_in = len(results["hid_reports"]["input"])
+        n_out = len(results["hid_reports"]["output"])
+        n_feat = len(results["hid_reports"]["feature"])
+        has_hid = any(s["uuid"] == HID_SERVICE for s in results["services"])
+        has_map = results["report_map"] is not None
 
-    print()
+        print(f"  Services discovered: {n_svc}")
+        print(f"  HID Service visible: {'YES' if has_hid else 'NO (still hidden!)'}")
+        print(f"  Report Map obtained: {'YES' if has_map else 'NO'}")
+        print(f"  Input Reports:       {n_in}")
+        print(f"  Output Reports:      {n_out}")
+        print(f"  Feature Reports:     {n_feat}")
 
-    # Optional: clear GATT cache for fresh discovery
-    if "--clear-cache" in sys.argv:
-        await clear_gatt_cache(address)
+        if n_feat > 0:
+            print()
+            print("  *** FEATURE REPORTS FOUND! ***")
+            print("  These are the BLE equivalent of USB Feature Reports.")
+            print("  Razer's 90-byte protocol likely goes through these.")
+        elif n_out > 0:
+            print()
+            print("  *** OUTPUT REPORTS FOUND! ***")
+            print("  Config commands may go through these.")
 
-    # Enumerate
-    results = await enumerate_gatt(address)
+        if not has_hid:
+            print()
+            if use_hogp_disable:
+                print("  WARNING: HID service STILL not visible even with HOGP disabled.")
+                print("  Try: --clear-cache to force fresh GATT discovery")
+                print("  Or:  bluetoothctl remove <address> then re-pair")
+            else:
+                print("  WARNING: HID service not visible (BlueZ HOGP plugin claims it).")
+                print()
+                print("  Re-run with --disable-hogp to temporarily disable the HOGP plugin:")
+                print(f"    sudo {sys.executable} {sys.argv[0]} --disable-hogp {address}")
+                print()
+                print("  This will restart bluetoothd without the input plugin.")
+                print("  The mouse won't work as a pointer during enumeration.")
+                print("  Normal bluetooth is restored automatically after.")
 
-    # Save results
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), OUTPUT_FILE)
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print()
-    log(f"Results saved to {out_path}")
+        tests_ok = [t for t in results["razer_test_results"] if t["write_ok"]]
+        if tests_ok:
+            print(f"\n  Razer commands accepted: {len(tests_ok)}/{len(results['razer_test_results'])}")
 
-    # Final summary
-    print()
-    print("=" * 70)
-    print("FINAL SUMMARY")
-    print("=" * 70)
-    n_svc = len(results["services"])
-    n_in = len(results["hid_reports"]["input"])
-    n_out = len(results["hid_reports"]["output"])
-    n_feat = len(results["hid_reports"]["feature"])
-    has_hid = any(s["uuid"] == HID_SERVICE for s in results["services"])
-    has_map = results["report_map"] is not None
-
-    print(f"  Services discovered: {n_svc}")
-    print(f"  HID Service visible: {'YES' if has_hid else 'NO (still hidden!)'}")
-    print(f"  Report Map obtained: {'YES' if has_map else 'NO'}")
-    print(f"  Input Reports:       {n_in}")
-    print(f"  Output Reports:      {n_out}")
-    print(f"  Feature Reports:     {n_feat}")
-
-    if n_feat > 0:
         print()
-        print("  *** FEATURE REPORTS FOUND! ***")
-        print("  These are the BLE equivalent of USB Feature Reports.")
-        print("  Razer's 90-byte protocol likely goes through these.")
-    elif n_out > 0:
-        print()
-        print("  *** OUTPUT REPORTS FOUND! ***")
-        print("  Config commands may go through these.")
+        print(f"Full results: {out_path}")
+        print("Copy this file back for analysis.")
 
-    if not has_hid:
-        print()
-        print("  WARNING: HID service was NOT visible.")
-        print("  Try: python3 enumerate_hid_gatt_linux.py --clear-cache")
-        print("  Or disconnect/re-pair the mouse.")
-
-    tests_ok = [t for t in results["razer_test_results"] if t["write_ok"]]
-    if tests_ok:
-        print(f"\n  Razer commands accepted: {len(tests_ok)}/{len(results['razer_test_results'])}")
-
-    print()
-    print(f"Full results: {out_path}")
-    print("Copy this file back for analysis.")
+    finally:
+        if hogp_proc:
+            restore_hogp(hogp_proc)
 
 
 if __name__ == "__main__":
