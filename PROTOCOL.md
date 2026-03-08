@@ -397,7 +397,10 @@ These reports are emitted when DPI changes (e.g., DPI button press). They can be
 Service:        52401523-F97C-7F90-0E7F-6C6F4E36DB1C
 Characteristics:
   Write:        52401524-F97C-7F90-0E7F-6C6F4E36DB1C (write-with-response only)
+    GATT handle: 0x3D (61 decimal)
   Notify 1:     52401525-F97C-7F90-0E7F-6C6F4E36DB1C (read, notify)
+    GATT handle: 0x3F (63 decimal)
+    CCCD handle: 0x40 (64 decimal)
   Notify 2:     52401526-F97C-7F90-0E7F-6C6F4E36DB1C (read, notify)
 ```
 
@@ -409,7 +412,28 @@ This same vendor service UUID appears on both Razer keyboards (e.g., BlackWidow 
 and mice (e.g., Basilisk V3 X HyperSpeed, Basilisk X HyperSpeed). The only known
 third-party implementation is [JiqiSun/RazerBlackWidowV3MiniBluetoothControllerApp](https://github.com/JiqiSun/RazerBlackWidowV3MiniBluetoothControllerApp) (Swift/macOS, lighting only).
 
+#### Synapse Connection Handshake (from Windows BLE GATT capture)
+
+When Synapse connects, it follows this sequence:
+
+1. **Subscribe to notifications**: Write 0x0100 to CCCD at handle 0x40 (enables notifications on 0x3F)
+2. **Get Serial**: First command after subscribe — reads device serial number
+3. **Config queries**: DPI, poll rate, battery, etc. — all via the same handle pair
+
+Total traffic observed: 217 write requests (→ 0x3D), 242 notifications (← 0x3F).
+The ~1.11:1 ratio suggests most commands get exactly one response; a few commands
+(like staged DPI queries) generate multiple notification events.
+
+**All writes are ATT Write Requests (0x12)** — no Write Commands (0x52). Every
+write expects and waits for a response. There is no fragmentation across multiple
+ATT PDUs observed in the capture.
+
 #### Command Protocol
+
+> **Updated 2026-03-07** based on Windows BLE GATT capture of Synapse traffic.
+> The two-write pair format below was discovered through earlier macOS testing and applies
+> specifically to lighting control. Synapse's actual config path (DPI, serial, poll rate)
+> uses a different, not yet fully decoded write format — see "Synapse Write Format" below.
 
 Commands use a **two-write pair**: an 8-byte init followed by a 10-byte payload.
 Both writes go to the write characteristic (`...1524`) using write-with-response.
@@ -465,6 +489,32 @@ Session token: Changes on each BT reconnect.
 **Notify2 read value** (8 bytes): `aa ef 6d 16 2c 27 4f 48`
 (Purpose unknown, possibly device identifier; constant across sessions)
 
+#### Synapse Write Format (from BLE GATT capture — partially decoded)
+
+The Windows BLE GATT capture shows Synapse writes to handle 0x3D (the vendor GATT
+write characteristic) for ALL config operations including DPI, serial, battery, and
+poll rate — **not just lighting**. This means the vendor GATT service is the primary
+BLE configuration path, overturning the earlier "lighting-only" conclusion.
+
+**Key confirmed facts:**
+- Synapse uses a **single ATT Write Request (0x12)** per command — no two-write pair,
+  no fragmentation via Write Commands (0x52)
+- Writes are ~16-20 bytes (not the full 90-byte USB report)
+- Responses come on handle 0x3F and include status byte `0x02` (success) plus data
+- DPI data in responses uses the **same format as USB**: big-endian uint16
+  - Example: `0x079E 0x079E` = 1950 DPI X / 1950 DPI Y
+- Serial number in responses: ASCII, 22 bytes, e.g. `632602H30204897`
+- TxnID is **implicit** via GATT request-response ordering — no TxnID byte in payload
+
+**What's not yet decoded:** The exact byte layout of writes to 0x3D. The 8-byte init
+used for lighting (byte 0 = 0x13) may be a subset of a larger command format, or
+Synapse may use a completely different framing. A Wireshark decode of individual write
+payloads is needed to determine the exact structure.
+
+**Why earlier DPI testing failed:** The 8+10 byte two-write pair format (mode `10 03`)
+appears to be lighting-specific. Synapse's config commands likely use a different
+format or mode that wasn't discovered during manual probing.
+
 #### Session State and Recovery
 
 The vendor GATT service can enter a **permanent error state** where all commands
@@ -511,11 +561,11 @@ LED off: 01 00 00 01 00 00 00 00 00 00 (static black)
 scroll wheel LED. Sending static black turns LED off. The LED brightness may
 decrease after sending many commands in sequence.
 
-#### DPI Write Testing — Exhaustive Results
+#### DPI Write Testing — Exhaustive Results (macOS, two-write format)
 
-Extensive testing confirmed that **DPI cannot be changed** through the vendor GATT
-service on the Basilisk V3 X HyperSpeed. The following approaches were all tried
-with HID DPI sniffing active (monitoring report 0x05 0x05 0x02):
+Earlier testing using the 8+10 byte two-write pair format confirmed that DPI cannot
+be changed using that specific protocol variant. The following approaches were all
+tried with HID DPI sniffing active (monitoring report 0x05 0x05 0x02):
 
 | Approach | Modes Tested | Payloads | DPI Changes |
 |----------|-------------|----------|-------------|
@@ -531,10 +581,11 @@ with HID DPI sniffing active (monitoring report 0x05 0x05 0x02):
 | HID output reports via hidapi | all report IDs | 800 DPI | all return -1 |
 | HID feature reports via hidapi | all report IDs | GET DPI | all return -1 |
 
-**Conclusion**: The vendor GATT service on the Basilisk V3 X HyperSpeed appears
-to be **lighting-only**. DPI configuration over BLE may require access to the HID
-service (0x1812), which macOS claims exclusively. On Linux, this service may be
-accessible.
+**Updated conclusion** (2026-03-07): These failures were due to using the wrong write
+format, not a wrong GATT service. A Windows BLE capture confirms Synapse successfully
+reads DPI (and likely writes it) via the same vendor GATT service using a different
+single-write format. The 8+10 two-write pair with the `13 0a` init appears to be
+lighting-specific. See "Synapse Write Format" above for the correct approach.
 
 #### HID Report Limitations on BLE
 
@@ -565,10 +616,10 @@ peripherals = manager.retrieveConnectedPeripheralsWithServices_([battery_uuid])
 |---------|--------|-------|
 | Battery read | Working | Via BLE Battery Service (0x180F) |
 | DPI read | Working | Passive HID input reports (report 0x05) |
-| LED/Lighting | Working | Vendor GATT service, mode `10 03` |
-| DPI write | **Not possible on macOS** | Vendor GATT is lighting-only; HID service claimed by OS |
-| Poll rate | Not possible on macOS | No known BLE path |
-| Button remapping | Not possible on macOS | No known BLE path |
+| LED/Lighting | Working | Vendor GATT service, mode `10 03`, two-write format |
+| DPI write | **Unknown write format** | Synapse does this via vendor GATT; format not yet decoded |
+| Poll rate | Unknown write format | Same path as DPI; format not yet decoded |
+| Button remapping | Unknown write format | Same path as DPI; format not yet decoded |
 
 ---
 
@@ -681,45 +732,51 @@ Report Map to discover writable characteristics.
 
 ## What We Need To Uncover Next
 
-### 1. Enumerate HID Service GATT Characteristics (Linux/Steam Deck)
+### 1. Decode the Synapse Vendor GATT Write Format
 
-**This is the critical next step.** We need to see the actual GATT characteristics
-inside the HID service (0x1812) — specifically looking for:
+**This is the critical next step.** The Windows BLE capture confirms Synapse uses
+the vendor GATT service (handle 0x3D) to send DPI, serial, and all config commands.
+The write format is a single ATT Write Request of ~16-20 bytes, but the exact byte
+layout is not yet decoded.
 
-- Report characteristics (`0x2A4D`) with **Feature-type** (0x03) or **Output-type**
-  (0x02) Report Reference descriptors (`0x2908`)
-- Their GATT handles and properties (read/write/notify)
+**Approach**: Open `fitleredcap.pcapng` in Wireshark and inspect individual ATT Write
+Request payloads (opcode 0x12, handle 0x3D). Find the Get Serial write, Get DPI write,
+and Set DPI write. Compare their payloads to the 90-byte USB report format (look for
+command class 0x00/ID 0x82 for serial, class 0x04/ID 0x85 for get DPI, etc.).
 
-**Why Linux**: macOS hides the HID service entirely from CoreBluetooth. Windows
-restricts raw GATT access when a HID driver is loaded. Linux (BlueZ) provides
-unrestricted access to all GATT characteristics.
+**Expected outcome**: The payload is either:
+- A **truncated Razer report** (header bytes only, omitting the 80-byte args array
+  for GET commands since args are zero)
+- A **modified format** with a different header but the same command class/ID encoding
+- The **full 90-byte report** — unlikely given the ~16-20 byte observation, but possible
+  if the subagent's size estimate was from a different layer
 
-**Tool**: `enumerate_hid_gatt_linux.py` — designed to run on a Steam Deck or any
-Linux machine with BlueZ and Python 3. It discovers Razer devices, enumerates all
-characteristics in the HID service, reads Report Reference descriptors, and identifies
-Feature/Output reports.
+### 2. Implement BLE Config Writes (Windows/Linux)
 
-**Expected outcome**: We should find 1-2 Report characteristics with Feature-type
-references. Their GATT handles are what `HidOverGatt` writes the 90-byte protocol to.
+Once the write format is decoded:
+1. Implement a `send_ble_command()` function using bleak (cross-platform)
+2. Test Get Serial against known value (`632602H30204897`)
+3. Test Get DPI against known value (1950 DPI from capture)
+4. Test Set DPI with a different value and verify with passive HID sniff
 
-### 2. Test 90-byte Protocol on Discovered Feature Reports
+### 3. macOS Path (If Possible)
 
-Once we know the GATT handles of Feature Report characteristics:
+On macOS, the vendor GATT service IS accessible via CoreBluetooth (unlike the HID
+service). Once the write format is known, DPI/config writes should be possible on
+macOS using CoreBluetooth write-with-response to `...1524` (the same service that
+lighting already works on).
 
-1. Write a 90-byte Razer "get serial" command to the Feature Report characteristic
-2. Read back from the same characteristic after ~100ms
-3. If we get a valid response (status 0x02, matching TxID), the protocol works
+This would explain the earlier failure: the 8+10 two-write format was lighting-specific.
+Using the correct single-write format (from step 1) should enable config on macOS too.
 
-### 3. Verify DPI Write Over BLE
+### 4. Enumerate HID Service GATT Characteristics (Linux — Lower Priority)
 
-If step 2 succeeds, send a DPI set command and verify the mouse changes DPI.
-This would confirm the full write path works without any OS-specific driver.
+The HID service (0x1812) investigation is now lower priority since the capture
+confirms the vendor GATT service is the actual config path. Still useful to:
+- Understand what HidOverGatt maps to GATT characteristics
+- Confirm whether the HID service path is used at all by Synapse
 
-### 4. Port Back to macOS (If Possible)
-
-If the GATT handles are known, we might be able to write to them from macOS using
-IOKit at a lower level than CoreBluetooth — potentially via `IOBluetoothDevice`
-or by opening the GATT service's IOService entry directly. This is speculative.
+**Tool**: `enumerate_hid_gatt_linux.py` on a Steam Deck or Linux machine with BlueZ.
 
 ---
 
@@ -735,6 +792,16 @@ or by opening the GATT service's IOService entry directly. This is speculative.
 
 ## Changelog
 
+- **2026-03-07**: Analysis of Windows BLE GATT capture (`fitleredcap.pcapng`):
+  - Confirmed GATT handle numbers: 0x3D (write/0x1524), 0x3F (notify/0x1525), 0x40 (CCCD)
+  - Revised "lighting-only" conclusion — vendor GATT IS used for all BLE config (DPI, serial, etc.)
+  - Confirmed all writes are single ATT Write Requests (0x12), no fragmentation via Write Commands
+  - TxnID implicit over BLE (GATT request-response ordering), not sent in payload
+  - DPI format confirmed identical to USB: big-endian uint16 (example: 0x079E = 1950 DPI)
+  - Serial number format confirmed: 22 ASCII bytes, example `632602H30204897`
+  - Documented Synapse handshake sequence: CCCD subscribe → Get Serial → config queries
+  - Stats: 217 write requests, 242 notifications (~1.11:1 ratio), all to/from vendor GATT handles
+  - Payload size ~16-20 bytes (not 90 bytes) — exact format not yet decoded
 - **2026-03-06**: Added Windows BLE driver architecture:
   - Documented full driver stack (RzDev_00ba.sys filter driver, RZCONTROL virtual bus, HidOverGatt)
   - Mapped all 6 GATT services with handles from Windows device enumeration
