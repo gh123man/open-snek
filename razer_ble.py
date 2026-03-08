@@ -589,6 +589,14 @@ class RazerMouse:
         value = max(0, min(0xFF, int(value)))
         return self._bt_set_scalar(bytes([0x10, 0x05, 0x01, 0x00]), 0x01, value, 1)
 
+    def get_battery_vendor_raw(self) -> Optional[int]:
+        """Vendor key 05 81 00 01 (u8 raw battery level)."""
+        return self._bt_get_scalar(bytes([0x05, 0x81, 0x00, 0x01]), 1)
+
+    def get_battery_status_vendor_raw(self) -> Optional[int]:
+        """Vendor key 05 80 00 01 (u8 status flag; semantics still being mapped)."""
+        return self._bt_get_scalar(bytes([0x05, 0x80, 0x00, 0x01]), 1)
+
     def set_button_binding_raw(self, slot: int, payload10: bytes) -> bool:
         """
         Set button binding entry via vendor key 08 04 01 <slot>.
@@ -1124,7 +1132,8 @@ class RazerMouse:
         """Get battery level (0-100) and charging status.
 
         Tries USB HID feature report first. If that fails and the device
-        is connected via Bluetooth, falls back to BLE Battery Service.
+        is connected via Bluetooth, falls back to vendor GATT battery key
+        (when enabled), then BLE Battery Service.
         """
         request = self._create_report(CMD_CLASS_MISC, CMD_GET_BATTERY, 0x02)
         response = self._send_command(request)
@@ -1133,8 +1142,13 @@ class RazerMouse:
             level = int((response[9] / 255.0) * 100)
             return (level, charging)
 
-        # BLE fallback for Bluetooth devices
+        # BLE fallbacks for Bluetooth devices
         if self.vendor_id == BT_VENDOR_ID_RAZER:
+            self._dbg("USB battery read failed, trying vendor battery key fallback")
+            raw_level = self.get_battery_vendor_raw()
+            if raw_level is not None:
+                level = int((raw_level / 255.0) * 100)
+                return (level, False)
             self._dbg("USB battery read failed, trying BLE Battery Service fallback")
             ble_level = self.get_battery_ble()
             if ble_level is not None:
@@ -1325,7 +1339,9 @@ def print_status(mouse: RazerMouse):
         power16 = mouse.get_power_timeout_raw()
         sleep8 = mouse.get_sleep_timeout_raw()
         light8 = mouse.get_lighting_value_raw()
-        if power16 is not None or sleep8 is not None or light8 is not None:
+        batt_raw = mouse.get_battery_vendor_raw()
+        batt_status = mouse.get_battery_status_vendor_raw()
+        if power16 is not None or sleep8 is not None or light8 is not None or batt_raw is not None or batt_status is not None:
             print("\n  BLE Raw:")
             if power16 is not None:
                 print(f"    Power Timeout (u16): {power16} (0x{power16:04x})")
@@ -1333,6 +1349,10 @@ def print_status(mouse: RazerMouse):
                 print(f"    Sleep Timeout (u8):  {sleep8} (0x{sleep8:02x})")
             if light8 is not None:
                 print(f"    Lighting Value (u8): {light8} (0x{light8:02x})")
+            if batt_raw is not None:
+                print(f"    Battery Raw (u8):    {batt_raw} (0x{batt_raw:02x})")
+            if batt_status is not None:
+                print(f"    Battery Status (u8): {batt_status} (0x{batt_status:02x})")
 
     print()
 
@@ -1430,6 +1450,8 @@ Note: This script targets Bluetooth transport.
                         help='Enable BLE vendor GATT path (may be unstable on some macOS setups)')
     parser.add_argument('--battery-ble', action='store_true',
                         help='Read battery level via BLE Battery Service (macOS only)')
+    parser.add_argument('--battery-vendor', action='store_true',
+                        help='Read battery via BLE vendor keys (requires --enable-vendor-gatt)')
     parser.add_argument('--sniff-dpi', nargs='?', const=8.0, type=float, metavar='SECONDS',
                         help='Bluetooth: sniff passive DPI reports for N seconds (default: 8)')
 
@@ -1864,6 +1886,19 @@ Note: This script targets Bluetooth transport.
         else:
             print("  Could not read battery via BLE.")
             print("  Make sure the mouse is connected via Bluetooth.")
+
+    if args.battery_vendor:
+        print("\nReading battery via BLE vendor keys...")
+        raw = mouse.get_battery_vendor_raw()
+        status = mouse.get_battery_status_vendor_raw()
+        if raw is not None:
+            pct = int((raw / 255.0) * 100)
+            print(f"  Battery (vendor raw): {raw} (0x{raw:02x}) ~{pct}%")
+        else:
+            print("  Could not read vendor battery raw key.")
+            print("  Try again with --enable-vendor-gatt.")
+        if status is not None:
+            print(f"  Battery status (vendor raw): {status} (0x{status:02x})")
 
     if args.sniff_dpi is not None:
         if mouse.vendor_id != BT_VENDOR_ID_RAZER:

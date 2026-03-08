@@ -69,12 +69,15 @@ CLI behavior has been updated to skip unsupported scroll controls with warnings 
 
 ## Validated BT Profile (Basilisk V3 X HyperSpeed BT PID `0x00BA`, macOS stack)
 
-Validated in-session over Bluetooth HID path (vendor GATT disabled):
-- device detection/probe: works
-- HID command-path reads (`serial`, `firmware`, `dpi`, `poll_rate`, `idle`, `battery`, `scroll_led_brightness`): returned `None`
-- HID command-path writes (`poll_rate`, `idle`, `low_battery_threshold`, `scroll LED controls`): returned `False`
+Validated in-session over Bluetooth:
+- HID path (vendor GATT disabled): probe works, config command reads return `None`, writes return `False`
+- Vendor GATT path (`--enable-vendor-gatt`): working for
+  - power timeout raw read/write/readback
+  - sleep timeout raw read/write/readback
+  - lighting raw read/write/readback
+  - battery vendor raw keys (`05 81 00 01`, `05 80 00 01`)
 
-Interpretation: on this stack, BT HID transport is present but not returning usable command responses for configuration commands.
+`razer_ble.py` now uses vendor battery raw as BT fallback in `get_battery()` when vendor GATT is enabled.
 
 ## Validation Checklist
 

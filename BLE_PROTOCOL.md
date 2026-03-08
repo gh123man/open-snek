@@ -89,11 +89,11 @@ Two-write sequence:
 | Power timeout raw | `05 84 00 00` | `05 04 00 00` | `0x02` | `u16 LE` |
 | Sleep timeout raw | `05 82 00 00` | `05 02 00 00` | `0x01` | `u8` |
 | Lighting raw | `10 85 01 01` | `10 05 01 00` | `0x01` | `u8` |
+| Battery raw | `05 81 00 01` | n/a | n/a | `u8` |
+| Battery status raw | `05 80 00 01` | n/a | n/a | `u8` |
 | Button bind (slot) | n/a | `08 04 01 <slot>` | `0x0A` | 10 bytes |
 
-Observed extra read keys (capture-backed, not full APIs in code):
-- Battery raw: `05 81 00 01` (`u8`)
-- Status flag: `05 80 00 01` (`u8`)
+Observed extra read key (capture-backed, not full API in code):
 - Serial key: `01 83 00 00` (ASCII payload)
 
 ## 7. Payload Specs
@@ -159,6 +159,10 @@ Latest validation (macOS, Basilisk V3 X `0x00BA`, 2026-03-08):
 
 This includes poll rate, idle/threshold, and scroll LED HID controls.
 
+Vendor GATT path in the same environment works when enabled:
+- raw power/sleep/lighting read/write
+- battery raw/status read keys
+
 ## 9. Slot and Feature Coverage
 
 - DPI stage table: read/write with active-stage handling.
@@ -210,6 +214,7 @@ This includes poll rate, idle/threshold, and scroll LED HID controls.
 | Stage payload parse/build (`_parse_bt_stage_table`, `_build_bt_stage_payload`) | Section 7.1 |
 | Button bind raw + helpers (`set_button_*`) | Sections 5.3, 7.2 |
 | Raw power/sleep/lighting APIs | Section 6 |
+| Vendor battery raw/status APIs + `get_battery()` fallback | Sections 6, 8.3 |
 | Scroll LED HID helpers (`get/set_scroll_led_*`) | Sections 8.3, 12 |
 | BLE Battery Service fallback (`get_battery_ble`, `get_battery`) | Section 8.1 |
 | Passive DPI fallback/sniff (`get_dpi`, `sniff_bt_dpi_values`) | Section 8.2 |
