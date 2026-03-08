@@ -152,6 +152,13 @@ This powers:
 `get/set_poll_rate` and direct `get/set_dpi` still use the 90-byte HID command path.
 Behavior is backend/OS dependent for BT HID interfaces.
 
+Latest validation (macOS, Basilisk V3 X `0x00BA`, 2026-03-08):
+- transport probe succeeds
+- command-path reads return `None`
+- command-path writes return `False`
+
+This includes poll rate, idle/threshold, and scroll LED HID controls.
+
 ## 9. Slot and Feature Coverage
 
 - DPI stage table: read/write with active-stage handling.
