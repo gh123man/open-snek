@@ -18,6 +18,9 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
             Task { await appState.refreshState() }
         }
+        .onReceive(Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()) { _ in
+            Task { await appState.refreshDpiFast() }
+        }
     }
 
     private var sidebar: some View {
@@ -194,7 +197,7 @@ struct ContentView: View {
                     }
 
                 Stepper("Active stage: \(appState.editableActiveStage)", value: $appState.editableActiveStage, in: 1...appState.editableStageCount)
-                    .onChange(of: appState.editableActiveStage) { _, _ in appState.scheduleAutoApplyDpi() }
+                    .onChange(of: appState.editableActiveStage) { _, _ in appState.scheduleAutoApplyActiveStage() }
             }
 
             ForEach(0..<(appState.singleStageMode ? 1 : appState.editableStageCount), id: \.self) { idx in

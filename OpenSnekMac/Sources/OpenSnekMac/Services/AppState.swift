@@ -32,8 +32,10 @@ final class AppState {
     private var ledApplyTask: Task<Void, Never>?
     private var colorApplyTask: Task<Void, Never>?
     private var buttonApplyTask: Task<Void, Never>?
+    private var activeStageApplyTask: Task<Void, Never>?
     private var hasPendingLocalEdits = false
     private var stateCacheByDeviceID: [String: MouseState] = [:]
+    private var isRefreshingDpiFast = false
 
     var selectedDevice: MouseDevice? {
         guard let selectedDeviceID else { return nil }
@@ -128,6 +130,22 @@ final class AppState {
         }
     }
 
+    func applyActiveStageOnly() async {
+        let count = singleStageMode ? 1 : max(1, min(5, editableStageCount))
+        let active = singleStageMode ? 0 : max(0, min(count - 1, editableActiveStage - 1))
+        await apply(patch: DevicePatch(activeStage: active))
+    }
+
+    func scheduleAutoApplyActiveStage() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        activeStageApplyTask?.cancel()
+        activeStageApplyTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            await self?.applyActiveStageOnly()
+        }
+    }
+
     func applyPollRate() async {
         await apply(patch: DevicePatch(pollRate: editablePollRate))
     }
@@ -186,6 +204,46 @@ final class AppState {
         buttonApplyTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 260_000_000)
             await self?.applyButtonBinding()
+        }
+    }
+
+    func refreshDpiFast() async {
+        guard let selectedDevice, selectedDevice.transport == "bluetooth" else { return }
+        guard !isRefreshingDpiFast, !isApplying else { return }
+        guard !hasPendingLocalEdits else { return }
+
+        isRefreshingDpiFast = true
+        defer { isRefreshingDpiFast = false }
+
+        do {
+            guard let fast = try await client.readDpiStagesFast(device: selectedDevice) else { return }
+            let previous = stateCacheByDeviceID[selectedDevice.id] ?? state
+            guard let previous else { return }
+
+            let active = max(0, min(fast.values.count - 1, fast.active))
+            let currentDpiValue = fast.values[active]
+            let updated = MouseState(
+                device: previous.device,
+                connection: previous.connection,
+                battery_percent: previous.battery_percent,
+                charging: previous.charging,
+                dpi: DpiPair(x: currentDpiValue, y: currentDpiValue),
+                dpi_stages: DpiStages(active_stage: active, values: fast.values),
+                poll_rate: previous.poll_rate,
+                device_mode: previous.device_mode,
+                led_value: previous.led_value,
+                capabilities: previous.capabilities
+            )
+
+            stateCacheByDeviceID[selectedDevice.id] = updated
+            if state != updated {
+                state = updated
+            }
+            if !isApplying {
+                hydrateEditable(from: updated)
+            }
+        } catch {
+            // Ignore fast-poll transient failures to keep UI stable.
         }
     }
 

@@ -68,14 +68,30 @@ actor BridgeClient {
         return try await readUSBState(device: device, handle: handle)
     }
 
+    func readDpiStagesFast(device: MouseDevice) async throws -> (active: Int, values: [Int])? {
+        guard device.transport == "bluetooth" else { return nil }
+        guard let parsed = try await btGetDpiStages(deviceID: device.id) else { return nil }
+        return (active: parsed.active, values: parsed.values)
+    }
+
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
         guard let handle = handleFor(device: device) else {
             throw BridgeError.commandFailed("Device not available")
         }
 
         if device.transport == "bluetooth" {
-            if let stages = patch.dpiStages {
-                let active = patch.activeStage ?? 0
+            if patch.dpiStages != nil || patch.activeStage != nil {
+                let current: (active: Int, count: Int, slots: [Int], marker: UInt8)?
+                if let cached = btDpiSnapshotByDeviceID[device.id] {
+                    current = cached
+                } else {
+                    current = try await btGetDpiStageSnapshot(deviceID: device.id)
+                }
+                guard let current else {
+                    throw BridgeError.commandFailed("Failed to read current Bluetooth DPI stages")
+                }
+                let stages = patch.dpiStages ?? Array(current.slots.prefix(current.count))
+                let active = patch.activeStage ?? current.active
                 guard try await btSetDpiStages(deviceID: device.id, active: active, values: stages) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth DPI stages")
                 }
