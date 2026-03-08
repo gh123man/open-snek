@@ -84,6 +84,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
+DEFAULT_ICON_PNG="$PACKAGE_DIR/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
 
 PRODUCT_NAME="OpenSnekMac"
 DISPLAY_NAME="Open Snek"
@@ -153,13 +154,23 @@ if [[ -n "$ICON_INPUT" && ! -f "$ICON_INPUT" ]]; then
 fi
 
 if [[ -z "$ICON_INPUT" ]]; then
+  if [[ -f "$DEFAULT_ICON_PNG" ]]; then
+    ICON_INPUT="$DEFAULT_ICON_PNG"
+  fi
+fi
+
+if [[ -z "$ICON_INPUT" ]]; then
   if [[ -f "$SYSTEM_ICON_ICNS" ]]; then
     cp "$SYSTEM_ICON_ICNS" "$ICON_FILE"
   fi
 elif [[ "$ICON_INPUT" == *.icns ]]; then
   cp "$ICON_INPUT" "$ICON_FILE"
 elif [[ "$ICON_INPUT" == *.png ]]; then
-  build_icns_from_png "$ICON_INPUT" "$ICON_FILE" || true
+  if ! build_icns_from_png "$ICON_INPUT" "$ICON_FILE"; then
+    if [[ -f "$SYSTEM_ICON_ICNS" ]]; then
+      cp "$SYSTEM_ICON_ICNS" "$ICON_FILE"
+    fi
+  fi
 else
   echo "Unsupported icon format (use .png or .icns): $ICON_INPUT" >&2
   exit 1
