@@ -145,6 +145,11 @@ Reverse engineer the Razer BLE configuration path used by Synapse and implement 
     - `set_button_clear_layer`
     - `--button-clear-layer SLOT:LAYER`
   - No unique turbo/media/macro payloads were present in this capture.
+- **2026-03-08**: BT poll-rate feasibility probe:
+  - Live BT HID command path `--poll-rate 1000` still fails.
+  - Focused vendor-key probes for `00:84..87` and wide `00:80..97` families found no `00 85`/`00 05` equivalent key.
+  - Cross-capture key scan (`captures/ble/*.pcapng`) shows no `0085xxxx`/`0005xxxx` headers.
+  - Current conclusion: on this BT firmware, poll-rate is likely not exposed over vendor GATT (not merely hidden by Synapse UI).
 - **2026-03-08**: Added button-rebind mapping from `captures/ble/basic-rebind.pcapng`:
   - Header key `08 04 01 <slot>` with op `0x0a` and 10-byte payload writes
   - Documented observed payload families for default mouse, keyboard, and extended remap
