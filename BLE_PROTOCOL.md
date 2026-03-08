@@ -25,6 +25,7 @@ Target device family in current captures:
 - Requests are keyed by request id (`req`, byte 0).
 - `razer_ble.py` starts request IDs at `0x30`, increments modulo `0x100`.
 - Success ACK is notify header status `0x02` with matching `req`.
+- Issue commands sequentially per device connection. Parallel in-flight vendor transactions can interleave notifies and corrupt command correlation.
 
 ## 4. Frame Formats
 
@@ -119,8 +120,14 @@ Conventions in current implementation:
 - trailing tail byte `0x00`
 
 Read-side parsing in `razer_ble.py` accepts:
-- full staged blob (`>=37` bytes)
+- variable-length staged blob (`2 + count*7` bytes), commonly:
+  - `16` bytes for 2 stages
+  - `23` bytes for 3 stages
+  - `37` bytes for 5 stages
 - short single-stage blob (`>=7` bytes), then mirrors to 5 internal slots
+
+Observed 2-stage example (active 0, values 800/6400):
+`00 02 00 20 03 20 03 00 00 01 00 19 00 19 00 00`
 
 ### 7.2 Button Action Payload (10 bytes)
 

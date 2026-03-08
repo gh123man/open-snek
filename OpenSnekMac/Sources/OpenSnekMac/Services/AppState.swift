@@ -65,7 +65,7 @@ final class AppState {
             state = nil
             return
         }
-        guard !isRefreshingState else { return }
+        guard !isRefreshingState, !isApplying else { return }
 
         isRefreshingState = true
         defer { isRefreshingState = false }

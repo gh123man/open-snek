@@ -5,8 +5,7 @@ actor BridgeClient {
     private var deviceHandles: [String: IOHIDDevice] = [:]
     private var txnByDeviceID: [String: UInt8] = [:]
     private var btReqID: UInt8 = 0x30
-
-    private let btVendorClient = BTVendorClient()
+    private var btDpiSnapshotByDeviceID: [String: (active: Int, count: Int, slots: [Int], marker: UInt8)] = [:]
 
     private let usbVID = 0x1532
     private let btVID = 0x068E
@@ -73,12 +72,10 @@ actor BridgeClient {
             throw BridgeError.commandFailed("Device not available")
         }
 
-        _ = try await readState(device: device)
-
         if device.transport == "bluetooth" {
             if let stages = patch.dpiStages {
                 let active = patch.activeStage ?? 0
-                guard try await btSetDpiStages(active: active, values: stages) else {
+                guard try await btSetDpiStages(deviceID: device.id, active: active, values: stages) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth DPI stages")
                 }
             }
@@ -173,7 +170,7 @@ actor BridgeClient {
     }
 
     private func readBluetoothState(device: MouseDevice, handle: IOHIDDevice) async throws -> MouseState {
-        let btStages = (try? await btGetDpiStages()) ?? nil
+        let btStages = (try? await btGetDpiStages(deviceID: device.id)) ?? nil
         let batteryRaw = (try? await btGetScalar(key: .batteryRaw, size: 1)) ?? nil
         let batteryStatus = (try? await btGetScalar(key: .batteryStatus, size: 1)) ?? nil
         let lighting = (try? await btGetScalar(key: .lightingGet, size: 1)) ?? nil
@@ -225,7 +222,9 @@ actor BridgeClient {
     }
 
     private func btExchange(_ writes: [Data], timeout: TimeInterval = 2.2) async throws -> [Data] {
-        try await btVendorClient.run(writes: writes, timeout: timeout)
+        // Use a fresh transaction client per exchange to avoid overlapping-call continuation leaks.
+        let client = BTVendorClient()
+        return try await client.run(writes: writes, timeout: timeout)
     }
 
     private func btGetScalar(key: BLEVendorProtocol.Key, size: Int) async throws -> Int? {
@@ -258,7 +257,7 @@ actor BridgeClient {
         return false
     }
 
-    private func btGetDpiStages() async throws -> (active: Int, values: [Int], marker: UInt8)? {
+    private func btGetDpiStages(deviceID: String) async throws -> (active: Int, values: [Int], marker: UInt8)? {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: .dpiStagesGet)
         let notifies = try await btExchange([header])
@@ -266,10 +265,13 @@ actor BridgeClient {
               let parsed = BLEVendorProtocol.parseDpiStages(blob: payload) else {
             return nil
         }
+        if let snap = BLEVendorProtocol.parseDpiStageSnapshot(blob: payload) {
+            btDpiSnapshotByDeviceID[deviceID] = snap
+        }
         return (active: parsed.active, values: parsed.values, marker: parsed.marker)
     }
 
-    private func btGetDpiStageSnapshot() async throws -> (active: Int, count: Int, slots: [Int], marker: UInt8)? {
+    private func btGetDpiStageSnapshot(deviceID: String) async throws -> (active: Int, count: Int, slots: [Int], marker: UInt8)? {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: .dpiStagesGet)
         let notifies = try await btExchange([header])
@@ -277,11 +279,17 @@ actor BridgeClient {
               let parsed = BLEVendorProtocol.parseDpiStageSnapshot(blob: payload) else {
             return nil
         }
+        btDpiSnapshotByDeviceID[deviceID] = parsed
         return parsed
     }
 
-    private func btSetDpiStages(active: Int, values: [Int]) async throws -> Bool {
-        let current = try await btGetDpiStageSnapshot()
+    private func btSetDpiStages(deviceID: String, active: Int, values: [Int]) async throws -> Bool {
+        let current: (active: Int, count: Int, slots: [Int], marker: UInt8)?
+        if let cached = btDpiSnapshotByDeviceID[deviceID] {
+            current = cached
+        } else {
+            current = try await btGetDpiStageSnapshot(deviceID: deviceID)
+        }
         let marker = current?.marker ?? 0x03
         let count = max(1, min(5, values.count))
         let currentSlots = current?.slots ?? [800, 1600, 2400, 3200, 6400]
@@ -300,7 +308,16 @@ actor BridgeClient {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildWriteHeader(req: req, payloadLength: 0x26, key: .dpiStagesSet)
         let notifies = try await btExchange([header, payload.prefix(20), payload.suffix(from: 20)])
-        return btAckSuccess(notifies: notifies, req: req)
+        let ok = btAckSuccess(notifies: notifies, req: req)
+        if ok {
+            btDpiSnapshotByDeviceID[deviceID] = (
+                active: max(0, min(count - 1, active)),
+                count: count,
+                slots: mergedSlots,
+                marker: marker
+            )
+        }
+        return ok
     }
 
     private func btSetLightingValue(value: Int) async throws -> Bool {

@@ -69,18 +69,32 @@ enum BLEVendorProtocol {
     }
 
     static func parseDpiStageSnapshot(blob: Data) -> (active: Int, count: Int, slots: [Int], marker: UInt8)? {
-        if blob.count >= 37 {
+        // Variable-length staged blob:
+        // [active][count] + count*7-byte stage entries
+        // each entry: [stage_id][dpi_x_le16][dpi_y_le16][reserved][marker_or_reserved]
+        if blob.count >= 9 {
             let active = Int(blob[0])
             let count = max(1, min(5, Int(blob[1])))
-            let offsets = [2, 9, 16, 23, 30]
             var slots: [Int] = []
-            for off in offsets {
-                guard off + 4 < blob.count else { return nil }
+            var marker: UInt8 = 0x03
+
+            for i in 0..<count {
+                let off = 2 + (i * 7)
+                guard off + 4 < blob.count else { break }
                 let value = Int(blob[off + 1]) | (Int(blob[off + 2]) << 8)
                 slots.append(value)
+                if off + 6 < blob.count {
+                    marker = blob[off + 6]
+                }
             }
-            let marker = blob.count > 36 ? blob[36] : 0x03
-            return (active: max(0, min(count - 1, active)), count: count, slots: slots, marker: marker)
+
+            if !slots.isEmpty {
+                let fill = slots.last ?? 800
+                while slots.count < 5 {
+                    slots.append(fill)
+                }
+                return (active: max(0, min(count - 1, active)), count: count, slots: Array(slots.prefix(5)), marker: marker)
+            }
         }
 
         if blob.count >= 7 {

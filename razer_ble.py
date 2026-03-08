@@ -777,20 +777,32 @@ class RazerMouse:
 
     @staticmethod
     def _parse_bt_stage_table(blob: bytes) -> Optional[Tuple[int, int, List[Tuple[int, int]], int]]:
-        # Full staged blob observed as 40 bytes.
-        if len(blob) >= 37:
+        # Variable-length staged blob:
+        # [active][count] + count*7-byte stage entries (or up to 5 entries on full blobs)
+        # where each entry begins at offset (2 + i*7):
+        #   [stage_id][dpi_x_le16][dpi_y_le16][reserved][marker_or_reserved]
+        if len(blob) >= 9:
             active = blob[0]
-            count = blob[1]
-            offsets = [2, 9, 16, 23, 30]
-            stages = []
-            for off in offsets:
+            count = max(1, min(5, int(blob[1])))
+            stages: List[Tuple[int, int]] = []
+            marker = 0x03
+
+            for i in range(count):
+                off = 2 + (i * 7)
                 if off + 5 > len(blob):
-                    return None
+                    break
                 dpi_x = int.from_bytes(blob[off + 1:off + 3], 'little')
                 dpi_y = int.from_bytes(blob[off + 3:off + 5], 'little')
                 stages.append((dpi_x, dpi_y))
-            marker = blob[36] if len(blob) > 36 else 0x03
-            return (active, count, stages, marker)
+                if off + 6 < len(blob):
+                    marker = blob[off + 6]
+
+            if stages:
+                # Normalize to 5 internal slots for callers that expect fixed-size arrays.
+                fill = stages[-1]
+                while len(stages) < 5:
+                    stages.append(fill)
+                return (active, count, stages, marker)
 
         # Single-stage mode can present as 8-byte blob: [active][count][sid][x][y][reserved]
         if len(blob) >= 7:

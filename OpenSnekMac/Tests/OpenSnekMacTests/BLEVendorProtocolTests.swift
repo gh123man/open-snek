@@ -57,4 +57,16 @@ final class BLEVendorProtocolTests: XCTestCase {
         let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x02, kind: .keyboardSimple, hidKey: 0x2C)
         XCTAssertEqual(Array(payload), [0x01, 0x02, 0x00, 0x02, 0x02, 0x00, 0x2C, 0x00, 0x00, 0x00])
     }
+
+    func testParseVariableLengthDpiBlob() {
+        // [active=0][count=2]
+        // stage0: [00][20 03][20 03][00][00] -> 800
+        // stage1: [01][00 19][00 19][00][00] -> 6400
+        let blob = Data([0x00, 0x02, 0x00, 0x20, 0x03, 0x20, 0x03, 0x00, 0x00, 0x01, 0x00, 0x19, 0x00, 0x19, 0x00, 0x00])
+        let parsed = BLEVendorProtocol.parseDpiStages(blob: blob)
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed?.active, 0)
+        XCTAssertEqual(parsed?.count, 2)
+        XCTAssertEqual(parsed?.values, [800, 6400])
+    }
 }
