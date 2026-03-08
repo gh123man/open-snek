@@ -105,6 +105,7 @@ Reverse engineer the Razer BLE configuration path used by Synapse and implement 
 
 - **2026-03-08**: Added automated vendor-key discovery (`discover_bt_vendor_keys.py`) and live validation:
   - Validated key-space scanner with read-only and same-value writeback modes
+  - Added captured sweep report: `captures/ble/vendor-key-sweeps-2026-03-08.md`
   - Confirmed scalar mappings:
     - `05 84`/`05 04` (`u16`) aligned with idle-time value
     - `05 82`/`05 02` (`u8`) aligned with low-battery-threshold value

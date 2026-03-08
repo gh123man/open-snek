@@ -29,6 +29,10 @@ This directory stores BLE protocol captures used to derive and validate `razer_b
   - Focused slot `0x02` (right-click) transitions.
   - Confirms payloads for left-click remap, keyboard remap, and explicit right-click restore.
 
+- `ble/vendor-key-sweeps-2026-03-08.md`
+  - In-session automated BLE vendor key sweep report.
+  - Documents confirmed mappings, candidate keys, and safety findings from read/writeback probing.
+
 ## Notes
 
 - Captures are intentionally action-scoped for faster diffing.
