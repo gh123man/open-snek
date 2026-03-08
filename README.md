@@ -107,6 +107,17 @@ Runtime log file:
 ~/Library/Logs/OpenSnekMac/open-snek.log
 ```
 
+### Permission Troubleshooting (macOS)
+
+- If logs show `IOHIDManagerOpen failed (-536870174)` / `kIOReturnNotPermitted`, macOS is blocking HID access.
+- Grant `Open Snek` in: `System Settings > Privacy & Security > Input Monitoring`.
+- Bluetooth control does not require App Sandbox Bluetooth entitlements in this local-signing setup, but the app still needs user Bluetooth permission when prompted.
+- If Bluetooth was denied previously, reset and re-prompt:
+
+```bash
+tccutil reset Bluetooth io.opensnek.OpenSnekMac
+```
+
 ### DPI Stage Reliability Workflow (Required Before Merge)
 
 Use this exact workflow for any change touching BLE DPI/stage code, UI stage selection,

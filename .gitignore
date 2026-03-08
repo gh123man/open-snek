@@ -48,6 +48,7 @@ gatt_enumeration_results.json
 # SwiftPM build artifacts
 OpenSnekMac/.build/
 OpenSnekMac/.dist/
+OpenSnekMac/.xcode-dd/
 .build/
 
 # Swift/Xcode user and local build state

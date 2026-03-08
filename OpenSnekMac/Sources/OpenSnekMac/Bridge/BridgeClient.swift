@@ -13,6 +13,7 @@ actor BridgeClient {
 
     private let usbVID = 0x1532
     private let btVID = 0x068E
+    private let fallbackBTPID = 0x00BA
 
     func listDevices() async throws -> [MouseDevice] {
         let start = Date()
@@ -23,13 +24,27 @@ actor BridgeClient {
         ] as CFArray)
 
         let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard openResult == kIOReturnSuccess else {
-            throw BridgeError.commandFailed("Unable to open IOHIDManager (\(openResult))")
+        if openResult != kIOReturnSuccess {
+            AppLog.error("Bridge", "IOHIDManagerOpen failed (\(openResult)); continuing best-effort discovery")
+            if openResult == kIOReturnNotPermitted {
+                AppLog.error(
+                    "Bridge",
+                    "IOHID access not permitted; USB access may be blocked unless Input Monitoring permission is granted"
+                )
+            }
         }
-        defer { IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone)) }
+        defer {
+            if openResult == kIOReturnSuccess {
+                IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+            }
+        }
 
-        guard let set = IOHIDManagerCopyDevices(manager) else { return [] }
-        let devices = (set as NSSet).allObjects.map { $0 as! IOHIDDevice }
+        let devices: [IOHIDDevice]
+        if let set = IOHIDManagerCopyDevices(manager) {
+            devices = (set as NSSet).allObjects.map { $0 as! IOHIDDevice }
+        } else {
+            devices = []
+        }
 
         var result: [MouseDevice] = []
         for device in devices {
@@ -58,21 +73,50 @@ actor BridgeClient {
             deviceHandles[id] = device
         }
 
+        let hasBluetoothDevice = result.contains(where: { $0.transport == "bluetooth" })
+        if !hasBluetoothDevice, openResult == kIOReturnNotPermitted {
+            do {
+                _ = try await btExchange([], timeout: 0.8)
+                let fallbackID = String(format: "%04x:%04x:%08x:%@", btVID, fallbackBTPID, 0, "bluetooth")
+                let fallback = MouseDevice(
+                    id: fallbackID,
+                    vendor_id: btVID,
+                    product_id: fallbackBTPID,
+                    product_name: "Razer Bluetooth Mouse",
+                    transport: "bluetooth",
+                    path_b64: "",
+                    serial: nil,
+                    firmware: nil
+                )
+                result.append(fallback)
+                AppLog.event("Bridge", "listDevices added Bluetooth fallback device after HID permission denial")
+            } catch {
+                AppLog.error("Bridge", "Bluetooth fallback discovery failed: \(error.localizedDescription)")
+            }
+        }
+
         let sorted = result.sorted { $0.product_name < $1.product_name }
+        if sorted.isEmpty, openResult == kIOReturnNotPermitted {
+            throw BridgeError.commandFailed(
+                "HID access denied by macOS (kIOReturnNotPermitted). " +
+                "Enable Input Monitoring for Open Snek in System Settings, or ensure a supported Bluetooth device is connected."
+            )
+        }
         AppLog.event("Bridge", "listDevices count=\(sorted.count) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
         return sorted
     }
 
     func readState(device: MouseDevice) async throws -> MouseState {
         let start = Date()
-        guard let handle = handleFor(device: device) else {
-            throw BridgeError.commandFailed("Device not available")
-        }
-
         if device.transport == "bluetooth" {
+            let handle = handleFor(device: device)
             let state = try await readBluetoothState(device: device, handle: handle)
             AppLog.debug("Bridge", "readState bt device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
             return state
+        }
+
+        guard let handle = handleFor(device: device) else {
+            throw BridgeError.commandFailed("Device not available")
         }
         let state = try await readUSBState(device: device, handle: handle)
         AppLog.debug("Bridge", "readState usb device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
@@ -104,10 +148,6 @@ actor BridgeClient {
     }
 
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
-        guard let handle = handleFor(device: device) else {
-            throw BridgeError.commandFailed("Device not available")
-        }
-
         if device.transport == "bluetooth" {
             let changedDpi = patch.dpiStages != nil || patch.activeStage != nil
             let changedLighting = patch.ledBrightness != nil || patch.ledRGB != nil
@@ -170,6 +210,9 @@ actor BridgeClient {
                 includePower: changedPower
             )
         } else {
+            guard let handle = handleFor(device: device) else {
+                throw BridgeError.commandFailed("Device not available")
+            }
             if let pollRate = patch.pollRate {
                 guard try setPollRate(handle, device, value: pollRate) else {
                     throw BridgeError.commandFailed("Failed to set poll rate")
@@ -211,9 +254,9 @@ actor BridgeClient {
                     throw BridgeError.commandFailed("Failed to set button binding")
                 }
             }
-        }
 
-        return try await readUSBState(device: device, handle: handle)
+            return try await readUSBState(device: device, handle: handle)
+        }
     }
 
     private func readUSBState(device: MouseDevice, handle: IOHIDDevice) async throws -> MouseState {
@@ -254,7 +297,7 @@ actor BridgeClient {
         )
     }
 
-    private func readBluetoothState(device: MouseDevice, handle: IOHIDDevice) async throws -> MouseState {
+    private func readBluetoothState(device: MouseDevice, handle: IOHIDDevice?) async throws -> MouseState {
         let btStages = (try? await btGetDpiStages(deviceID: device.id))
             ?? btDpiSnapshotByDeviceID[device.id].map { snapshot in
                 (active: snapshot.active, values: Array(snapshot.slots.prefix(snapshot.count)), marker: snapshot.marker)
@@ -268,7 +311,11 @@ actor BridgeClient {
         if let batteryRaw {
             batteryPct = batteryRaw <= 100 ? batteryRaw : Int((Double(batteryRaw) / 255.0) * 100.0)
         } else {
-            batteryPct = (try? getBattery(handle, device))??.0
+            if let handle {
+                batteryPct = (try? getBattery(handle, device))??.0
+            } else {
+                batteryPct = nil
+            }
         }
 
         return MouseState(

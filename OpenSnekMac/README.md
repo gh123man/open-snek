@@ -89,6 +89,16 @@ Runtime app logs:
 ~/Library/Logs/OpenSnekMac/open-snek.log
 ```
 
+## Permissions
+
+- If you see `IOHIDManagerOpen failed (-536870174)` in logs, macOS denied HID access (`kIOReturnNotPermitted`).
+- Grant access in `System Settings > Privacy & Security > Input Monitoring` for `Open Snek`.
+- Reset Bluetooth permission prompt if needed:
+
+```bash
+tccutil reset Bluetooth io.opensnek.OpenSnekMac
+```
+
 ## Probe CLI
 
 ### Read current BLE DPI

@@ -11,6 +11,9 @@ All notable changes to this project are documented in this file.
 - Poll-rate telemetry/control visibility now respects capability detection (hidden for Bluetooth when unavailable).
 - App activation now promotes the process to a regular foreground app on launch/reopen so windows reliably come frontmost.
 - Keyboard button-binding text entry now applies with a short debounce instead of normalizing on each keystroke, allowing stable direct typing.
+- HID permission denial (`kIOReturnNotPermitted`) no longer hard-fails device discovery; app now continues with best-effort BLE discovery/fallback.
+- Bluetooth read/apply paths no longer require an IOHID handle, so BLE-only operation can continue when HID access is blocked.
+- BLE runtime errors now report explicit CoreBluetooth state failures (unauthorized/powered-off/unsupported) instead of generic timeouts.
 
 ### Changed
 - `OpenSnekMac` and `OpenSnekProbe` now decode BLE active stage using stage-id mapping from the current payload entries.

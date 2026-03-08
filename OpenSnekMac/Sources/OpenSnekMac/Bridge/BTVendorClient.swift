@@ -123,7 +123,21 @@ final class BTVendorClient: NSObject, @unchecked Sendable {
 
 extension BTVendorClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        ensureConnectedAndReady()
+        switch central.state {
+        case .poweredOn:
+            ensureConnectedAndReady()
+        case .unauthorized:
+            fail("Bluetooth access unauthorized; allow Open Snek in System Settings > Privacy & Security > Bluetooth")
+        case .poweredOff:
+            fail("Bluetooth is powered off")
+        case .unsupported:
+            fail("Bluetooth is unsupported on this Mac")
+        case .resetting, .unknown:
+            // Keep waiting inside the current run timeout window.
+            break
+        @unknown default:
+            fail("Bluetooth state is unsupported")
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
