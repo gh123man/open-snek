@@ -37,3 +37,13 @@ This directory stores BLE protocol captures used to derive and validate `razer_b
 
 - Captures are intentionally action-scoped for faster diffing.
 - Keep new captures in `captures/ble/` and add an entry here with what changed and what was validated.
+
+
+## Capture guide
+
+install btvs
+run btvs (will open wireshark)
+paste in filter `btatt && btatt.handle != 0x002b && btatt.handle != 0x001b` to filter out all HID traffic
+open synapse 
+perform actions
+file -> exprot specified packets
