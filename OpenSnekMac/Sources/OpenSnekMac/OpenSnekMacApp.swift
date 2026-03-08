@@ -7,7 +7,7 @@ struct OpenSnekMacApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(appState: appState)
-                .frame(minWidth: 1100, minHeight: 700)
+                .frame(minWidth: 900, minHeight: 600)
         }
     }
 }

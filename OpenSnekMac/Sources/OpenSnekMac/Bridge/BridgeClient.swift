@@ -85,6 +85,24 @@ actor BridgeClient {
         return (active: parsed.active, values: parsed.values)
     }
 
+    func readLightingColor(device: MouseDevice) async throws -> RGBPatch? {
+        guard device.transport == "bluetooth" else { return nil }
+        let req = nextBTReq()
+        let header = BLEVendorProtocol.buildReadHeader(req: req, key: .lightingFrameGet)
+        let notifies = try await btExchange([header], timeout: 0.6)
+        guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
+            AppLog.debug("Bridge", "readLightingColor no-payload device=\(device.id) notifies=\(notifies.count)")
+            return nil
+        }
+        let parsed = parseLightingRGB(payload: payload)
+        if let parsed {
+            AppLog.debug("Bridge", "readLightingColor device=\(device.id) rgb=(\(parsed.r),\(parsed.g),\(parsed.b))")
+        } else {
+            AppLog.debug("Bridge", "readLightingColor parse-failed device=\(device.id) payload=\(payload.map { String(format: "%02x", $0) }.joined())")
+        }
+        return parsed
+    }
+
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
         guard let handle = handleFor(device: device) else {
             throw BridgeError.commandFailed("Device not available")
@@ -93,6 +111,7 @@ actor BridgeClient {
         if device.transport == "bluetooth" {
             let changedDpi = patch.dpiStages != nil || patch.activeStage != nil
             let changedLighting = patch.ledBrightness != nil || patch.ledRGB != nil
+            let changedPower = patch.sleepTimeout != nil
 
             if patch.dpiStages != nil || patch.activeStage != nil {
                 let current: (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)?
@@ -132,15 +151,34 @@ actor BridgeClient {
                 }
             }
 
+            if let timeout = patch.sleepTimeout {
+                let clamped = max(60, min(900, timeout))
+                guard try await btSetScalar(
+                    key: .powerTimeoutSet,
+                    value: clamped,
+                    size: 2,
+                    payloadLength: 0x02
+                ) else {
+                    throw BridgeError.commandFailed("Failed to set Bluetooth sleep timeout")
+                }
+            }
+
             return try await buildBluetoothDeltaState(
                 device: device,
                 includeDpi: changedDpi,
-                includeLighting: changedLighting
+                includeLighting: changedLighting,
+                includePower: changedPower
             )
         } else {
             if let pollRate = patch.pollRate {
                 guard try setPollRate(handle, device, value: pollRate) else {
                     throw BridgeError.commandFailed("Failed to set poll rate")
+                }
+            }
+
+            if let timeout = patch.sleepTimeout {
+                guard try setIdleTime(handle, device, seconds: timeout) else {
+                    throw BridgeError.commandFailed("Failed to set sleep timeout")
                 }
             }
 
@@ -186,6 +224,7 @@ actor BridgeClient {
         let dpi = try getDPI(handle, device)
         let stages = try getDPIStages(handle, device)
         let poll = try getPollRate(handle, device)
+        let sleepTimeout = try getIdleTime(handle, device)
         let led = try getScrollLEDBrightness(handle, device)
 
         return MouseState(
@@ -202,11 +241,13 @@ actor BridgeClient {
             dpi: dpi.map { DpiPair(x: $0.0, y: $0.1) },
             dpi_stages: DpiStages(active_stage: stages?.0, values: stages?.1),
             poll_rate: poll,
+            sleep_timeout: sleepTimeout,
             device_mode: mode.map { DeviceMode(mode: $0.0, param: $0.1) },
             led_value: led,
             capabilities: Capabilities(
                 dpi_stages: stages != nil,
                 poll_rate: poll != nil,
+                power_management: true,
                 button_remap: true,
                 lighting: led != nil
             )
@@ -221,6 +262,7 @@ actor BridgeClient {
         let batteryRaw = (try? await btGetScalar(key: .batteryRaw, size: 1)) ?? nil
         let batteryStatus = (try? await btGetScalar(key: .batteryStatus, size: 1)) ?? nil
         let lighting = (try? await btGetScalar(key: .lightingGet, size: 1)) ?? nil
+        let sleepTimeout = (try? await btGetScalar(key: .powerTimeoutGet, size: 2)) ?? nil
 
         let batteryPct: Int?
         if let batteryRaw {
@@ -252,18 +294,25 @@ actor BridgeClient {
             }(),
             dpi_stages: DpiStages(active_stage: btStages?.active, values: btStages?.values),
             poll_rate: nil,
+            sleep_timeout: sleepTimeout,
             device_mode: nil,
             led_value: lighting,
             capabilities: Capabilities(
                 dpi_stages: true,
                 poll_rate: false,
+                power_management: true,
                 button_remap: true,
                 lighting: true
             )
         )
     }
 
-    private func buildBluetoothDeltaState(device: MouseDevice, includeDpi: Bool, includeLighting: Bool) async throws -> MouseState {
+    private func buildBluetoothDeltaState(
+        device: MouseDevice,
+        includeDpi: Bool,
+        includeLighting: Bool,
+        includePower: Bool
+    ) async throws -> MouseState {
         let btStages: (active: Int, values: [Int], marker: UInt8)?
         if includeDpi {
             btStages = try await btGetDpiStages(deviceID: device.id)
@@ -276,6 +325,13 @@ actor BridgeClient {
             lighting = try await btGetScalar(key: .lightingGet, size: 1)
         } else {
             lighting = nil
+        }
+
+        let sleepTimeout: Int?
+        if includePower {
+            sleepTimeout = try await btGetScalar(key: .powerTimeoutGet, size: 2)
+        } else {
+            sleepTimeout = nil
         }
 
         let dpiPair: DpiPair? = {
@@ -303,11 +359,13 @@ actor BridgeClient {
             dpi: dpiPair,
             dpi_stages: DpiStages(active_stage: btStages?.active, values: btStages?.values),
             poll_rate: nil,
+            sleep_timeout: sleepTimeout,
             device_mode: nil,
             led_value: lighting,
             capabilities: Capabilities(
                 dpi_stages: true,
                 poll_rate: false,
+                power_management: true,
                 button_remap: true,
                 lighting: true
             )
@@ -511,6 +569,18 @@ actor BridgeClient {
         return btAckSuccess(notifies: notifies, req: req)
     }
 
+    private func parseLightingRGB(payload: Data) -> RGBPatch? {
+        guard !payload.isEmpty else { return nil }
+
+        if payload.count >= 8, payload[0] == 0x04 {
+            return RGBPatch(r: Int(payload[5]), g: Int(payload[6]), b: Int(payload[7]))
+        }
+        if payload.count >= 4 {
+            return RGBPatch(r: Int(payload[1]), g: Int(payload[2]), b: Int(payload[3]))
+        }
+        return nil
+    }
+
     private func btSetButtonBinding(slot: UInt8, kind: ButtonBindingKind, hidKey: UInt8) async throws -> Bool {
         let payload = BLEVendorProtocol.buildButtonPayload(slot: slot, kind: kind, hidKey: hidKey)
         let req = nextBTReq()
@@ -679,6 +749,18 @@ actor BridgeClient {
         default: return false
         }
         guard let r = try perform(device, handle, classID: 0x00, cmdID: 0x05, size: 0x01, args: [raw]) else { return false }
+        return r[0] == 0x02
+    }
+
+    private func getIdleTime(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> Int? {
+        guard let r = try perform(device, handle, classID: 0x07, cmdID: 0x83, size: 0x02), r[0] == 0x02 else { return nil }
+        return (Int(r[8]) << 8) | Int(r[9])
+    }
+
+    private func setIdleTime(_ handle: IOHIDDevice, _ device: MouseDevice, seconds: Int) throws -> Bool {
+        let clamped = max(60, min(900, seconds))
+        let args: [UInt8] = [UInt8((clamped >> 8) & 0xFF), UInt8(clamped & 0xFF)]
+        guard let r = try perform(device, handle, classID: 0x07, cmdID: 0x03, size: 0x02, args: args) else { return false }
         return r[0] == 0x02
     }
 

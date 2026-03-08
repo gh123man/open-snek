@@ -36,7 +36,7 @@ pip install -r requirements.txt
 `OpenSnekMac` is a pure Swift macOS app that provides:
 - device discovery (USB / Bluetooth)
 - live state polling
-- auto-apply settings (DPI stages, active stage, lighting, button remap)
+- auto-apply settings (DPI stages, active stage, poll rate, sleep timeout, lighting, button remap)
 - state-safe apply behavior (coalesced writes + stale-read protection)
 - runtime logging
 

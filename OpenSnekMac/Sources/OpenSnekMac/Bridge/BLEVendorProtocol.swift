@@ -17,7 +17,10 @@ enum BLEVendorProtocol {
         static let dpiStagesSet = Key(b0: 0x0B, b1: 0x04, b2: 0x01, b3: 0x00)
         static let lightingGet = Key(b0: 0x10, b1: 0x85, b2: 0x01, b3: 0x01)
         static let lightingSet = Key(b0: 0x10, b1: 0x05, b2: 0x01, b3: 0x00)
+        static let lightingFrameGet = Key(b0: 0x10, b1: 0x84, b2: 0x00, b3: 0x00)
         static let lightingFrameSet = Key(b0: 0x10, b1: 0x04, b2: 0x00, b3: 0x00)
+        static let powerTimeoutGet = Key(b0: 0x05, b1: 0x84, b2: 0x00, b3: 0x00)
+        static let powerTimeoutSet = Key(b0: 0x05, b1: 0x04, b2: 0x00, b3: 0x00)
         static let batteryRaw = Key(b0: 0x05, b1: 0x81, b2: 0x00, b3: 0x01)
         static let batteryStatus = Key(b0: 0x05, b1: 0x80, b2: 0x00, b3: 0x01)
 
@@ -61,8 +64,15 @@ enum BLEVendorProtocol {
         } else {
             continuation = []
         }
-        let payload = continuation.reduce(into: Data()) { partialResult, frame in
-            partialResult.append(frame)
+        let payload: Data
+        if continuation.isEmpty, header.payloadLength > 0 {
+            // Some short responses arrive as a single notify frame with payload
+            // bytes appended after the 8-byte header.
+            payload = Data(notifies[headerIndex].dropFirst(8))
+        } else {
+            payload = continuation.reduce(into: Data()) { partialResult, frame in
+                partialResult.append(frame)
+            }
         }
         if header.payloadLength == 0 { return Data() }
         return payload.prefix(header.payloadLength)

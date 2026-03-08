@@ -16,19 +16,19 @@ final class AppState {
 
     var editableStageValues: [Int] = [800, 1600, 3200, 6400, 12000]
     var editableStageCount = 3
-    var singleStageMode = false
     var editableActiveStage = 1
     var editablePollRate = 1000
+    var editableSleepTimeout = 300
     var editableLedBrightness = 64
     var editableColor = RGBColor(r: 0, g: 255, b: 0)
-    var editableButtonSlot = 2
-    var editableButtonKind: ButtonBindingKind = .rightClick
-    var editableHidKey = 4
+    let buttonSlots = ButtonSlotDescriptor.defaults
+    var editableButtonBindings: [Int: ButtonBindingDraft] = [:]
 
     private let client = BridgeClient()
     private var isHydrating = false
     private var dpiApplyTask: Task<Void, Never>?
     private var pollApplyTask: Task<Void, Never>?
+    private var powerApplyTask: Task<Void, Never>?
     private var ledApplyTask: Task<Void, Never>?
     private var colorApplyTask: Task<Void, Never>?
     private var buttonApplyTask: Task<Void, Never>?
@@ -42,6 +42,7 @@ final class AppState {
     private var stateRevision: UInt64 = 0
     var isEditingDpiControl = false
     private var lastLocalEditAt: Date?
+    private var hydratedLightingColorByDeviceID: Set<String> = []
 
     var selectedDevice: MouseDevice? {
         guard let selectedDeviceID else { return nil }
@@ -113,6 +114,7 @@ final class AppState {
             lastUpdated = Date()
             if shouldHydrateEditable {
                 hydrateEditable(from: merged)
+                await hydrateLightingColorIfNeeded(device: selectedDevice)
             }
             errorMessage = nil
             AppLog.debug(
@@ -144,9 +146,9 @@ final class AppState {
     }
 
     func applyDpiStages() async {
-        let count = singleStageMode ? 1 : max(1, min(5, editableStageCount))
+        let count = max(1, min(5, editableStageCount))
         let values = Array(editableStageValues.prefix(count)).map { max(100, min(30000, $0)) }
-        let active = singleStageMode ? 0 : max(0, min(count - 1, editableActiveStage - 1))
+        let active = max(0, min(count - 1, editableActiveStage - 1))
 
         enqueueApply(DevicePatch(dpiStages: values, activeStage: active))
     }
@@ -168,8 +170,8 @@ final class AppState {
     }
 
     func applyActiveStageOnly() async {
-        let count = singleStageMode ? 1 : max(1, min(5, editableStageCount))
-        let active = singleStageMode ? 0 : max(0, min(count - 1, editableActiveStage - 1))
+        let count = max(1, min(5, editableStageCount))
+        let active = max(0, min(count - 1, editableActiveStage - 1))
         enqueueApply(DevicePatch(activeStage: active))
     }
 
@@ -206,6 +208,26 @@ final class AppState {
             }
             guard !Task.isCancelled else { return }
             await self?.applyPollRate()
+        }
+    }
+
+    func applySleepTimeout() async {
+        enqueueApply(DevicePatch(sleepTimeout: editableSleepTimeout))
+    }
+
+    func scheduleAutoApplySleepTimeout() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        powerApplyTask?.cancel()
+        powerApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 260_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applySleepTimeout()
         }
     }
 
@@ -249,16 +271,17 @@ final class AppState {
         }
     }
 
-    func applyButtonBinding() async {
+    private func applyButtonBinding(slot: Int) async {
+        let resolved = editableButtonBindings[slot] ?? defaultButtonBinding(for: slot)
         let binding = ButtonBindingPatch(
-            slot: editableButtonSlot,
-            kind: editableButtonKind,
-            hidKey: editableButtonKind == .keyboardSimple ? editableHidKey : nil
+            slot: slot,
+            kind: resolved.kind,
+            hidKey: resolved.kind == .keyboardSimple ? resolved.hidKey : nil
         )
         enqueueApply(DevicePatch(buttonBinding: binding))
     }
 
-    func scheduleAutoApplyButton() {
+    func scheduleAutoApplyButton(slot: Int) {
         guard !isHydrating else { return }
         hasPendingLocalEdits = true
         lastLocalEditAt = Date()
@@ -270,8 +293,44 @@ final class AppState {
                 return
             }
             guard !Task.isCancelled else { return }
-            await self?.applyButtonBinding()
+            await self?.applyButtonBinding(slot: slot)
         }
+    }
+
+    func buttonBindingKind(for slot: Int) -> ButtonBindingKind {
+        editableButtonBindings[slot]?.kind ?? defaultButtonBinding(for: slot).kind
+    }
+
+    func buttonBindingHidKey(for slot: Int) -> Int {
+        editableButtonBindings[slot]?.hidKey ?? defaultButtonBinding(for: slot).hidKey
+    }
+
+    func buttonBindingSummary(for slot: Int) -> String {
+        let binding = editableButtonBindings[slot] ?? defaultButtonBinding(for: slot)
+        if binding.kind == .keyboardSimple {
+            return "\(binding.kind.label) (\(binding.hidKey))"
+        }
+        return binding.kind.label
+    }
+
+    func updateButtonBindingKind(slot: Int, kind: ButtonBindingKind) {
+        guard buttonSlots.contains(where: { $0.slot == slot }) else { return }
+        var next = editableButtonBindings[slot] ?? defaultButtonBinding(for: slot)
+        next.kind = kind
+        if kind != .keyboardSimple {
+            next.hidKey = 4
+        }
+        editableButtonBindings[slot] = next
+        scheduleAutoApplyButton(slot: slot)
+    }
+
+    func updateButtonBindingHidKey(slot: Int, hidKey: Int) {
+        guard buttonSlots.contains(where: { $0.slot == slot }) else { return }
+        var next = editableButtonBindings[slot] ?? defaultButtonBinding(for: slot)
+        next.kind = .keyboardSimple
+        next.hidKey = max(4, min(231, hidKey))
+        editableButtonBindings[slot] = next
+        scheduleAutoApplyButton(slot: slot)
     }
 
     func refreshDpiFast() async {
@@ -306,6 +365,7 @@ final class AppState {
                 dpi: DpiPair(x: currentDpiValue, y: currentDpiValue),
                 dpi_stages: DpiStages(active_stage: active, values: fast.values),
                 poll_rate: previous.poll_rate,
+                sleep_timeout: previous.sleep_timeout,
                 device_mode: previous.device_mode,
                 led_value: previous.led_value,
                 capabilities: previous.capabilities
@@ -377,6 +437,10 @@ final class AppState {
             lastUpdated = Date()
             lastLocalEditAt = nil
             hydrateEditable(from: merged)
+            if patch.ledRGB != nil {
+                persistLightingColor(editableColor, deviceID: selectedDevice.id)
+                hydratedLightingColorByDeviceID.insert(selectedDevice.id)
+            }
             errorMessage = nil
             AppLog.event(
                 "AppState",
@@ -402,7 +466,6 @@ final class AppState {
 
         if let values = state.dpi_stages.values, !values.isEmpty {
             editableStageCount = max(1, min(5, values.count))
-            singleStageMode = editableStageCount == 1
             for i in 0..<editableStageValues.count {
                 if i < values.count {
                     editableStageValues[i] = max(100, min(30000, values[i]))
@@ -419,9 +482,61 @@ final class AppState {
             editablePollRate = poll
         }
 
+        if let timeout = state.sleep_timeout {
+            editableSleepTimeout = max(60, min(900, timeout))
+        }
+
         if let led = state.led_value {
             editableLedBrightness = led
         }
+    }
+
+    private func hydrateLightingColorIfNeeded(device: MouseDevice) async {
+        guard device.transport == "bluetooth" else { return }
+        guard !hydratedLightingColorByDeviceID.contains(device.id) else { return }
+
+        if let rgb = try? await client.readLightingColor(device: device) {
+            editableColor = RGBColor(r: rgb.r, g: rgb.g, b: rgb.b)
+            persistLightingColor(editableColor, deviceID: device.id)
+            hydratedLightingColorByDeviceID.insert(device.id)
+            AppLog.debug("AppState", "hydrated lighting color from device id=\(device.id) rgb=(\(rgb.r),\(rgb.g),\(rgb.b))")
+            return
+        }
+
+        if let persisted = loadPersistedLightingColor(deviceID: device.id) {
+            editableColor = persisted
+            hydratedLightingColorByDeviceID.insert(device.id)
+            AppLog.debug(
+                "AppState",
+                "hydrated lighting color from persisted cache id=\(device.id) rgb=(\(persisted.r),\(persisted.g),\(persisted.b))"
+            )
+            return
+        }
+
+        // Avoid retrying this unsupported read every refresh tick.
+        hydratedLightingColorByDeviceID.insert(device.id)
+        AppLog.debug("AppState", "lighting color read unavailable for device id=\(device.id)")
+    }
+
+    private func persistLightingColor(_ color: RGBColor, deviceID: String) {
+        let key = "lightingColor.\(deviceID)"
+        UserDefaults.standard.set([color.r, color.g, color.b], forKey: key)
+    }
+
+    private func loadPersistedLightingColor(deviceID: String) -> RGBColor? {
+        let key = "lightingColor.\(deviceID)"
+        guard let values = UserDefaults.standard.array(forKey: key) as? [Int], values.count == 3 else { return nil }
+        return RGBColor(
+            r: max(0, min(255, values[0])),
+            g: max(0, min(255, values[1])),
+            b: max(0, min(255, values[2]))
+        )
+    }
+
+    private func defaultButtonBinding(for slot: Int) -> ButtonBindingDraft {
+        let fallback = ButtonBindingDraft(kind: .default, hidKey: 4)
+        guard let descriptor = buttonSlots.first(where: { $0.slot == slot }) else { return fallback }
+        return ButtonBindingDraft(kind: descriptor.defaultKind, hidKey: 4)
     }
 }
 
@@ -429,6 +544,7 @@ private extension DevicePatch {
     var describe: String {
         var parts: [String] = []
         if let pollRate { parts.append("poll=\(pollRate)") }
+        if let sleepTimeout { parts.append("sleep=\(sleepTimeout)") }
         if let dpiStages { parts.append("stages=\(dpiStages)") }
         if let activeStage { parts.append("active=\(activeStage)") }
         if let ledBrightness { parts.append("led=\(ledBrightness)") }
@@ -438,8 +554,32 @@ private extension DevicePatch {
     }
 }
 
-struct RGBColor {
+struct RGBColor: Equatable {
     var r: Int
     var g: Int
     var b: Int
+}
+
+struct ButtonSlotDescriptor: Identifiable, Hashable {
+    let slot: Int
+    let friendlyName: String
+    let defaultKind: ButtonBindingKind
+
+    var id: Int { slot }
+
+    static let defaults: [ButtonSlotDescriptor] = [
+        ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
+        ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
+        ButtonSlotDescriptor(slot: 3, friendlyName: "Middle Click", defaultKind: .middleClick),
+        ButtonSlotDescriptor(slot: 4, friendlyName: "DPI Button", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 5, friendlyName: "Side Forward", defaultKind: .mouseForward),
+        ButtonSlotDescriptor(slot: 6, friendlyName: "Side Back", defaultKind: .mouseBack),
+        ButtonSlotDescriptor(slot: 7, friendlyName: "Scroll Up", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 8, friendlyName: "Scroll Down", defaultKind: .default),
+    ]
+}
+
+struct ButtonBindingDraft: Hashable {
+    var kind: ButtonBindingKind
+    var hidKey: Int
 }

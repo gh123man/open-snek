@@ -33,8 +33,17 @@ struct DeviceMode: Codable, Hashable {
 struct Capabilities: Codable, Hashable {
     let dpi_stages: Bool
     let poll_rate: Bool
+    let power_management: Bool
     let button_remap: Bool
     let lighting: Bool
+
+    init(dpi_stages: Bool, poll_rate: Bool, power_management: Bool = false, button_remap: Bool, lighting: Bool) {
+        self.dpi_stages = dpi_stages
+        self.poll_rate = poll_rate
+        self.power_management = power_management
+        self.button_remap = button_remap
+        self.lighting = lighting
+    }
 }
 
 struct MouseState: Codable, Hashable {
@@ -45,9 +54,36 @@ struct MouseState: Codable, Hashable {
     let dpi: DpiPair?
     let dpi_stages: DpiStages
     let poll_rate: Int?
+    let sleep_timeout: Int?
     let device_mode: DeviceMode?
     let led_value: Int?
     let capabilities: Capabilities
+
+    init(
+        device: DeviceSummary,
+        connection: String,
+        battery_percent: Int?,
+        charging: Bool?,
+        dpi: DpiPair?,
+        dpi_stages: DpiStages,
+        poll_rate: Int?,
+        sleep_timeout: Int? = nil,
+        device_mode: DeviceMode?,
+        led_value: Int?,
+        capabilities: Capabilities
+    ) {
+        self.device = device
+        self.connection = connection
+        self.battery_percent = battery_percent
+        self.charging = charging
+        self.dpi = dpi
+        self.dpi_stages = dpi_stages
+        self.poll_rate = poll_rate
+        self.sleep_timeout = sleep_timeout
+        self.device_mode = device_mode
+        self.led_value = led_value
+        self.capabilities = capabilities
+    }
 }
 
 extension MouseState {
@@ -64,11 +100,13 @@ extension MouseState {
                 values: dpi_stages.values ?? previous.dpi_stages.values
             ),
             poll_rate: poll_rate ?? previous.poll_rate,
+            sleep_timeout: sleep_timeout ?? previous.sleep_timeout,
             device_mode: device_mode ?? previous.device_mode,
             led_value: led_value ?? previous.led_value,
             capabilities: Capabilities(
                 dpi_stages: capabilities.dpi_stages || previous.capabilities.dpi_stages,
                 poll_rate: capabilities.poll_rate || previous.capabilities.poll_rate,
+                power_management: capabilities.power_management || previous.capabilities.power_management,
                 button_remap: capabilities.button_remap || previous.capabilities.button_remap,
                 lighting: capabilities.lighting || previous.capabilities.lighting
             )
@@ -119,6 +157,7 @@ struct ButtonBindingPatch: Sendable {
 
 struct DevicePatch: Sendable {
     var pollRate: Int? = nil
+    var sleepTimeout: Int? = nil
     var dpiStages: [Int]? = nil
     var activeStage: Int? = nil
     var ledBrightness: Int? = nil
@@ -130,6 +169,7 @@ extension DevicePatch {
     func merged(with newer: DevicePatch) -> DevicePatch {
         DevicePatch(
             pollRate: newer.pollRate ?? pollRate,
+            sleepTimeout: newer.sleepTimeout ?? sleepTimeout,
             dpiStages: newer.dpiStages ?? dpiStages,
             activeStage: newer.activeStage ?? activeStage,
             ledBrightness: newer.ledBrightness ?? ledBrightness,

@@ -17,7 +17,10 @@ Pure Swift macOS frontend for `open-snek`.
   - `AppState`: UI state model, coalesced auto-apply queue, stale-read guards
   - `AppLog`: runtime file + OSLog logger
 - `Sources/OpenSnekMac/UI/`
-  - `ContentView`: SwiftUI dashboard and controls
+  - `ContentView`: shell + device refresh/fast-poll timers
+  - `DeviceSidebarView`: device list and app utility actions
+  - `DeviceDetailView`: hero card, DPI/poll/power cards, and button mapping table
+  - `UIPrimitives`: shared cards, pills, stat blocks, and color helpers
 
 ## Runtime Guarantees
 
@@ -92,6 +95,26 @@ Then validate in app:
 - press mouse stage button repeatedly
 - verify highlighted stage in UI matches the stage value currently applied on mouse
 - verify wraparound stage 3 -> stage 1 is correct
+
+## UI Validation Checklist
+
+Use this after UI/control changes:
+
+1. Poll visibility:
+- Connect over Bluetooth and verify poll-rate stat/card is hidden.
+- Connect over USB/dongle and verify poll-rate stat/card is shown and writable.
+
+2. Power management:
+- Confirm `Power Management` card appears.
+- Change sleep timeout and confirm write/readback in logs (`sleep=` patch + updated state).
+
+3. Lighting hero controls:
+- Confirm brightness slider is in the top hero card.
+- On Bluetooth, confirm inline color controls apply without opening detached color windows.
+
+4. Button mapping table:
+- Confirm table uses friendly button names.
+- Change a mapping and confirm apply log includes `button(slot=...,kind=...)`.
 
 ## BLE DPI Guardrails
 
