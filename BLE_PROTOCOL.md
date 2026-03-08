@@ -189,8 +189,9 @@ Behavior is backend/OS dependent for BT HID interfaces.
 | Scroll mode | `02:94/14` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll acceleration | `02:96/16` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll smart reel | `02:97/17` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
-| Button remap | USB not implemented in scripts | `08 04 01 <slot>` + payload | BLE implemented | Need USB implementation + shared action catalog |
-| Lighting / matrix | USB class `0x0F` documented in OpenRazer | Raw scalar lighting key only (`10 85` / `10 05`) | Partial BLE only | Need full effect model on both transports |
+| Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping for non-HID parity |
+| Button remap | USB experimental raw writer only | `08 04 01 <slot>` + payload | BLE implemented + USB experimental writer | Need USB action taxonomy + shared safe helpers |
+| Lighting / matrix | USB class `0x0F` partly implemented (scroll LED) | Raw scalar lighting key only (`10 85` / `10 05`) | USB scroll LED + partial BLE scalar | Need full effect model on both transports |
 
 ## 13. `razer_ble.py` Feature Overlap Checklist
 
@@ -202,6 +203,7 @@ Behavior is backend/OS dependent for BT HID interfaces.
 | Stage payload parse/build (`_parse_bt_stage_table`, `_build_bt_stage_payload`) | Section 7.1 |
 | Button bind raw + helpers (`set_button_*`) | Sections 5.3, 7.2 |
 | Raw power/sleep/lighting APIs | Section 6 |
+| Scroll LED HID helpers (`get/set_scroll_led_*`) | Sections 8.3, 12 |
 | BLE Battery Service fallback (`get_battery_ble`, `get_battery`) | Section 8.1 |
 | Passive DPI fallback/sniff (`get_dpi`, `sniff_bt_dpi_values`) | Section 8.2 |
 | Poll-rate + direct DPI HID path behavior on BT | Section 8.3 |

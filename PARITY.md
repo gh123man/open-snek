@@ -34,8 +34,10 @@ Legend:
 | Scroll mode | `02:94/14` | unknown vendor key | both scripts (HID path) | PARTIAL | USB semantics validated via OpenRazer |
 | Scroll acceleration | `02:96/16` | unknown vendor key | both scripts (HID path) | PARTIAL | BLE vendor mapping missing |
 | Scroll smart reel | `02:97/17` | unknown vendor key | both scripts (HID path) | PARTIAL | BLE vendor mapping missing |
-| Button remapping | class `0x02`, `0x0D/0x12` family | vendor `08 04 01 <slot>` + 10-byte payload | BLE only currently | BLE_ONLY | USB button payload model not implemented yet |
-| Lighting/effects | class `0x0F` (OpenRazer documented) | raw scalar lighting (`10 85`/`10 05`) | partial BLE only | PARTIAL | No cross-transport effect abstraction yet |
+| Scroll LED brightness | `0F:84/04` (`VARSTORE`, `LED=0x01`) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated; BLE vendor key not mapped |
+| Scroll LED effects | `0F:02` (none/spectrum/wave/static/reactive/breath) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated on Basilisk V3 X |
+| Button remapping | class `0x02`, `0x0D/0x12` family | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB experimental raw writer | PARTIAL | Need validated USB action catalog and safe helpers |
+| Lighting/effects | class `0x0F` (OpenRazer documented) | raw scalar lighting (`10 85`/`10 05`) | USB scroll LED effects + BLE raw scalar | PARTIAL | No full cross-transport effect abstraction yet |
 | Profiles | partially documented in ecosystem | unknown | none | UNKNOWN | Needs capture-backed mapping |
 
 ## Current Priorities
@@ -54,6 +56,15 @@ Legend:
 3. Build common feature abstraction:
 - one logical setting model with transport-specific encoders
 - predictable fallback ordering per feature
+
+## Validated Device Profile (Basilisk V3 X HyperSpeed, USB PID `0x00B9`)
+
+Validated in-session over USB:
+- working: serial, firmware, device mode read/write, poll-rate read/write, idle-time read/write, low-battery-threshold read/write, DPI/stages, battery
+- working: scroll LED brightness + effects (none/spectrum/wave/static/reactive/breath single/dual/random)
+- unsupported (returns `None`): scroll mode, scroll acceleration, scroll smart reel
+
+CLI behavior has been updated to skip unsupported scroll controls with warnings instead of failing runs.
 
 ## Validation Checklist
 

@@ -44,6 +44,9 @@ python razer_poc.py --force-ble
 python razer_usb.py --dpi 1600
 python razer_usb.py --stages 400,800,1600,3200,6400
 python razer_usb.py --poll-rate 1000
+python razer_usb.py --scroll-led-brightness 128
+python razer_usb.py --scroll-led-static 00ff00
+python razer_usb.py --scroll-led-effect spectrum
 
 # BLE examples
 python razer_ble.py --single-dpi 1600
@@ -60,8 +63,9 @@ python razer_ble.py --lighting-value-raw 1
 | Set Active DPI Stage | Yes | Yes | BLE implemented via stage-table rewrite |
 | Read/Set Poll Rate | Yes | Partial | Implemented with HID command path; BLE stack dependent |
 | Read Battery | Yes | Yes | BLE fallback via Battery Service `0x180F` |
+| Scroll LED Brightness/Effects | Yes | Partial | USB validated (`0x0F:0x84/0x04` + `0x0F:0x02`); BLE via HID path only |
 | Power/Sleep/Lighting (raw) | No | Yes | BLE vendor scalar read/write keys |
-| Button Rebinding | No | Yes | BLE vendor header+10-byte payload path |
+| Button Rebinding | Partial | Yes | BLE vendor header+10-byte payload; USB has experimental raw writer |
 
 ## Repository Structure
 

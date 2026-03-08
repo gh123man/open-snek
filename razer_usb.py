@@ -47,6 +47,7 @@ CMD_CLASS_STANDARD = 0x00
 CMD_CLASS_CONFIG = 0x02
 CMD_CLASS_DPI = 0x04
 CMD_CLASS_MISC = 0x07
+CMD_CLASS_MATRIX = 0x0F
 
 CMD_GET_DEVICE_MODE = 0x84
 CMD_SET_DEVICE_MODE = 0x04
@@ -69,10 +70,15 @@ CMD_GET_SCROLL_ACCELERATION = 0x96
 CMD_SET_SCROLL_ACCELERATION = 0x16
 CMD_GET_SCROLL_SMART_REEL = 0x97
 CMD_SET_SCROLL_SMART_REEL = 0x17
+CMD_SET_BUTTON_ACTION_NON_ANALOG = 0x0D
+CMD_GET_MATRIX_BRIGHTNESS = 0x84
+CMD_SET_MATRIX_BRIGHTNESS = 0x04
+CMD_SET_MATRIX_EFFECT = 0x02
 
 NOSTORE = 0x00
 VARSTORE = 0x01
 STATUS_SUCCESS = 0x02
+LED_SCROLL_WHEEL = 0x01
 STATUS_NAMES = {
     0x00: "new",
     0x01: "busy",
@@ -832,6 +838,125 @@ class RazerMouse:
         response = self._send_command(request)
         return response is not None and response[0] == STATUS_SUCCESS
 
+    # --- Scroll LED Controls (OpenRazer-derived, class 0x0F) ---
+
+    def get_scroll_led_brightness(self) -> Optional[int]:
+        request = self._create_report(
+            CMD_CLASS_MATRIX,
+            CMD_GET_MATRIX_BRIGHTNESS,
+            0x03,
+            bytes([VARSTORE, LED_SCROLL_WHEEL, 0x00]),
+        )
+        response = self._send_command(request)
+        if response and response[0] == STATUS_SUCCESS and len(response) >= 11:
+            return response[10]
+        return None
+
+    def set_scroll_led_brightness(self, brightness: int) -> bool:
+        brightness = max(0, min(255, int(brightness)))
+        request = self._create_report(
+            CMD_CLASS_MATRIX,
+            CMD_SET_MATRIX_BRIGHTNESS,
+            0x03,
+            bytes([VARSTORE, LED_SCROLL_WHEEL, brightness]),
+        )
+        response = self._send_command(request)
+        return response is not None and response[0] == STATUS_SUCCESS
+
+    def _set_scroll_led_effect_raw(self, args: bytes) -> bool:
+        request = self._create_report(CMD_CLASS_MATRIX, CMD_SET_MATRIX_EFFECT, len(args), args)
+        response = self._send_command(request)
+        return response is not None and response[0] == STATUS_SUCCESS
+
+    def set_scroll_led_effect_none(self) -> bool:
+        return self._set_scroll_led_effect_raw(bytes([VARSTORE, LED_SCROLL_WHEEL, 0x00, 0x00, 0x00, 0x00]))
+
+    def set_scroll_led_effect_spectrum(self) -> bool:
+        return self._set_scroll_led_effect_raw(bytes([VARSTORE, LED_SCROLL_WHEEL, 0x03, 0x00, 0x00, 0x00]))
+
+    def set_scroll_led_effect_wave(self, direction: int = 1) -> bool:
+        d = 1 if int(direction) <= 1 else 2
+        return self._set_scroll_led_effect_raw(bytes([VARSTORE, LED_SCROLL_WHEEL, 0x04, d, 0x28, 0x00]))
+
+    def set_scroll_led_effect_static(self, r: int, g: int, b: int) -> bool:
+        return self._set_scroll_led_effect_raw(
+            bytes([VARSTORE, LED_SCROLL_WHEEL, 0x01, 0x00, 0x00, 0x01, r & 0xFF, g & 0xFF, b & 0xFF])
+        )
+
+    def set_scroll_led_effect_reactive(self, speed: int, r: int, g: int, b: int) -> bool:
+        s = max(1, min(4, int(speed)))
+        return self._set_scroll_led_effect_raw(
+            bytes([VARSTORE, LED_SCROLL_WHEEL, 0x05, 0x00, s, 0x01, r & 0xFF, g & 0xFF, b & 0xFF])
+        )
+
+    def set_scroll_led_effect_breath_random(self) -> bool:
+        return self._set_scroll_led_effect_raw(bytes([VARSTORE, LED_SCROLL_WHEEL, 0x02, 0x00, 0x00, 0x00]))
+
+    def set_scroll_led_effect_breath_single(self, r: int, g: int, b: int) -> bool:
+        return self._set_scroll_led_effect_raw(
+            bytes([VARSTORE, LED_SCROLL_WHEEL, 0x02, 0x01, 0x00, 0x01, r & 0xFF, g & 0xFF, b & 0xFF])
+        )
+
+    def set_scroll_led_effect_breath_dual(self, r1: int, g1: int, b1: int, r2: int, g2: int, b2: int) -> bool:
+        return self._set_scroll_led_effect_raw(
+            bytes(
+                [
+                    VARSTORE,
+                    LED_SCROLL_WHEEL,
+                    0x02,
+                    0x02,
+                    0x00,
+                    0x02,
+                    r1 & 0xFF,
+                    g1 & 0xFF,
+                    b1 & 0xFF,
+                    r2 & 0xFF,
+                    g2 & 0xFF,
+                    b2 & 0xFF,
+                ]
+            )
+        )
+
+    # --- USB Button Actions (experimental) ---
+
+    def set_usb_button_action(
+        self,
+        profile: int,
+        button_id: int,
+        action_type: int,
+        param_bytes: bytes,
+        fn_hypershift: bool = False,
+    ) -> bool:
+        """
+        Experimental non-analog button action write (class 0x02, id 0x0d).
+
+        Payload layout (capture/OpenRazer-derived high-level format):
+          [0]=profile
+          [1]=button_id
+          [2]=fn/hypershift flag
+          [3-4]=actuation (0x0000 for non-analog)
+          [5]=action_type
+          [6]=param length
+          [7..]=params
+        """
+        p = int(profile) & 0xFF
+        b = int(button_id) & 0xFF
+        fn = 0x01 if fn_hypershift else 0x00
+        t = int(action_type) & 0xFF
+        params = bytes(param_bytes)
+        if len(params) > 72:
+            return False
+
+        args = bytes([p, b, fn, 0x00, 0x00, t, len(params)]) + params
+        request = self._create_report(
+            CMD_CLASS_CONFIG,
+            CMD_SET_BUTTON_ACTION_NON_ANALOG,
+            len(args),
+            args,
+        )
+        response = self._send_command(request)
+        return response is not None and response[0] == STATUS_SUCCESS
+
     # --- Battery ---
 
     def get_battery(self) -> Optional[Tuple[int, bool]]:
@@ -1020,6 +1145,10 @@ def print_status(mouse: RazerMouse):
     if ssr is not None:
         print(f"\n  Smart Reel:     {'on' if ssr else 'off'}")
 
+    scroll_led = mouse.get_scroll_led_brightness()
+    if scroll_led is not None:
+        print(f"\n  Scroll LED:     brightness {scroll_led}/255")
+
     # Battery
     battery = mouse.get_battery()
     if battery:
@@ -1028,6 +1157,16 @@ def print_status(mouse: RazerMouse):
         print(f"\n  Battery:        {level}%{status}")
 
     print()
+
+
+def _parse_rgb_hex(value: str) -> Optional[Tuple[int, int, int]]:
+    s = (value or "").strip().lower().replace("#", "")
+    if len(s) != 6:
+        return None
+    try:
+        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except Exception:
+        return None
 
 
 def main():
@@ -1069,6 +1208,20 @@ Note: This script targets USB and 2.4GHz dongle transport.
                         help='Set scroll acceleration')
     parser.add_argument('--scroll-smart-reel', choices=['on', 'off'],
                         help='Set scroll smart reel')
+    parser.add_argument('--scroll-led-brightness', type=int, metavar='0-255',
+                        help='Set scroll wheel LED brightness')
+    parser.add_argument('--scroll-led-effect', choices=['none', 'spectrum', 'wave-left', 'wave-right', 'breath-random'],
+                        help='Set scroll wheel LED effect')
+    parser.add_argument('--scroll-led-static', type=str, metavar='RRGGBB',
+                        help='Set static scroll LED color (hex)')
+    parser.add_argument('--scroll-led-reactive', type=str, metavar='SPEED:RRGGBB',
+                        help='Set reactive scroll LED (speed 1-4)')
+    parser.add_argument('--scroll-led-breath-single', type=str, metavar='RRGGBB',
+                        help='Set breathing single-color scroll LED')
+    parser.add_argument('--scroll-led-breath-dual', type=str, metavar='RRGGBB:RRGGBB',
+                        help='Set breathing dual-color scroll LED')
+    parser.add_argument('--usb-button-action', type=str, metavar='PROFILE:BTN:TYPE:PARAMHEX[:FN]',
+                        help='Experimental USB button action write (class 0x02 id 0x0D)')
     parser.add_argument('--quiet', '-q', action='store_true',
                         help='Minimal output')
     parser.add_argument('--debug-hid', action='store_true',
@@ -1187,7 +1340,12 @@ Note: This script targets USB and 2.4GHz dongle transport.
     if args.scroll_mode:
         mode = 1 if args.scroll_mode == "freespin" else 0
         print(f"\nSetting scroll mode to: {args.scroll_mode}")
-        if mouse.set_scroll_mode(mode):
+        if mouse.get_scroll_mode() is None:
+            print("  Unsupported on this device/transport; skipping.")
+            mode = None
+        if mode is None:
+            pass
+        elif mouse.set_scroll_mode(mode):
             print("  Success!")
             made_changes = True
         else:
@@ -1197,7 +1355,9 @@ Note: This script targets USB and 2.4GHz dongle transport.
     if args.scroll_acceleration:
         enabled = args.scroll_acceleration == "on"
         print(f"\nSetting scroll acceleration: {args.scroll_acceleration}")
-        if mouse.set_scroll_acceleration(enabled):
+        if mouse.get_scroll_acceleration() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_acceleration(enabled):
             print("  Success!")
             made_changes = True
         else:
@@ -1207,7 +1367,134 @@ Note: This script targets USB and 2.4GHz dongle transport.
     if args.scroll_smart_reel:
         enabled = args.scroll_smart_reel == "on"
         print(f"\nSetting scroll smart reel: {args.scroll_smart_reel}")
-        if mouse.set_scroll_smart_reel(enabled):
+        if mouse.get_scroll_smart_reel() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_smart_reel(enabled):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.scroll_led_brightness is not None:
+        print(f"\nSetting scroll LED brightness to: {args.scroll_led_brightness}")
+        if mouse.get_scroll_led_brightness() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_led_brightness(args.scroll_led_brightness):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.scroll_led_effect:
+        print(f"\nSetting scroll LED effect to: {args.scroll_led_effect}")
+        if mouse.get_scroll_led_brightness() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        else:
+            ok = False
+            if args.scroll_led_effect == "none":
+                ok = mouse.set_scroll_led_effect_none()
+            elif args.scroll_led_effect == "spectrum":
+                ok = mouse.set_scroll_led_effect_spectrum()
+            elif args.scroll_led_effect == "wave-left":
+                ok = mouse.set_scroll_led_effect_wave(1)
+            elif args.scroll_led_effect == "wave-right":
+                ok = mouse.set_scroll_led_effect_wave(2)
+            elif args.scroll_led_effect == "breath-random":
+                ok = mouse.set_scroll_led_effect_breath_random()
+            if ok:
+                print("  Success!")
+                made_changes = True
+            else:
+                print("  Failed!")
+                return 1
+
+    if args.scroll_led_static:
+        rgb = _parse_rgb_hex(args.scroll_led_static)
+        if rgb is None:
+            print("\nInvalid --scroll-led-static; expected RRGGBB.")
+            return 1
+        print(f"\nSetting scroll LED static color to: #{args.scroll_led_static.strip().lstrip('#')}")
+        if mouse.get_scroll_led_brightness() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_led_effect_static(*rgb):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.scroll_led_reactive:
+        try:
+            speed_s, rgb_s = args.scroll_led_reactive.split(':', 1)
+            speed = int(speed_s, 0)
+            rgb = _parse_rgb_hex(rgb_s)
+            if rgb is None:
+                raise ValueError("bad rgb")
+        except Exception:
+            print("\nInvalid --scroll-led-reactive; expected SPEED:RRGGBB.")
+            return 1
+        print(f"\nSetting scroll LED reactive effect speed={speed} color=#{rgb_s.strip().lstrip('#')}")
+        if mouse.get_scroll_led_brightness() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_led_effect_reactive(speed, *rgb):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.scroll_led_breath_single:
+        rgb = _parse_rgb_hex(args.scroll_led_breath_single)
+        if rgb is None:
+            print("\nInvalid --scroll-led-breath-single; expected RRGGBB.")
+            return 1
+        print(f"\nSetting scroll LED breathing single color to: #{args.scroll_led_breath_single.strip().lstrip('#')}")
+        if mouse.get_scroll_led_brightness() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_led_effect_breath_single(*rgb):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.scroll_led_breath_dual:
+        try:
+            c1, c2 = args.scroll_led_breath_dual.split(':', 1)
+            rgb1 = _parse_rgb_hex(c1)
+            rgb2 = _parse_rgb_hex(c2)
+            if rgb1 is None or rgb2 is None:
+                raise ValueError("bad rgb")
+        except Exception:
+            print("\nInvalid --scroll-led-breath-dual; expected RRGGBB:RRGGBB.")
+            return 1
+        print(f"\nSetting scroll LED breathing dual colors to: #{c1.strip().lstrip('#')} and #{c2.strip().lstrip('#')}")
+        if mouse.get_scroll_led_brightness() is None:
+            print("  Unsupported on this device/transport; skipping.")
+        elif mouse.set_scroll_led_effect_breath_dual(*rgb1, *rgb2):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.usb_button_action:
+        try:
+            parts = args.usb_button_action.split(':')
+            if len(parts) not in (4, 5):
+                raise ValueError("bad part count")
+            profile = int(parts[0], 0)
+            button_id = int(parts[1], 0)
+            action_type = int(parts[2], 0)
+            param_bytes = bytes.fromhex(parts[3].strip()) if parts[3].strip() else b""
+            fn_flag = bool(int(parts[4], 0)) if len(parts) == 5 else False
+        except Exception:
+            print("\nInvalid --usb-button-action format. Use PROFILE:BTN:TYPE:PARAMHEX[:FN].")
+            return 1
+        print(f"\nSetting USB button action profile={profile} button={button_id} type=0x{action_type:02x} params={param_bytes.hex()} fn={int(fn_flag)}")
+        if mouse.set_usb_button_action(profile, button_id, action_type, param_bytes, fn_hypershift=fn_flag):
             print("  Success!")
             made_changes = True
         else:

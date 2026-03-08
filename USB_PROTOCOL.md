@@ -275,6 +275,33 @@ Command:  Class 0x02, ID 0x97 (get) / 0x17 (set), Size 0x02
 Args:     [0] = VARSTORE (0x01), [1] = enabled (0x00/0x01)
 ```
 
+### Class 0x0F - Scroll LED Brightness and Effects
+
+Validated on Basilisk V3 X HyperSpeed (`0x00B9`) over USB.
+
+#### Get/Set Scroll LED Brightness
+```
+Get:      Class 0x0F, ID 0x84, Size 0x03
+Set:      Class 0x0F, ID 0x04, Size 0x03
+Args:     [0] = VARSTORE (0x01), [1] = LED ID (0x01 scroll wheel), [2] = brightness (0..255)
+```
+
+#### Set Scroll LED Effects
+```
+Command:  Class 0x0F, ID 0x02, Size varies
+Common:   [0] = VARSTORE (0x01), [1] = LED ID (0x01 scroll wheel), [2] = effect id
+```
+
+Observed-working payload families:
+- none: `01 01 00 00 00 00`
+- spectrum: `01 01 03 00 00 00`
+- wave: `01 01 04 <dir> 28 00` (`dir` tested `0x01`/`0x02`)
+- static: `01 01 01 00 00 01 <R> <G> <B>`
+- reactive: `01 01 05 00 <speed 1..4> 01 <R> <G> <B>`
+- breath random: `01 01 02 00 00 00`
+- breath single: `01 01 02 01 00 01 <R> <G> <B>`
+- breath dual: `01 01 02 02 00 02 <R1> <G1> <B1> <R2> <G2> <B2>`
+
 ---
 
 ## Unimplemented Commands
@@ -283,7 +310,8 @@ These commands are documented but not yet implemented in this tool.
 
 ### Button Remapping (Class 0x02)
 
-**Status**: Protocol partially documented in [OpenRazer Issue #2031](https://github.com/openrazer/openrazer/issues/2031)
+**Status**: Protocol partially documented in [OpenRazer Issue #2031](https://github.com/openrazer/openrazer/issues/2031).  
+`razer_usb.py`/`razer_ble.py` now expose an **experimental raw writer** via `--usb-button-action`, but action catalogs and per-button payload semantics are still incomplete.
 
 ```
 Command:  Class 0x02, ID 0x0d (non-analog) or 0x12 (analog)
@@ -316,7 +344,7 @@ Requires USB capture from Synapse to confirm exact format.
 
 ### RGB Lighting (Class 0x0F)
 
-**Status**: Documented in OpenRazer but not implemented here.
+**Status**: Partially implemented. Scroll wheel LED brightness and effect families above are implemented and hardware-validated. Matrix-wide/custom-frame and multi-zone abstractions are still unimplemented.
 
 ```
 Static Effect:
@@ -351,7 +379,8 @@ Effects:
 | Scroll mode | `02:94/14` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll acceleration | `02:96/16` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll smart reel | `02:97/17` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
-| Button remap | Partial USB docs only | Vendor write path documented and implemented | BLE implemented, USB not implemented | Need USB implementation and full action taxonomy |
+| Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping for non-HID parity |
+| Button remap | Partial USB docs only | Vendor write path documented and implemented | BLE implemented, USB experimental raw writer | Need USB action taxonomy + validated payload catalog |
 | RGB / matrix effects | OpenRazer-documented classes | Partial BLE raw lighting scalar only | Not implemented end-to-end in scripts | Need cross-transport effect model and commands |
 
 ---
