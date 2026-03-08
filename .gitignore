@@ -48,3 +48,14 @@ gatt_enumeration_results.json
 # SwiftPM build artifacts
 OpenSnekMac/.build/
 .build/
+
+# Swift/Xcode user and local build state
+.swiftpm/
+OpenSnekMac/.swiftpm/
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
