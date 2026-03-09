@@ -714,7 +714,11 @@ class RazerMouse:
 
     @staticmethod
     def _build_button_payload_default(slot: int) -> bytes:
-        # Observed pattern: 01 <slot> 00 01 0000 0000 0000
+        # Capture-backed defaults:
+        # - Generic: 01 <slot> 00 01 0000 0000 0000
+        # - DPI cycle button (slot 0x60): 01 60 00 06 0106 0000 0000
+        if int(slot) == 0x60:
+            return RazerMouse._build_button_payload_action(slot, 0x06, 0x0601, 0x0000, 0x0000, layer=0x00)
         return RazerMouse._build_button_payload_action(slot, 0x01, 0x0000, 0x0000, 0x0000, layer=0x00)
 
     @staticmethod
@@ -761,6 +765,17 @@ class RazerMouse:
 
     def set_button_right_click(self, slot: int) -> bool:
         return self.set_button_mouse_button(slot, 0x02)
+
+    def set_button_middle_click(self, slot: int) -> bool:
+        return self.set_button_mouse_button(slot, 0x03)
+
+    def set_button_scroll_up(self, slot: int) -> bool:
+        # capture-backed on slot 0x09: p0=0x0901
+        return self.set_button_mouse_button(slot, 0x09)
+
+    def set_button_scroll_down(self, slot: int) -> bool:
+        # capture-backed on slot 0x0a: p0=0x0a01
+        return self.set_button_mouse_button(slot, 0x0A)
 
     def set_button_keyboard_simple(self, slot: int, hid_key: int) -> bool:
         slot = int(slot)
@@ -1571,11 +1586,17 @@ Note: This script targets Bluetooth transport.
     parser.add_argument('--button-default', type=int, metavar='SLOT',
                         help='Set button slot to default mouse action (capture-backed)')
     parser.add_argument('--button-mouse', type=str, metavar='SLOT:BTN',
-                        help='Set button slot to mouse-button action (BTN id; 1=left, 2=right)')
+                        help='Set button slot to mouse-button action (BTN id; 1=left, 2=right, 3=middle, 9=scroll up, 10=scroll down)')
     parser.add_argument('--button-left-click', type=int, metavar='SLOT',
                         help='Set button slot to left-click mouse action')
     parser.add_argument('--button-right-click', type=int, metavar='SLOT',
                         help='Set button slot to right-click mouse action')
+    parser.add_argument('--button-middle-click', type=int, metavar='SLOT',
+                        help='Set button slot to middle-click mouse action')
+    parser.add_argument('--button-scroll-up', type=int, metavar='SLOT',
+                        help='Set button slot to scroll-up mouse action (capture-backed id 0x09)')
+    parser.add_argument('--button-scroll-down', type=int, metavar='SLOT',
+                        help='Set button slot to scroll-down mouse action (capture-backed id 0x0A)')
     parser.add_argument('--button-keyboard', type=str, metavar='SLOT:KEY',
                         help='Set button slot to simple keyboard action (hid key code)')
     parser.add_argument('--button-keyboard-ext', type=str, metavar='SLOT:K1:K2',
@@ -2011,6 +2032,36 @@ Note: This script targets Bluetooth transport.
         slot = int(args.button_right_click)
         print(f"\nSetting button slot {slot} to right-click action")
         if mouse.set_button_right_click(slot):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.button_middle_click is not None:
+        slot = int(args.button_middle_click)
+        print(f"\nSetting button slot {slot} to middle-click action")
+        if mouse.set_button_middle_click(slot):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.button_scroll_up is not None:
+        slot = int(args.button_scroll_up)
+        print(f"\nSetting button slot {slot} to scroll-up action")
+        if mouse.set_button_scroll_up(slot):
+            print("  Success!")
+            made_changes = True
+        else:
+            print("  Failed!")
+            return 1
+
+    if args.button_scroll_down is not None:
+        slot = int(args.button_scroll_down)
+        print(f"\nSetting button slot {slot} to scroll-down action")
+        if mouse.set_button_scroll_down(slot):
             print("  Success!")
             made_changes = True
         else:

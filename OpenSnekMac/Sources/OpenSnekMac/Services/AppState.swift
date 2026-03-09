@@ -51,6 +51,29 @@ final class AppState {
         return devices.first(where: { $0.id == selectedDeviceID })
     }
 
+    var visibleButtonSlots: [ButtonSlotDescriptor] {
+        guard let selectedDevice else { return buttonSlots }
+        if selectedDevice.transport == "bluetooth" {
+            // Capture-backed BLE bind slots shown in the UI.
+            // Slot 6 (Hypershift/Boss key) returns vendor error status and is hidden.
+            let visible: Set<Int> = [1, 2, 3, 4, 5, 9, 10, 96]
+            return buttonSlots.filter { visible.contains($0.slot) }
+        }
+        // Hide slot 6 in the UI pending a validated write path.
+        return buttonSlots.filter { $0.slot != 96 && $0.slot != 6 }
+    }
+
+    func isButtonSlotEditable(_ slot: Int) -> Bool {
+        guard let selectedDevice, selectedDevice.transport == "bluetooth" else { return true }
+        let writable: Set<Int> = [1, 2, 3, 4, 5, 9, 10, 96]
+        return writable.contains(slot)
+    }
+
+    func buttonSlotNotice(_ slot: Int) -> String? {
+        guard !isButtonSlotEditable(slot) else { return nil }
+        return "Not writable over current Bluetooth vendor protocol"
+    }
+
     func refreshDevices() async {
         let start = Date()
         AppLog.event("AppState", "refreshDevices start")
@@ -675,11 +698,11 @@ struct ButtonSlotDescriptor: Identifiable, Hashable {
         ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
         ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
         ButtonSlotDescriptor(slot: 3, friendlyName: "Middle Click", defaultKind: .middleClick),
-        ButtonSlotDescriptor(slot: 4, friendlyName: "DPI Button", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 5, friendlyName: "Side Forward", defaultKind: .mouseForward),
-        ButtonSlotDescriptor(slot: 6, friendlyName: "Side Back", defaultKind: .mouseBack),
-        ButtonSlotDescriptor(slot: 7, friendlyName: "Scroll Up", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 8, friendlyName: "Scroll Down", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 4, friendlyName: "Forward Button", defaultKind: .mouseForward),
+        ButtonSlotDescriptor(slot: 5, friendlyName: "Back Button", defaultKind: .mouseBack),
+        ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
+        ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
+        ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Cycle / Side Button 3", defaultKind: .default),
     ]
 }
 

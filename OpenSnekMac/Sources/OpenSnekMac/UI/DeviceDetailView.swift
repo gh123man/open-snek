@@ -120,6 +120,10 @@ struct LightingCard: View {
         return 0.10 + (brightness * 0.22)
     }
 
+    private var brightnessPercent: Int {
+        Int(round((Double(max(0, min(255, appState.editableLedBrightness))) / 255.0) * 100.0))
+    }
+
     var body: some View {
         Card(title: "Lighting") {
             HStack {
@@ -127,24 +131,23 @@ struct LightingCard: View {
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.82))
                 Spacer()
-                Text("\(appState.editableLedBrightness)")
+                Text("\(brightnessPercent)%")
                     .font(.system(size: 13, weight: .black, design: .monospaced))
                     .foregroundStyle(.white)
             }
 
             Slider(
                 value: Binding(
-                    get: { Double(appState.editableLedBrightness) },
+                    get: { (Double(max(0, min(255, appState.editableLedBrightness))) / 255.0) * 100.0 },
                     set: { newValue in
-                        appState.editableLedBrightness = Int(newValue)
+                        let percent = max(0.0, min(100.0, newValue))
+                        appState.editableLedBrightness = Int(round((percent / 100.0) * 255.0))
                         appState.scheduleAutoApplyLedBrightness()
                     }
                 ),
-                in: 0...255,
-                step: 1
+                in: 0...100
             )
             .tint(accentBase)
-            .scaleEffect(y: 1.9, anchor: .center)
             .padding(.vertical, 8)
 
             if state.connection == "Bluetooth" {
@@ -239,10 +242,9 @@ struct RGBSliderRow: View {
             Slider(
                 value: Binding(
                     get: { Double(value) },
-                    set: { value = Int($0) }
+                    set: { value = Int(round($0)) }
                 ),
-                in: 0...255,
-                step: 1
+                in: 0...255
             )
             .tint(tint)
             Text("\(value)")
@@ -340,12 +342,12 @@ struct DpiStagesCard: View {
                         value: Binding(
                             get: { Double(appState.stageValue(idx)) },
                             set: { newValue in
-                                appState.updateStage(idx, value: Int(newValue))
+                                let quantized = Int(round(newValue / 100.0) * 100.0)
+                                appState.updateStage(idx, value: quantized)
                                 appState.scheduleAutoApplyDpi()
                             }
                         ),
                         in: 100...30000,
-                        step: 100,
                         onEditingChanged: { editing in
                             appState.isEditingDpiControl = editing
                         }
@@ -413,12 +415,12 @@ struct SleepTimeoutCard: View {
                 value: Binding(
                     get: { Double(appState.editableSleepTimeout) },
                     set: { newValue in
-                        appState.editableSleepTimeout = Int(newValue)
+                        let quantized = Int(round(newValue / 15.0) * 15.0)
+                        appState.editableSleepTimeout = max(60, min(900, quantized))
                         appState.scheduleAutoApplySleepTimeout()
                     }
                 ),
-                in: 60...900,
-                step: 15
+                in: 60...900
             )
         }
     }
@@ -437,10 +439,11 @@ struct ButtonMappingTableCard: View {
 
     var body: some View {
         Card(title: title) {
-            ForEach(appState.buttonSlots) { slot in
+            ForEach(appState.visibleButtonSlots) { slot in
+                let isEditable = appState.isButtonSlotEditable(slot.slot)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 12) {
-                        Text("\(slot.slot). \(slot.friendlyName)")
+                        Text(slot.friendlyName)
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
 
@@ -460,6 +463,7 @@ struct ButtonMappingTableCard: View {
                         .labelsHidden()
                         .pickerStyle(.menu)
                         .frame(width: 220, alignment: .trailing)
+                        .disabled(!isEditable)
                     }
 
                     if appState.buttonBindingKind(for: slot.slot) == .keyboardSimple {
@@ -479,6 +483,7 @@ struct ButtonMappingTableCard: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 120)
                                 .multilineTextAlignment(.center)
+                                .disabled(!isEditable)
                             }
                             .frame(width: 300, alignment: .trailing)
                         }
@@ -490,8 +495,18 @@ struct ButtonMappingTableCard: View {
                                 .foregroundStyle(.white.opacity(0.58))
                         }
                     }
+
+                    if let notice = appState.buttonSlotNotice(slot.slot) {
+                        HStack {
+                            Spacer()
+                            Text(notice)
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.58))
+                        }
+                    }
                 }
                 .padding(8)
+                .opacity(isEditable ? 1.0 : 0.75)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color.white.opacity(0.04))

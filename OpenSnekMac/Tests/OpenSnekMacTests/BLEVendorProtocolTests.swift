@@ -58,6 +58,31 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(Array(payload), [0x01, 0x02, 0x00, 0x02, 0x02, 0x00, 0x2C, 0x00, 0x00, 0x00])
     }
 
+    func testButtonPayloadMiddleClick() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x03, kind: .middleClick, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x03, 0x00, 0x01, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadScrollUp() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x09, kind: .scrollUp, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x09, 0x00, 0x01, 0x01, 0x09, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadScrollDown() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x0A, kind: .scrollDown, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x0A, 0x00, 0x01, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadDefaultSlot2UsesExplicitRightClickRestore() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x02, kind: .default, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x02, 0x00, 0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadDefaultSlot60UsesCaptureBackedDpiRestore() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x60, kind: .default, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x60, 0x00, 0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00])
+    }
+
     func testParseVariableLengthDpiBlob() {
         // [active=0][count=2]
         // stage0: [00][20 03][20 03][00][00] -> 800

@@ -15,6 +15,9 @@ All notable changes to this project are documented in this file.
 - HID permission denial (`kIOReturnNotPermitted`) no longer hard-fails device discovery; app now continues with best-effort BLE discovery/fallback.
 - Bluetooth read/apply paths no longer require an IOHID handle, so BLE-only operation can continue when HID access is blocked.
 - BLE runtime errors now report explicit CoreBluetooth state failures (unauthorized/powered-off/unsupported) instead of generic timeouts.
+- BLE button remap UI now guards unsupported Bluetooth slot writes and uses capture-backed slot `0x60` for the DPI-cycle side control.
+- BLE button remap now supports capture-backed DPI-cycle slot `0x60` writes and default-restore semantics (action `0x06`, `p0=0x0601`).
+- BLE button remap no longer exposes slot `6` (`Hypershift/Boss key`) in the UI; runtime probes now document slot `6` as rejected (`status 0x03`) on the mapped BLE vendor key family.
 
 ### Changed
 - Replaced the macOS app icon artwork in `AppIcon.appiconset` with the new Open Snek icon and cropped out the black background letterboxing from the source image.
@@ -32,6 +35,14 @@ All notable changes to this project are documented in this file.
 - Window/detail sizing is more fluid: smaller minimum window size plus adaptive split-view column widths.
 - DPI stage editor now uses modern add/remove controls and stage-color accents (1 red, 2 green, 3 blue, 4 teal, 5 yellow).
 - DPI stage mode toggle was removed; stage count now directly drives single-stage vs multi-stage behavior (1..5).
+- Button remap labels now use user-facing names aligned to side-control order: slot `4` = `Forward Button`, slot `5` = `Back Button`, plus BLE slot `0x60` labeled `DPI Cycle / Side Button 3`.
+- BLE button UI now shows capture-backed writable slots (`1..5` + `0x60`) and labels slot `0x60` as `DPI Cycle / Side Button 3`.
+- Slot `6` (`Hypershift/Boss key`) support attempt on BLE was reverted after capture/runtime validation; the UI now hides slot `6` pending a decoded writable command path.
+- BLE button remap now includes wheel-button slots `0x09`/`0x0A` (Scroll Up/Down) and exposes capture-backed scroll-up/scroll-down action mappings in both CLI and app payload builders.
+- Button remap rows now display friendly names without numeric slot prefixes.
+- Button remap action label `Clear Layer` is now user-facing `Disabled`.
+- Lighting brightness slider now uses a `0..100%` UI scale (mapped to the same raw `0..255` transport values).
+- Slider controls now use continuous tracks without discrete step marker dots; value snapping is handled in setters where needed.
 
 ### Added
 - Hardware BLE DPI reliability test (`OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareDpiReliabilityTests`).

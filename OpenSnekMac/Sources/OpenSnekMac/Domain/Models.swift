@@ -184,6 +184,8 @@ enum ButtonBindingKind: String, CaseIterable, Identifiable {
     case leftClick = "left_click"
     case rightClick = "right_click"
     case middleClick = "middle_click"
+    case scrollUp = "scroll_up"
+    case scrollDown = "scroll_down"
     case mouseBack = "mouse_back"
     case mouseForward = "mouse_forward"
     case keyboardSimple = "keyboard_simple"
@@ -197,10 +199,12 @@ enum ButtonBindingKind: String, CaseIterable, Identifiable {
         case .leftClick: return "Left Click"
         case .rightClick: return "Right Click"
         case .middleClick: return "Middle Click"
+        case .scrollUp: return "Scroll Up"
+        case .scrollDown: return "Scroll Down"
         case .mouseBack: return "Mouse Back"
         case .mouseForward: return "Mouse Forward"
         case .keyboardSimple: return "Keyboard Key"
-        case .clearLayer: return "Clear Layer"
+        case .clearLayer: return "Disabled"
         }
     }
 }

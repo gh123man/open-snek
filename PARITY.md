@@ -36,7 +36,7 @@ Legend:
 | Scroll smart reel | `02:97/17` | unknown vendor key | both scripts (HID path) | PARTIAL | BLE vendor mapping missing |
 | Scroll LED brightness | `0F:84/04` (`VARSTORE`, `LED=0x01`) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated; BLE vendor key not mapped |
 | Scroll LED effects | `0F:02` (none/spectrum/wave/static/reactive/breath) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated on Basilisk V3 X |
-| Button remapping | class `0x02`, `0x0D/0x12` family | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB experimental raw writer | PARTIAL | Added layer-clear mapping (`layer=1, action=0x00`); still need turbo/media/macro payload catalog |
+| Button remapping | class `0x02`, `0x0D/0x12` family | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB experimental raw writer | PARTIAL | Added layer-clear mapping (`layer=1, action=0x00`); slot `0x06` is rejected (`status 0x03`) on mapped BLE vendor path; still need turbo/media/macro payload catalog |
 | Lighting/effects | class `0x0F` (OpenRazer documented) | mode (`10 03`) + scalar (`10 85`/`10 05`) + frame stream (`10 04`) | USB scroll LED effects + BLE mode/scalar/frame writes | PARTIAL | No full cross-transport effect abstraction/persistence yet |
 | Profiles | partially documented in ecosystem | unknown | none | UNKNOWN | Needs capture-backed mapping |
 
@@ -78,6 +78,9 @@ Validated in-session over Bluetooth:
   - device mode read fallback (`01 82 00 00`)
   - idle time fallback (`05 84 00 00` / `05 04 00 00`)
   - low battery threshold fallback (`05 82 00 00` / `05 02 00 00`)
+  - button remap slots `0x01..0x05`, `0x09`, `0x0A`, `0x60`
+- Vendor GATT button remap slot `0x06` returns error status (`0x03`) and is treated as unsupported in current tooling/UI.
+- `scroll-up-down-rebind.pcapng` confirms slot `0x09`/`0x0A` wheel-button mappings on BLE (`p0=0x0901` / `0x0A01`).
 
 `razer_ble.py` now uses vendor battery raw as BT fallback in `get_battery()` when vendor GATT is enabled.
 

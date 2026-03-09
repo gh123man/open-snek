@@ -80,6 +80,13 @@ Two-write sequence:
 1. Header select: `[req, 0x0A, 0x00, 0x00, 0x08, 0x04, 0x01, slot]`
 2. 10-byte action payload
 
+Capture-backed slots now include `0x60` (DPI-cycle control) in addition to
+the previously observed low slots.
+
+Transport note (capture-backed):
+- Both writes are ATT Write Request (`0x12`, with response) on this firmware/capture set.
+- The 10-byte action payload write does not need ATT Write Command (`0x52`) to succeed.
+
 ### 5.4 DPI Stage Table Read/Write
 
 - Get header: `[req, 0x00, 0x00, 0x00, 0x0B, 0x84, 0x01, 0x00]`
@@ -146,7 +153,7 @@ Observed 2-stage example (active 0, values 800/6400):
 ### 7.2 Button Action Payload (10 bytes)
 
 ```text
-[profile=0x01][slot][layer=0x00][action_type][p0_le16][p1_le16][p2_le16]
+[profile=0x01][slot][layer_or_plane][action_type][p0_le16][p1_le16][p2_le16]
 ```
 
 Action families exposed by helpers:
@@ -158,10 +165,18 @@ Action families exposed by helpers:
 Observed mouse mapping (`action_type=0x01`):
 - `p0=0x0101` left click
 - `p0=0x0201` right click
+- `p0=0x0301` middle click (inferred from existing action-id progression + USB/OpenRazer family)
+- `p0=0x0901` scroll up (`scroll-up-down-rebind.pcapng`, slot `0x09`)
+- `p0=0x0A01` scroll down (`scroll-up-down-rebind.pcapng`, slot `0x0A`)
+- slot `0x02` default restore is wire-identical to right click (`01 02 00 01 0102 0000 0000`).
 
 Observed layer-clear mapping (`all-key-binding-functions.pcapng`):
 - `01 <slot> 01 00 0000 0000 0000`
 - interpreted as clearing layer-1 override for that slot.
+
+Observed slot-specific default mapping (`dpi-cycle-left-click-default.pcapng`):
+- slot `0x60` restore payload: `01 60 00 06 0106 0000 0000`
+- this differs from the generic default payload (`action_type=0x01`, `p0=0x0000`).
 
 ## 8. Non-Vendor BLE Paths Used by `razer_ble.py`
 
@@ -199,9 +214,20 @@ Vendor GATT path in the same environment works when enabled:
 ## 9. Slot and Feature Coverage
 
 - DPI stage table: read/write with active-stage handling.
-- Button rebinding validated on slots `0x02`, `0x03`, `0x04`, `0x05`.
+- Button rebinding validated on slots `0x01`, `0x02`, `0x03`, `0x04`, `0x05`, `0x09`, `0x0A`, and `0x60` on Basilisk V3 X BT firmware.
 - Slot `0x02` default restore is implemented as explicit right-click payload.
+- Slot `0x60` (DPI cycle control) uses a capture-backed special default payload (`action 0x06`, `p0=0x0601`).
 - Layer-clear payload (`layer=0x01`, `action=0x00`) observed on slots `0x04` and `0x05`.
+- `hypershift-bind.pcapng` / `hypershift-full-hid.pcapng` replay the same apply triplet:
+  - slot `0x05` layer-clear payload (`01 05 01 00 0000 0000 0000`)
+  - slot `0x04` layer-clear payload (`01 04 01 00 0000 0000 0000`)
+  - slot `0x02` right-click payload (`01 02 00 01 0102 0000 0000`)
+- `scroll-up-down-rebind.pcapng` confirms wheel-button slot rebinding on BLE:
+  - slot `0x09`: left click (`p0=0x0101`) and scroll up (`p0=0x0901`)
+  - slot `0x0A`: left click (`p0=0x0101`) and scroll down (`p0=0x0A01`)
+- No button-bind selector for slot `0x06` appears in those captures.
+- Direct runtime probes on Basilisk V3 X BT reject slot `0x06` writes on this key family with status `0x03` (error), while slot `0x60` ACKs with `0x02` (success).
+- Practical implication: the Hypershift/Boss clutch button is not currently rebindable via vendor key `08 04 01 <slot>` in this implementation path.
 
 ## 9.1 OpenSnekMac Runtime Notes (2026-03)
 
@@ -229,6 +255,7 @@ These are transport-consumer behaviors and do not change the on-wire packet form
 
 - Full semantic catalog for all remaining key bytes (`byte4..7`).
 - Complete action taxonomy for button payloads (media/macro/system families).
+- Hypershift/Boss clutch remap command path (outside currently mapped `08 04 01 <slot>` family).
 - Synapse UI-unit mapping for raw scalar fields.
 - More cross-device validation beyond PID `0x00BA`.
 

@@ -863,6 +863,12 @@ actor BridgeClient {
         case "middle_click":
             actionType = 0x01
             params = [0x01, 0x03]
+        case "scroll_up":
+            actionType = 0x01
+            params = [0x01, 0x09]
+        case "scroll_down":
+            actionType = 0x01
+            params = [0x01, 0x0A]
         case "mouse_back":
             actionType = 0x01
             params = [0x01, 0x04]
