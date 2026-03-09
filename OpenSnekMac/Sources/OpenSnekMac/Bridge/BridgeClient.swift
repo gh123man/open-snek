@@ -2,14 +2,21 @@ import Foundation
 import IOKit.hid
 
 actor BridgeClient {
+    private typealias USBDpiStageSnapshot = (active: Int, values: [Int], stageIDs: [UInt8])
+
     private var deviceHandles: [String: IOHIDDevice] = [:]
+    private var deviceHandleCandidates: [String: [IOHIDDevice]] = [:]
     private var txnByDeviceID: [String: UInt8] = [:]
+    private var lastStateByDeviceID: [String: MouseState] = [:]
     private var btReqID: UInt8 = 0x30
     private var btDpiSnapshotByDeviceID: [String: (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)] = [:]
     private var btExpectedDpiByDeviceID: [String: (active: Int, values: [Int], expiresAt: Date, remainingMasks: Int)] = [:]
     private let btVendorClient = BTVendorClient()
     private var btExchangeLocked = false
     private var btExchangeWaiters: [CheckedContinuation<Void, Never>] = []
+    private var hidAccessDenied = false
+    private var managerAccessDenied = false
+    private var lastOpenDeniedLogAt: Date?
 
     private let usbVID = 0x1532
     private let btVID = 0x068E
@@ -24,6 +31,7 @@ actor BridgeClient {
         ] as CFArray)
 
         let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        managerAccessDenied = openResult == kIOReturnNotPermitted
         if openResult != kIOReturnSuccess {
             AppLog.error("Bridge", "IOHIDManagerOpen failed (\(openResult)); continuing best-effort discovery")
             if openResult == kIOReturnNotPermitted {
@@ -46,7 +54,8 @@ actor BridgeClient {
             devices = []
         }
 
-        var result: [MouseDevice] = []
+        var modelsByID: [String: MouseDevice] = [:]
+        var handlesByID: [String: [(score: Int, handle: IOHIDDevice)]] = [:]
         for device in devices {
             guard let vendor = intProp(device, key: kIOHIDVendorIDKey as CFString),
                   (vendor == usbVID || vendor == btVID),
@@ -69,12 +78,32 @@ actor BridgeClient {
                 serial: serial,
                 firmware: nil
             )
-            result.append(model)
-            deviceHandles[id] = device
+            if modelsByID[id] == nil {
+                modelsByID[id] = model
+            }
+
+            let score = handlePreferenceScore(device: device)
+            handlesByID[id, default: []].append((score: score, handle: device))
         }
+        var preferredHandlesByID: [String: IOHIDDevice] = [:]
+        var candidatesByID: [String: [IOHIDDevice]] = [:]
+        for (id, scoredHandles) in handlesByID {
+            let sorted = scoredHandles.sorted { lhs, rhs in
+                if lhs.score == rhs.score { return false }
+                return lhs.score > rhs.score
+            }
+            let handles = sorted.map(\.handle)
+            candidatesByID[id] = handles
+            if let first = handles.first {
+                preferredHandlesByID[id] = first
+            }
+        }
+        deviceHandleCandidates = candidatesByID
+        deviceHandles = preferredHandlesByID
+        var result = Array(modelsByID.values)
 
         let hasBluetoothDevice = result.contains(where: { $0.transport == "bluetooth" })
-        if !hasBluetoothDevice, openResult == kIOReturnNotPermitted {
+        if !hasBluetoothDevice, result.isEmpty, openResult == kIOReturnNotPermitted {
             do {
                 _ = try await btExchange([], timeout: 0.8)
                 let fallbackID = String(format: "%04x:%04x:%08x:%@", btVID, fallbackBTPID, 0, "bluetooth")
@@ -99,7 +128,8 @@ actor BridgeClient {
         if sorted.isEmpty, openResult == kIOReturnNotPermitted {
             throw BridgeError.commandFailed(
                 "HID access denied by macOS (kIOReturnNotPermitted). " +
-                "Enable Input Monitoring for Open Snek in System Settings, or ensure a supported Bluetooth device is connected."
+                "Enable Input Monitoring for Open Snek (or Terminal/Xcode when running via swift run/Xcode), " +
+                "or ensure a supported Bluetooth device is connected."
             )
         }
         AppLog.event("Bridge", "listDevices count=\(sorted.count) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
@@ -111,22 +141,87 @@ actor BridgeClient {
         if device.transport == "bluetooth" {
             let handle = handleFor(device: device)
             let state = try await readBluetoothState(device: device, handle: handle)
+            lastStateByDeviceID[device.id] = state
             AppLog.debug("Bridge", "readState bt device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
             return state
         }
 
-        guard let handle = handleFor(device: device) else {
+        let candidates = handlesFor(device: device)
+        guard !candidates.isEmpty else {
+            if hidAccessDenied || managerAccessDenied {
+                throw BridgeError.commandFailed(
+                    "USB HID access denied by macOS. Enable Input Monitoring for Open Snek " +
+                    "(or Terminal/Xcode when running via swift run/Xcode), then relaunch."
+                )
+            }
             throw BridgeError.commandFailed("Device not available")
         }
-        let state = try await readUSBState(device: device, handle: handle)
-        AppLog.debug("Bridge", "readState usb device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
-        return state
+        var firstError: Error?
+        for scanAttempt in 0..<2 {
+            firstError = nil
+            for (index, handle) in candidates.enumerated() {
+                do {
+                    let state = try await readUSBState(device: device, handle: handle)
+                    if index > 0 {
+                        deviceHandles[device.id] = handle
+                        AppLog.debug("Bridge", "readState usb switched to alternate handle index=\(index) device=\(device.id)")
+                    }
+                    lastStateByDeviceID[device.id] = state
+                    AppLog.debug("Bridge", "readState usb device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
+                    return state
+                } catch {
+                    if firstError == nil {
+                        firstError = error
+                    }
+                    AppLog.debug("Bridge", "readState usb candidate index=\(index) failed: \(error.localizedDescription)")
+                }
+            }
+            if scanAttempt == 0 {
+                usleep(120_000)
+            }
+        }
+
+        txnByDeviceID.removeValue(forKey: device.id)
+        if let firstError {
+            throw firstError
+        }
+        throw BridgeError.commandFailed("USB device telemetry unavailable")
     }
 
     func readDpiStagesFast(device: MouseDevice) async throws -> (active: Int, values: [Int])? {
-        guard device.transport == "bluetooth" else { return nil }
-        guard let parsed = try await btGetDpiStages(deviceID: device.id) else { return nil }
-        return (active: parsed.active, values: parsed.values)
+        if device.transport == "bluetooth" {
+            guard let parsed = try await btGetDpiStages(deviceID: device.id) else { return nil }
+            return (active: parsed.active, values: parsed.values)
+        }
+
+        guard device.transport == "usb" else { return nil }
+        let orderedHandles = handlesFor(device: device)
+        guard !orderedHandles.isEmpty else { return nil }
+
+        var firstError: Error?
+        for handle in orderedHandles {
+            do {
+                guard let stages = try getDPIStageSnapshot(handle, device) else { continue }
+                let liveDpi = try getDPI(handle, device)?.0
+                let active: Int
+                if let liveDpi, let exact = stages.values.firstIndex(of: liveDpi) {
+                    active = exact
+                } else {
+                    active = stages.active
+                }
+                deviceHandles[device.id] = handle
+                return (active: active, values: stages.values)
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if let firstError {
+            throw firstError
+        }
+        return nil
     }
 
     func readLightingColor(device: MouseDevice) async throws -> RGBPatch? {
@@ -235,44 +330,286 @@ actor BridgeClient {
                 includePower: changedPower
             )
         } else {
-            guard let handle = handleFor(device: device) else {
+            let orderedHandles = handlesFor(device: device)
+            guard !orderedHandles.isEmpty else {
+                if hidAccessDenied {
+                    throw BridgeError.commandFailed(
+                        "USB HID access denied by macOS. Enable Input Monitoring for Open Snek " +
+                        "(or Terminal/Xcode when running via swift run/Xcode), then relaunch."
+                    )
+                }
                 throw BridgeError.commandFailed("Device not available")
             }
+            func runUSBWrite(_ operation: (IOHIDDevice) throws -> Bool) throws -> Bool {
+                var firstError: Error?
+                for handle in orderedHandles {
+                    do {
+                        if try operation(handle) {
+                            deviceHandles[device.id] = handle
+                            return true
+                        }
+                    } catch {
+                        if firstError == nil {
+                            firstError = error
+                        }
+                    }
+                }
+                if let firstError {
+                    throw firstError
+                }
+                return false
+            }
+
+            func readUSBCurrentDpiStages() throws -> USBDpiStageSnapshot? {
+                var firstError: Error?
+                for handle in orderedHandles {
+                    do {
+                        if let current = try getDPIStageSnapshot(handle, device) {
+                            deviceHandles[device.id] = handle
+                            return current
+                        }
+                    } catch {
+                        if firstError == nil {
+                            firstError = error
+                        }
+                    }
+                }
+                if let firstError {
+                    throw firstError
+                }
+                return nil
+            }
+
+            func readUSBCurrentDpi() throws -> (Int, Int)? {
+                var firstError: Error?
+                for handle in orderedHandles {
+                    do {
+                        if let current = try getDPI(handle, device) {
+                            deviceHandles[device.id] = handle
+                            return current
+                        }
+                    } catch {
+                        if firstError == nil {
+                            firstError = error
+                        }
+                    }
+                }
+                if let firstError {
+                    throw firstError
+                }
+                return nil
+            }
+
+            if let mode = patch.deviceMode {
+                guard try runUSBWrite({ try setDeviceMode($0, device, mode: mode.mode, param: mode.param) }) else {
+                    throw BridgeError.commandFailed("Failed to set device mode")
+                }
+            }
+
+            if let threshold = patch.lowBatteryThresholdRaw {
+                guard try runUSBWrite({ try setLowBatteryThreshold($0, device, thresholdRaw: threshold) }) else {
+                    throw BridgeError.commandFailed("Failed to set low battery threshold")
+                }
+            }
+
+            if let scrollMode = patch.scrollMode {
+                guard try runUSBWrite({ try setScrollMode($0, device, mode: scrollMode) }) else {
+                    throw BridgeError.commandFailed("Failed to set scroll mode")
+                }
+            }
+
+            if let scrollAcceleration = patch.scrollAcceleration {
+                guard try runUSBWrite({ try setScrollAcceleration($0, device, enabled: scrollAcceleration) }) else {
+                    throw BridgeError.commandFailed("Failed to set scroll acceleration")
+                }
+            }
+
+            if let scrollSmartReel = patch.scrollSmartReel {
+                guard try runUSBWrite({ try setScrollSmartReel($0, device, enabled: scrollSmartReel) }) else {
+                    throw BridgeError.commandFailed("Failed to set scroll smart reel")
+                }
+            }
+
             if let pollRate = patch.pollRate {
-                guard try setPollRate(handle, device, value: pollRate) else {
+                guard try runUSBWrite({ try setPollRate($0, device, value: pollRate) }) else {
                     throw BridgeError.commandFailed("Failed to set poll rate")
                 }
             }
 
             if let timeout = patch.sleepTimeout {
-                guard try setIdleTime(handle, device, seconds: timeout) else {
+                guard try runUSBWrite({ try setIdleTime($0, device, seconds: timeout) }) else {
                     throw BridgeError.commandFailed("Failed to set sleep timeout")
                 }
             }
 
             if patch.dpiStages != nil || patch.activeStage != nil {
-                let current = try getDPIStages(handle, device)
-                let stages = patch.dpiStages ?? current?.1
-                let active = patch.activeStage ?? current?.0 ?? 0
+                let current = try readUSBCurrentDpiStages()
+                let stages = (patch.dpiStages ?? current?.values)?.map { max(100, min(30_000, $0)) }
+                let active = patch.activeStage ?? current?.active ?? 0
+                let stageIDs = current?.stageIDs
                 guard let stages, !stages.isEmpty else {
                     throw BridgeError.commandFailed("Failed to resolve current DPI stages")
                 }
-                guard try setDPIStages(handle, device, stages: stages, activeStage: active) else {
-                    throw BridgeError.commandFailed("Failed to set DPI stages")
-                }
+                let requiresStrictStageVerify = patch.dpiStages != nil
                 let activeClamped = max(0, min(stages.count - 1, active))
                 let liveDpi = stages[activeClamped]
-                _ = try? setDPI(handle, device, dpiX: liveDpi, dpiY: liveDpi, store: false)
+                if stages.count == 1 {
+                    // Persist single-stage intent via stage-table command when possible.
+                    do {
+                        _ = try runUSBWrite({
+                            try setDPIStages($0, device, stages: [liveDpi], activeStage: 0, stageIDs: stageIDs)
+                        })
+                    } catch {
+                        AppLog.debug("Bridge", "single-stage table persist failed: \(error.localizedDescription)")
+                    }
+
+                    var dpiWriteError: Error?
+                    var dpiWriteAcked = false
+                    var dpiWriteVerified = false
+                    for _ in 0..<6 {
+                        do {
+                            guard try runUSBWrite({ try setDPI($0, device, dpiX: liveDpi, dpiY: liveDpi, store: false) }) else {
+                                usleep(40_000)
+                                continue
+                            }
+                            dpiWriteAcked = true
+                            for _ in 0..<12 {
+                                if let readback = try readUSBCurrentDpi(),
+                                   readback.0 == liveDpi,
+                                   readback.1 == liveDpi {
+                                    dpiWriteVerified = true
+                                    break
+                                }
+                                usleep(70_000)
+                            }
+                            if dpiWriteVerified {
+                                break
+                            }
+                        } catch {
+                            if dpiWriteError == nil {
+                                dpiWriteError = error
+                            }
+                        }
+                        usleep(50_000)
+                    }
+                    if !dpiWriteVerified {
+                        if dpiWriteAcked {
+                            if requiresStrictStageVerify {
+                                throw BridgeError.commandFailed("Failed to verify DPI write")
+                            }
+                            AppLog.debug("Bridge", "single-stage dpi verify timeout live=\(liveDpi); proceeding after acked write")
+                        } else {
+                            if let dpiWriteError {
+                                throw dpiWriteError
+                            }
+                            throw BridgeError.commandFailed("Failed to set DPI")
+                        }
+                    }
+                } else {
+                    var stageWriteAcked = false
+                    var stageWriteVerified = false
+                    var stageWriteError: Error?
+                    for _ in 0..<6 {
+                        do {
+                            guard try runUSBWrite({
+                                try setDPIStages($0, device, stages: stages, activeStage: activeClamped, stageIDs: stageIDs)
+                            }) else {
+                                usleep(50_000)
+                                continue
+                            }
+                            stageWriteAcked = true
+
+                            for _ in 0..<12 {
+                                guard let readback = try readUSBCurrentDpiStages() else {
+                                    usleep(70_000)
+                                    continue
+                                }
+                                let readbackActive = max(0, min(stages.count - 1, readback.active))
+                                let readbackValues = Array(readback.values.prefix(stages.count)).map { max(100, min(30_000, $0)) }
+                                if readbackValues == stages && readbackActive == activeClamped {
+                                    stageWriteVerified = true
+                                    break
+                                }
+                                AppLog.debug(
+                                    "Bridge",
+                                    "dpi stage verify mismatch wanted=\(stages) active=\(activeClamped) " +
+                                    "got=\(readbackValues) active=\(readbackActive)"
+                                )
+                                usleep(70_000)
+                            }
+                            if stageWriteVerified {
+                                break
+                            }
+                        } catch {
+                            if stageWriteError == nil {
+                                stageWriteError = error
+                            }
+                        }
+                        usleep(50_000)
+                        if stageWriteVerified {
+                            break
+                        }
+                    }
+                    if !stageWriteVerified {
+                        if stageWriteAcked {
+                            if requiresStrictStageVerify {
+                                throw BridgeError.commandFailed("Failed to verify DPI stage write")
+                            }
+                            AppLog.debug("Bridge", "dpi stage verify timeout active=\(activeClamped) values=\(stages); proceeding after acked write")
+                        } else {
+                            if let stageWriteError {
+                                throw stageWriteError
+                            }
+                            throw BridgeError.commandFailed("Failed to set DPI stages")
+                        }
+                    }
+
+                    // After stage-table commit, best-effort apply active stage DPI immediately.
+                    // Some firmware reports updated table first, then lags current DPI scalar.
+                    do {
+                        var liveApplied = false
+                        for _ in 0..<4 where !liveApplied {
+                            guard try runUSBWrite({ try setDPI($0, device, dpiX: liveDpi, dpiY: liveDpi, store: false) }) else {
+                                usleep(50_000)
+                                continue
+                            }
+                            for _ in 0..<6 {
+                                if let readback = try readUSBCurrentDpi(),
+                                   readback.0 == liveDpi,
+                                   readback.1 == liveDpi {
+                                    liveApplied = true
+                                    break
+                                }
+                                usleep(70_000)
+                            }
+                        }
+                        if !liveApplied {
+                            AppLog.debug("Bridge", "post-stage live dpi verify timeout live=\(liveDpi)")
+                        }
+                    } catch {
+                        AppLog.debug("Bridge", "post-stage live dpi apply failed: \(error.localizedDescription)")
+                    }
+                }
             }
 
             if let brightness = patch.ledBrightness {
-                guard try setScrollLEDBrightness(handle, device, value: brightness) else {
+                guard try runUSBWrite({ try setScrollLEDBrightness($0, device, value: brightness) }) else {
                     throw BridgeError.commandFailed("Failed to set LED brightness")
                 }
             }
 
+            if let rgb = patch.ledRGB {
+                let effect = LightingEffectPatch(
+                    kind: .staticColor,
+                    primary: RGBPatch(r: rgb.r, g: rgb.g, b: rgb.b)
+                )
+                guard try runUSBWrite({ try setScrollLEDEffect($0, device, effect: effect) }) else {
+                    throw BridgeError.commandFailed("Failed to set LED color")
+                }
+            }
+
             if let effect = patch.lightingEffect {
-                guard try setScrollLEDEffect(handle, device, effect: effect) else {
+                guard try runUSBWrite({ try setScrollLEDEffect($0, device, effect: effect) }) else {
                     throw BridgeError.commandFailed("Failed to set lighting effect")
                 }
             }
@@ -281,25 +618,122 @@ actor BridgeClient {
                 let slot = binding.slot
                 let kind = binding.kind.rawValue
                 let hidKey = binding.hidKey ?? 4
-                guard try setButtonBindingUSB(handle, device, slot: slot, kind: kind, hidKey: hidKey) else {
+                guard try runUSBWrite({ try setButtonBindingUSB($0, device, slot: slot, kind: kind, hidKey: hidKey) }) else {
                     throw BridgeError.commandFailed("Failed to set button binding")
                 }
             }
 
-            return try await readUSBState(device: device, handle: handle)
+            do {
+                return try await readStateAfterUSBWrite(device: device)
+            } catch {
+                if let cached = lastStateByDeviceID[device.id] {
+                    let projected = projectedState(from: cached, applying: patch)
+                    lastStateByDeviceID[device.id] = projected
+                    AppLog.debug(
+                        "Bridge",
+                        "usb apply readback failed; returning projected state device=\(device.id): \(error.localizedDescription)"
+                    )
+                    return projected
+                }
+                throw error
+            }
         }
     }
 
     private func readUSBState(device: MouseDevice, handle: IOHIDDevice) async throws -> MouseState {
+        if hidAccessDenied {
+            throw BridgeError.commandFailed(
+                "USB HID feature reports are blocked by macOS permissions. " +
+                "Enable Input Monitoring for this app host and relaunch."
+            )
+        }
+
+        guard let dpi = try getDPI(handle, device) else {
+            if hidAccessDenied {
+                throw BridgeError.commandFailed(
+                    "USB HID feature reports are blocked by macOS permissions. " +
+                    "Enable Input Monitoring for this app host and relaunch."
+                )
+            }
+            throw BridgeError.commandFailed(
+                "USB device telemetry unavailable. Feature-report interface did not return usable responses."
+            )
+        }
+
         let serial = try getSerial(handle, device)
+        if hidAccessDenied {
+            throw BridgeError.commandFailed(
+                "USB HID feature reports are blocked by macOS permissions. " +
+                "Enable Input Monitoring for this app host and relaunch."
+            )
+        }
         let fw = try getFirmware(handle, device)
         let mode = try getDeviceMode(handle, device)
         let battery = try getBattery(handle, device)
-        let dpi = try getDPI(handle, device)
         let stages = try getDPIStages(handle, device)
         let poll = try getPollRate(handle, device)
         let sleepTimeout = try getIdleTime(handle, device)
+        let lowBatteryThreshold = try getLowBatteryThreshold(handle, device)
+        let scrollMode = try getScrollMode(handle, device)
+        let scrollAcceleration = try getScrollAcceleration(handle, device)
+        let scrollSmartReel = try getScrollSmartReel(handle, device)
         let led = try getScrollLEDBrightness(handle, device)
+        var normalizedStages = stages
+        if let stageTuple = stages {
+            let values = stageTuple.1
+            if !values.isEmpty {
+                let allSame = values.allSatisfy { $0 == values[0] }
+                // Some USB interfaces expose an unhelpful fixed stage table (often all 100).
+                // Treat that as missing stage telemetry so cached values stay stable.
+                if allSame && values[0] == 100 {
+                    normalizedStages = nil
+                }
+            }
+        }
+
+        if let stageTuple = normalizedStages {
+            let values = stageTuple.1
+            if !values.isEmpty {
+                let resolvedActive: Int
+                if let exact = values.firstIndex(of: dpi.0) {
+                    resolvedActive = exact
+                } else {
+                    let nearest = values.enumerated().min { lhs, rhs in
+                        abs(lhs.element - dpi.0) < abs(rhs.element - dpi.0)
+                    }?.offset ?? stageTuple.0
+                    resolvedActive = nearest
+                }
+                normalizedStages = (max(0, min(values.count - 1, resolvedActive)), values)
+            }
+        }
+
+        let noCoreTelemetry = mode == nil &&
+            battery == nil &&
+            normalizedStages == nil &&
+            poll == nil &&
+            sleepTimeout == nil &&
+            lowBatteryThreshold == nil &&
+            scrollMode == nil &&
+            scrollAcceleration == nil &&
+            scrollSmartReel == nil &&
+            led == nil
+        if noCoreTelemetry {
+            if hidAccessDenied {
+                throw BridgeError.commandFailed(
+                    "USB HID feature reports are blocked by macOS permissions. " +
+                    "Enable Input Monitoring for this app host and relaunch."
+                )
+            }
+            throw BridgeError.commandFailed(
+                "USB device telemetry unavailable. Feature-report interface did not return usable responses."
+            )
+        }
+
+        AppLog.debug(
+            "Bridge",
+            "readUSBState core serial=\(serial ?? "nil") fw=\(fw ?? "nil") " +
+            "dpi=true stages=\(stages != nil) poll=\(poll != nil) led=\(led != nil)"
+        )
 
         return MouseState(
             device: DeviceSummary(
@@ -312,18 +746,22 @@ actor BridgeClient {
             connection: "USB",
             battery_percent: battery?.0,
             charging: battery?.1,
-            dpi: dpi.map { DpiPair(x: $0.0, y: $0.1) },
-            dpi_stages: DpiStages(active_stage: stages?.0, values: stages?.1),
+            dpi: DpiPair(x: dpi.0, y: dpi.1),
+            dpi_stages: DpiStages(active_stage: normalizedStages?.0, values: normalizedStages?.1),
             poll_rate: poll,
             sleep_timeout: sleepTimeout,
             device_mode: mode.map { DeviceMode(mode: $0.0, param: $0.1) },
+            low_battery_threshold_raw: lowBatteryThreshold,
+            scroll_mode: scrollMode,
+            scroll_acceleration: scrollAcceleration,
+            scroll_smart_reel: scrollSmartReel,
             led_value: led,
             capabilities: Capabilities(
-                dpi_stages: stages != nil,
-                poll_rate: poll != nil,
+                dpi_stages: true,
+                poll_rate: true,
                 power_management: true,
                 button_remap: true,
-                lighting: led != nil
+                lighting: true
             )
         )
     }
@@ -709,26 +1147,66 @@ actor BridgeClient {
         deviceHandles[device.id]
     }
 
-    private func getCandidates(for device: MouseDevice) -> [UInt8] {
-        if let cached = txnByDeviceID[device.id] {
-            var vals: [UInt8] = [cached]
-            for c: UInt8 in [0x1F, 0x3F, 0xFF] where c != cached { vals.append(c) }
-            return vals
+    private func handlesFor(device: MouseDevice) -> [IOHIDDevice] {
+        if let preferred = deviceHandles[device.id] {
+            let rest = (deviceHandleCandidates[device.id] ?? []).filter { $0 !== preferred }
+            return [preferred] + rest
         }
+        return deviceHandleCandidates[device.id] ?? []
+    }
+
+    private func defaultTxnCandidates(for device: MouseDevice) -> [UInt8] {
         if device.vendor_id == btVID && device.product_id == 0x00BA {
             return [0x3F, 0x1F, 0xFF]
         }
         return [0x1F, 0x3F, 0xFF]
     }
 
-    private func perform(_ device: MouseDevice, _ handle: IOHIDDevice, classID: UInt8, cmdID: UInt8, size: UInt8, args: [UInt8] = []) throws -> [UInt8]? {
+    private func getCandidates(for device: MouseDevice) -> [UInt8] {
+        if let cached = txnByDeviceID[device.id] {
+            return [cached]
+        }
+        return defaultTxnCandidates(for: device)
+    }
+
+    private func perform(
+        _ device: MouseDevice,
+        _ handle: IOHIDDevice,
+        classID: UInt8,
+        cmdID: UInt8,
+        size: UInt8,
+        args: [UInt8] = [],
+        allowTxnRescan: Bool = false
+    ) throws -> [UInt8]? {
+        let cachedTxn = txnByDeviceID[device.id]
         for txn in getCandidates(for: device) {
             let report = createReport(txn: txn, classID: classID, cmdID: cmdID, size: size, args: args)
-            guard let response = exchange(handle: handle, report: report) else { continue }
+            guard let response = exchange(handle: handle, report: report, expectedClassID: classID, expectedCmdID: cmdID) else {
+                if hidAccessDenied { break }
+                continue
+            }
             if response.count < 90 { continue }
             if response[0] == 0x01 { continue }
             txnByDeviceID[device.id] = txn
             return response
+        }
+
+        if allowTxnRescan, let cachedTxn {
+            for txn in defaultTxnCandidates(for: device) where txn != cachedTxn {
+                let report = createReport(txn: txn, classID: classID, cmdID: cmdID, size: size, args: args)
+                guard let response = exchange(handle: handle, report: report, expectedClassID: classID, expectedCmdID: cmdID) else {
+                    if hidAccessDenied { break }
+                    continue
+                }
+                if response.count < 90 { continue }
+                if response[0] == 0x01 { continue }
+                txnByDeviceID[device.id] = txn
+                return response
+            }
+        }
+
+        if allowTxnRescan {
+            txnByDeviceID.removeValue(forKey: device.id)
         }
         return nil
     }
@@ -749,40 +1227,97 @@ actor BridgeClient {
         return report
     }
 
-    private func exchange(handle: IOHIDDevice, report: [UInt8]) -> [UInt8]? {
+    private func exchange(
+        handle: IOHIDDevice,
+        report: [UInt8],
+        expectedClassID: UInt8,
+        expectedCmdID: UInt8
+    ) -> [UInt8]? {
         let openResult = IOHIDDeviceOpen(handle, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard openResult == kIOReturnSuccess else { return nil }
+        guard openResult == kIOReturnSuccess else {
+            if openResult == kIOReturnNotPermitted {
+                hidAccessDenied = true
+                let now = Date()
+                if lastOpenDeniedLogAt == nil || now.timeIntervalSince(lastOpenDeniedLogAt!) > 2.0 {
+                    AppLog.debug("Bridge", "IOHIDDeviceOpen denied (\(openResult))")
+                    lastOpenDeniedLogAt = now
+                }
+            } else {
+                AppLog.debug("Bridge", "IOHIDDeviceOpen failed (\(openResult))")
+            }
+            return nil
+        }
+        hidAccessDenied = false
         defer { IOHIDDeviceClose(handle, IOOptionBits(kIOHIDOptionsTypeNone)) }
 
-        var packet = [UInt8](repeating: 0, count: 91)
-        packet[0] = 0x00
-        for i in 0..<90 { packet[i + 1] = report[i] }
-
-        let sendResult = packet.withUnsafeMutableBufferPointer { ptr -> IOReturn in
+        let sendResult = report.withUnsafeBufferPointer { ptr -> IOReturn in
             guard let base = ptr.baseAddress else { return kIOReturnError }
             return IOHIDDeviceSetReport(handle, kIOHIDReportTypeFeature, CFIndex(0), base, ptr.count)
         }
-        if sendResult != kIOReturnSuccess { return nil }
+        if sendResult != kIOReturnSuccess {
+            AppLog.debug("Bridge", "IOHIDDeviceSetReport failed (\(sendResult)) len=\(report.count)")
+            return nil
+        }
 
-        for _ in 0..<7 {
+        var lastReadResult: IOReturn = kIOReturnSuccess
+        for _ in 0..<6 {
             usleep(30_000)
-            var out = [UInt8](repeating: 0, count: 91)
+            var out = [UInt8](repeating: 0, count: 90)
             var length = out.count
             let readResult = out.withUnsafeMutableBufferPointer { ptr -> IOReturn in
                 guard let base = ptr.baseAddress else { return kIOReturnError }
                 return IOHIDDeviceGetReport(handle, kIOHIDReportTypeFeature, CFIndex(0), base, &length)
             }
+            lastReadResult = readResult
             if readResult != kIOReturnSuccess || length == 0 { continue }
             let data = Array(out.prefix(length))
-            if data.count == 91 { return Array(data.dropFirst()) }
-            if data.count == 90 { return data }
-            if data.count > 90 { return Array(data.suffix(90)) }
+            let candidate: [UInt8]
+            if data.count == 91 {
+                candidate = Array(data.dropFirst())
+            } else if data.count == 90 {
+                candidate = data
+            } else if data.count > 90 {
+                candidate = Array(data.suffix(90))
+            } else {
+                continue
+            }
+            // Some interfaces report back the request frame first (status 0x00).
+            // Ignore that echo and keep polling for the actual response status.
+            if candidate[0] == 0x00 {
+                continue
+            }
+            if !isValidResponse(candidate, classID: expectedClassID, cmdID: expectedCmdID) {
+                AppLog.debug(
+                    "Bridge",
+                    "usb response skipped expect=0x\(String(expectedClassID, radix: 16))/0x\(String(expectedCmdID, radix: 16)) " +
+                    "got=0x\(String(candidate[6], radix: 16))/0x\(String(candidate[7], radix: 16)) status=0x\(String(candidate[0], radix: 16))"
+                )
+                continue
+            }
+            return candidate
         }
+        AppLog.debug(
+            "Bridge",
+            "IOHIDDeviceGetReport timed out/failed expect=0x\(String(expectedClassID, radix: 16))/0x\(String(expectedCmdID, radix: 16)) last=\(lastReadResult)"
+        )
         return nil
     }
 
+    private func isValidResponse(_ response: [UInt8], classID: UInt8, cmdID: UInt8) -> Bool {
+        guard response.count >= 90 else { return false }
+        guard response[6] == classID else { return false }
+        // On macOS HID paths some firmware/hubs mirror command direction bit differently.
+        guard (response[7] & 0x7F) == (cmdID & 0x7F) else { return false }
+
+        var crc: UInt8 = 0
+        for i in 2..<88 {
+            crc ^= response[i]
+        }
+        return response[88] == crc
+    }
+
     private func getDPI(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> (Int, Int)? {
-        guard let r = try perform(device, handle, classID: 0x04, cmdID: 0x85, size: 0x07, args: [0x00]), r[0] == 0x02 else { return nil }
+        guard let r = try perform(device, handle, classID: 0x04, cmdID: 0x85, size: 0x07, args: [0x00], allowTxnRescan: true), r[0] == 0x02 else { return nil }
         return (Int(r[9]) << 8 | Int(r[10]), Int(r[11]) << 8 | Int(r[12]))
     }
 
@@ -804,37 +1339,93 @@ actor BridgeClient {
     }
 
     private func getDPIStages(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> (Int, [Int])? {
+        guard let snapshot = try getDPIStageSnapshot(handle, device) else { return nil }
+        return (snapshot.active, snapshot.values)
+    }
+
+    private func getDPIStageSnapshot(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> USBDpiStageSnapshot? {
         guard let r = try perform(device, handle, classID: 0x04, cmdID: 0x86, size: 0x26, args: [0x01]), r[0] == 0x02 else { return nil }
         let activeRaw = Int(r[9])
         let count = max(1, min(5, Int(r[10])))
         var values: [Int] = []
+        var stageIDs: [UInt8] = []
         for i in 0..<count {
             let off = 11 + (i * 7)
             if off + 4 >= r.count { break }
-            let value = (Int(r[off + 1]) << 8) | Int(r[off + 2])
+            stageIDs.append(r[off])
+            let valueRaw = (Int(r[off + 1]) << 8) | Int(r[off + 2])
+            let value = max(100, min(30_000, valueRaw))
             values.append(value)
         }
 
         guard !values.isEmpty else { return nil }
+        let wantsZeroBaseIDs = stageIDs.first == 0
         while values.count < count {
             values.append(values.last ?? 800)
         }
+        while stageIDs.count < count {
+            let next = wantsZeroBaseIDs ? stageIDs.count : stageIDs.count + 1
+            stageIDs.append(UInt8(next & 0xFF))
+        }
 
-        let active = max(0, min(count - 1, activeRaw))
-        return (active, values)
+        let active = usbResolveStageIndex(activeRaw: activeRaw, stageIDs: stageIDs, count: count)
+        return (active: active, values: values, stageIDs: stageIDs)
     }
 
-    private func setDPIStages(_ handle: IOHIDDevice, _ device: MouseDevice, stages: [Int], activeStage: Int) throws -> Bool {
+    private func usbResolveStageIndex(activeRaw: Int, stageIDs: [UInt8], count: Int) -> Int {
+        guard count > 0 else { return 0 }
+
+        if let idx = stageIDs.firstIndex(where: { Int($0) == activeRaw }) {
+            return idx
+        }
+        if activeRaw >= 1 && activeRaw <= count {
+            return activeRaw - 1
+        }
+        if activeRaw >= 0 && activeRaw < count {
+            return activeRaw
+        }
+        return max(0, min(count - 1, activeRaw))
+    }
+
+    private func usbStageIDsForWrite(count: Int, stageIDs: [UInt8]?) -> [UInt8] {
+        guard count > 0 else { return [] }
+        if stageIDs == nil {
+            return (0..<count).map { UInt8($0 + 1) }
+        }
+
+        var ids = Array((stageIDs ?? []).prefix(count))
+        let wantsZeroBase = ids.first == 0
+        if ids.isEmpty {
+            ids.append(UInt8(wantsZeroBase ? 0 : 1))
+        }
+        var next = Int(ids.last ?? UInt8(wantsZeroBase ? 0 : 1)) + 1
+        while ids.count < count {
+            ids.append(UInt8(next & 0xFF))
+            next += 1
+        }
+        return ids
+    }
+
+    private func setDPIStages(
+        _ handle: IOHIDDevice,
+        _ device: MouseDevice,
+        stages: [Int],
+        activeStage: Int,
+        stageIDs: [UInt8]? = nil
+    ) throws -> Bool {
         let clipped = Array(stages.prefix(5)).map { max(100, min(30_000, $0)) }
         guard !clipped.isEmpty else { return false }
+        let activeClamped = max(0, min(clipped.count - 1, activeStage))
+        let writeStageIDs = usbStageIDsForWrite(count: clipped.count, stageIDs: stageIDs)
+        guard writeStageIDs.count == clipped.count else { return false }
 
         var args = [UInt8](repeating: 0, count: 3 + clipped.count * 7)
         args[0] = 0x01
-        args[1] = UInt8(max(0, min(clipped.count - 1, activeStage)))
+        args[1] = writeStageIDs[activeClamped]
         args[2] = UInt8(clipped.count)
         var off = 3
         for (i, dpi) in clipped.enumerated() {
-            args[off] = UInt8(i)
+            args[off] = writeStageIDs[i]
             args[off + 1] = UInt8((dpi >> 8) & 0xFF)
             args[off + 2] = UInt8(dpi & 0xFF)
             args[off + 3] = UInt8((dpi >> 8) & 0xFF)
@@ -904,6 +1495,61 @@ actor BridgeClient {
         return (Int(r[8]), Int(r[9]))
     }
 
+    private func setDeviceMode(_ handle: IOHIDDevice, _ device: MouseDevice, mode: Int, param: Int = 0x00) throws -> Bool {
+        let modeRaw: UInt8 = mode == 0x03 ? 0x03 : 0x00
+        let args: [UInt8] = [modeRaw, UInt8(param & 0xFF)]
+        guard let r = try perform(device, handle, classID: 0x00, cmdID: 0x04, size: 0x02, args: args) else { return false }
+        return r[0] == 0x02
+    }
+
+    private func getLowBatteryThreshold(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> Int? {
+        guard let r = try perform(device, handle, classID: 0x07, cmdID: 0x81, size: 0x01), r[0] == 0x02 else { return nil }
+        return Int(r[8])
+    }
+
+    private func setLowBatteryThreshold(_ handle: IOHIDDevice, _ device: MouseDevice, thresholdRaw: Int) throws -> Bool {
+        let clamped = UInt8(max(0x0C, min(0x3F, thresholdRaw)))
+        guard let r = try perform(device, handle, classID: 0x07, cmdID: 0x01, size: 0x01, args: [clamped]) else { return false }
+        return r[0] == 0x02
+    }
+
+    private func getScrollMode(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> Int? {
+        let args: [UInt8] = [0x01, 0x00]
+        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x94, size: 0x02, args: args), r[0] == 0x02 else { return nil }
+        return Int(r[9])
+    }
+
+    private func setScrollMode(_ handle: IOHIDDevice, _ device: MouseDevice, mode: Int) throws -> Bool {
+        let modeRaw: UInt8 = mode == 1 ? 0x01 : 0x00
+        let args: [UInt8] = [0x01, modeRaw]
+        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x14, size: 0x02, args: args) else { return false }
+        return r[0] == 0x02
+    }
+
+    private func getScrollAcceleration(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> Bool? {
+        let args: [UInt8] = [0x01, 0x00]
+        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x96, size: 0x02, args: args), r[0] == 0x02 else { return nil }
+        return r[9] != 0
+    }
+
+    private func setScrollAcceleration(_ handle: IOHIDDevice, _ device: MouseDevice, enabled: Bool) throws -> Bool {
+        let args: [UInt8] = [0x01, enabled ? 0x01 : 0x00]
+        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x16, size: 0x02, args: args) else { return false }
+        return r[0] == 0x02
+    }
+
+    private func getScrollSmartReel(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> Bool? {
+        let args: [UInt8] = [0x01, 0x00]
+        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x97, size: 0x02, args: args), r[0] == 0x02 else { return nil }
+        return r[9] != 0
+    }
+
+    private func setScrollSmartReel(_ handle: IOHIDDevice, _ device: MouseDevice, enabled: Bool) throws -> Bool {
+        let args: [UInt8] = [0x01, enabled ? 0x01 : 0x00]
+        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x17, size: 0x02, args: args) else { return false }
+        return r[0] == 0x02
+    }
+
     private func getScrollLEDBrightness(_ handle: IOHIDDevice, _ device: MouseDevice) throws -> Int? {
         let args: [UInt8] = [0x01, 0x01]
         guard let r = try perform(device, handle, classID: 0x0F, cmdID: 0x84, size: 0x03, args: args), r[0] == 0x02 else { return nil }
@@ -959,6 +1605,10 @@ actor BridgeClient {
             case 10:
                 actionType = 0x01
                 params = [0x01, 0x0A]
+            case 96:
+                // Capture-backed DPI cycle default payload pattern.
+                actionType = 0x06
+                params = [0x01, 0x06]
             default:
                 actionType = 0x01
                 params = []
@@ -1011,6 +1661,87 @@ actor BridgeClient {
         guard let value = IOHIDDeviceGetProperty(device, key) else { return nil }
         if CFGetTypeID(value) == CFStringGetTypeID() { return value as? String }
         return nil
+    }
+
+    private func handlePreferenceScore(device: IOHIDDevice) -> Int {
+        let maxFeatureReport = intProp(device, key: kIOHIDMaxFeatureReportSizeKey as CFString) ?? 0
+        let usagePage = intProp(device, key: kIOHIDPrimaryUsagePageKey as CFString) ?? 0
+        let usage = intProp(device, key: kIOHIDPrimaryUsageKey as CFString) ?? 0
+
+        var score = 0
+        // Prefer interfaces that advertise full 90-byte feature report support.
+        if maxFeatureReport >= 90 {
+            score += 100
+        } else if maxFeatureReport > 0 {
+            score += maxFeatureReport
+        }
+        // Mouse collections are usually the right control plane over USB.
+        if usagePage == 0x01 && usage == 0x02 {
+            score += 25
+        }
+        return score
+    }
+
+    private func readStateAfterUSBWrite(device: MouseDevice, attempts: Int = 4) async throws -> MouseState {
+        var firstError: Error?
+        let totalAttempts = max(1, attempts)
+        for attempt in 0..<totalAttempts {
+            do {
+                return try await readState(device: device)
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+                AppLog.debug(
+                    "Bridge",
+                    "usb post-write readback attempt \(attempt + 1)/\(totalAttempts) failed device=\(device.id): \(error.localizedDescription)"
+                )
+                if attempt + 1 < totalAttempts {
+                    let backoffMs = UInt64(120 + (attempt * 120))
+                    try? await Task.sleep(nanoseconds: backoffMs * 1_000_000)
+                }
+            }
+        }
+        throw firstError ?? BridgeError.commandFailed("USB readback failed after apply")
+    }
+
+    private func projectedState(from base: MouseState, applying patch: DevicePatch) -> MouseState {
+        let nextValues = patch.dpiStages ?? base.dpi_stages.values
+        let requestedActive = patch.activeStage ?? base.dpi_stages.active_stage
+
+        let resolvedActive: Int?
+        if let values = nextValues, !values.isEmpty {
+            resolvedActive = max(0, min(values.count - 1, requestedActive ?? 0))
+        } else {
+            resolvedActive = requestedActive
+        }
+
+        let nextDpi: DpiPair?
+        if let values = nextValues, !values.isEmpty {
+            let activeIndex = max(0, min(values.count - 1, resolvedActive ?? 0))
+            let value = values[activeIndex]
+            nextDpi = DpiPair(x: value, y: value)
+        } else {
+            nextDpi = base.dpi
+        }
+
+        return MouseState(
+            device: base.device,
+            connection: base.connection,
+            battery_percent: base.battery_percent,
+            charging: base.charging,
+            dpi: nextDpi,
+            dpi_stages: DpiStages(active_stage: resolvedActive, values: nextValues),
+            poll_rate: patch.pollRate ?? base.poll_rate,
+            sleep_timeout: patch.sleepTimeout ?? base.sleep_timeout,
+            device_mode: patch.deviceMode ?? base.device_mode,
+            low_battery_threshold_raw: patch.lowBatteryThresholdRaw ?? base.low_battery_threshold_raw,
+            scroll_mode: patch.scrollMode ?? base.scroll_mode,
+            scroll_acceleration: patch.scrollAcceleration ?? base.scroll_acceleration,
+            scroll_smart_reel: patch.scrollSmartReel ?? base.scroll_smart_reel,
+            led_value: patch.ledBrightness ?? base.led_value,
+            capabilities: base.capabilities
+        )
     }
 }
 

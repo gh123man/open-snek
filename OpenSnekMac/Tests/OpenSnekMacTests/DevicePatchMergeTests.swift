@@ -5,6 +5,12 @@ final class DevicePatchMergeTests: XCTestCase {
     func testMergedUsesNewestFieldValues() {
         let older = DevicePatch(
             pollRate: 500,
+            sleepTimeout: 300,
+            deviceMode: DeviceMode(mode: 0x00, param: 0x00),
+            lowBatteryThresholdRaw: 0x26,
+            scrollMode: 0,
+            scrollAcceleration: false,
+            scrollSmartReel: false,
             dpiStages: [800, 1600],
             activeStage: 0,
             ledBrightness: 120,
@@ -14,6 +20,12 @@ final class DevicePatchMergeTests: XCTestCase {
         )
         let newer = DevicePatch(
             pollRate: 1000,
+            sleepTimeout: 480,
+            deviceMode: DeviceMode(mode: 0x03, param: 0x00),
+            lowBatteryThresholdRaw: 0x3F,
+            scrollMode: 1,
+            scrollAcceleration: true,
+            scrollSmartReel: true,
             dpiStages: [1200, 6400],
             activeStage: 1,
             ledBrightness: 200,
@@ -24,6 +36,12 @@ final class DevicePatchMergeTests: XCTestCase {
 
         let merged = older.merged(with: newer)
         XCTAssertEqual(merged.pollRate, 1000)
+        XCTAssertEqual(merged.sleepTimeout, 480)
+        XCTAssertEqual(merged.deviceMode?.mode, 0x03)
+        XCTAssertEqual(merged.lowBatteryThresholdRaw, 0x3F)
+        XCTAssertEqual(merged.scrollMode, 1)
+        XCTAssertEqual(merged.scrollAcceleration, true)
+        XCTAssertEqual(merged.scrollSmartReel, true)
         XCTAssertEqual(merged.dpiStages ?? [], [1200, 6400])
         XCTAssertEqual(merged.activeStage, 1)
         XCTAssertEqual(merged.ledBrightness, 200)
@@ -38,6 +56,12 @@ final class DevicePatchMergeTests: XCTestCase {
     func testMergedKeepsExistingFieldsWhenNewestPatchPartial() {
         let older = DevicePatch(
             pollRate: 1000,
+            sleepTimeout: 300,
+            deviceMode: DeviceMode(mode: 0x00, param: 0x00),
+            lowBatteryThresholdRaw: 0x26,
+            scrollMode: 1,
+            scrollAcceleration: true,
+            scrollSmartReel: false,
             dpiStages: [800, 6400],
             activeStage: 1,
             ledBrightness: 150,
@@ -49,6 +73,12 @@ final class DevicePatchMergeTests: XCTestCase {
 
         let merged = older.merged(with: newer)
         XCTAssertEqual(merged.pollRate, 1000)
+        XCTAssertEqual(merged.sleepTimeout, 300)
+        XCTAssertEqual(merged.deviceMode?.mode, 0x00)
+        XCTAssertEqual(merged.lowBatteryThresholdRaw, 0x26)
+        XCTAssertEqual(merged.scrollMode, 1)
+        XCTAssertEqual(merged.scrollAcceleration, true)
+        XCTAssertEqual(merged.scrollSmartReel, false)
         XCTAssertEqual(merged.dpiStages ?? [], [800, 6400])
         XCTAssertEqual(merged.activeStage, 0)
         XCTAssertEqual(merged.ledBrightness, 150)

@@ -56,6 +56,10 @@ struct MouseState: Codable, Hashable {
     let poll_rate: Int?
     let sleep_timeout: Int?
     let device_mode: DeviceMode?
+    let low_battery_threshold_raw: Int?
+    let scroll_mode: Int?
+    let scroll_acceleration: Bool?
+    let scroll_smart_reel: Bool?
     let led_value: Int?
     let capabilities: Capabilities
 
@@ -69,6 +73,10 @@ struct MouseState: Codable, Hashable {
         poll_rate: Int?,
         sleep_timeout: Int? = nil,
         device_mode: DeviceMode?,
+        low_battery_threshold_raw: Int? = nil,
+        scroll_mode: Int? = nil,
+        scroll_acceleration: Bool? = nil,
+        scroll_smart_reel: Bool? = nil,
         led_value: Int?,
         capabilities: Capabilities
     ) {
@@ -81,6 +89,10 @@ struct MouseState: Codable, Hashable {
         self.poll_rate = poll_rate
         self.sleep_timeout = sleep_timeout
         self.device_mode = device_mode
+        self.low_battery_threshold_raw = low_battery_threshold_raw
+        self.scroll_mode = scroll_mode
+        self.scroll_acceleration = scroll_acceleration
+        self.scroll_smart_reel = scroll_smart_reel
         self.led_value = led_value
         self.capabilities = capabilities
     }
@@ -102,6 +114,10 @@ extension MouseState {
             poll_rate: poll_rate ?? previous.poll_rate,
             sleep_timeout: sleep_timeout ?? previous.sleep_timeout,
             device_mode: device_mode ?? previous.device_mode,
+            low_battery_threshold_raw: low_battery_threshold_raw ?? previous.low_battery_threshold_raw,
+            scroll_mode: scroll_mode ?? previous.scroll_mode,
+            scroll_acceleration: scroll_acceleration ?? previous.scroll_acceleration,
+            scroll_smart_reel: scroll_smart_reel ?? previous.scroll_smart_reel,
             led_value: led_value ?? previous.led_value,
             capabilities: Capabilities(
                 dpi_stages: capabilities.dpi_stages || previous.capabilities.dpi_stages,
@@ -251,6 +267,11 @@ struct ButtonBindingPatch: Sendable {
 struct DevicePatch: Sendable {
     var pollRate: Int? = nil
     var sleepTimeout: Int? = nil
+    var deviceMode: DeviceMode? = nil
+    var lowBatteryThresholdRaw: Int? = nil
+    var scrollMode: Int? = nil
+    var scrollAcceleration: Bool? = nil
+    var scrollSmartReel: Bool? = nil
     var dpiStages: [Int]? = nil
     var activeStage: Int? = nil
     var ledBrightness: Int? = nil
@@ -264,6 +285,11 @@ extension DevicePatch {
         DevicePatch(
             pollRate: newer.pollRate ?? pollRate,
             sleepTimeout: newer.sleepTimeout ?? sleepTimeout,
+            deviceMode: newer.deviceMode ?? deviceMode,
+            lowBatteryThresholdRaw: newer.lowBatteryThresholdRaw ?? lowBatteryThresholdRaw,
+            scrollMode: newer.scrollMode ?? scrollMode,
+            scrollAcceleration: newer.scrollAcceleration ?? scrollAcceleration,
+            scrollSmartReel: newer.scrollSmartReel ?? scrollSmartReel,
             dpiStages: newer.dpiStages ?? dpiStages,
             activeStage: newer.activeStage ?? activeStage,
             ledBrightness: newer.ledBrightness ?? ledBrightness,

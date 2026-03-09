@@ -83,6 +83,12 @@ Bundle-only build (no launch):
 ./OpenSnekMac/scripts/build_macos_app.sh --configuration release
 ```
 
+Prefer stable signing identity (keeps macOS privacy grants like Input Monitoring more consistent across rebuilds):
+
+```bash
+./OpenSnekMac/scripts/build_macos_app.sh --configuration debug --sign-identity auto --open
+```
+
 Default output:
 
 ```text
@@ -223,14 +229,17 @@ python razer_ble.py --vendor-key-get 00810000
 ## Feature Matrix
 
 | Feature | USB | BLE | OpenSnekMac | Notes |
-|---|---|---|---|
+|---|---|---|---|---|
 | Read/Set DPI | Yes | Partial | Yes | BLE uses staged table writes via vendor GATT; HID direct set may fail per stack |
 | Read/Set DPI Stages | Yes | Yes | Yes | BLE via vendor keys `0B 84` / `0B 04` |
 | Set Active DPI Stage | Yes | Yes | Yes | BLE implemented via stage-table rewrite |
 | Read/Set Poll Rate | Yes | Partial | Partial | BLE stack dependent |
+| Device Mode | Yes | Partial | Partial | App supports USB read/write + BT read-only fallback |
 | Read Battery | Yes | Yes | Yes | BLE fallback via Battery Service `0x180F` |
-| Scroll LED Brightness/Effects | Yes | Partial | Partial | USB validated; BLE scalar/frame paths available |
-| Idle/Threshold/Lighting (raw) | No | Yes | Partial | Raw vendor keys are script-first interfaces |
+| Idle Timeout | Yes | Yes | Yes | USB `07:83/03`; BLE vendor fallback `05 84/05 04` |
+| Low Battery Threshold | Yes | Yes | Yes | App supports USB + BLE read/write; USB card hidden when unsupported on a device/firmware |
+| Scroll Mode/Acceleration/Smart Reel | Yes | Partial | Partial | App probes USB support and hides each unsupported control instead of showing disabled toggles |
+| Scroll LED Brightness/Effects | Yes | Partial | Partial | App exposes full profile controls on USB; Bluetooth UI remains static-only (brightness + color) |
 | Button Rebinding | Partial | Yes | Yes | BLE vendor header + 10-byte payload; USB has experimental raw writer |
 
 ## Repository Structure

@@ -71,6 +71,12 @@ Bundle build only:
 ./OpenSnekMac/scripts/build_macos_app.sh --configuration release
 ```
 
+Run the existing `.dist` app bundle without rebuilding (preserves signature/TCC grants by default):
+
+```bash
+./OpenSnekMac/scripts/run_macos_app.sh
+```
+
 Output:
 
 ```text

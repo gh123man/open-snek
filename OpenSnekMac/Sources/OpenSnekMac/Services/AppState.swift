@@ -12,6 +12,7 @@ final class AppState {
     var isApplying = false
     var isRefreshingState = false
     var errorMessage: String?
+    var warningMessage: String?
     var lastUpdated: Date?
 
     var editableStageValues: [Int] = [800, 1600, 3200, 6400, 12000]
@@ -19,6 +20,11 @@ final class AppState {
     var editableActiveStage = 1
     var editablePollRate = 1000
     var editableSleepTimeout = 300
+    var editableDeviceMode = 0x00
+    var editableLowBatteryThresholdRaw = 0x26
+    var editableScrollMode = 0
+    var editableScrollAcceleration = false
+    var editableScrollSmartReel = false
     var editableLedBrightness = 64
     var editableLightingEffect: LightingEffectKind = .staticColor
     var editableLightingWaveDirection: LightingWaveDirection = .left
@@ -34,6 +40,11 @@ final class AppState {
     private var dpiApplyTask: Task<Void, Never>?
     private var pollApplyTask: Task<Void, Never>?
     private var powerApplyTask: Task<Void, Never>?
+    private var deviceModeApplyTask: Task<Void, Never>?
+    private var lowBatteryApplyTask: Task<Void, Never>?
+    private var scrollModeApplyTask: Task<Void, Never>?
+    private var scrollAccelerationApplyTask: Task<Void, Never>?
+    private var scrollSmartReelApplyTask: Task<Void, Never>?
     private var ledApplyTask: Task<Void, Never>?
     private var colorApplyTask: Task<Void, Never>?
     private var lightingEffectApplyTask: Task<Void, Never>?
@@ -45,6 +56,7 @@ final class AppState {
     private var stateCacheByDeviceID: [String: MouseState] = [:]
     private var isRefreshingDpiFast = false
     private var suppressFastDpiUntil: Date?
+    private var lastUSBFastDpiAt: Date?
     private var stateRevision: UInt64 = 0
     var isEditingDpiControl = false
     private var lastLocalEditAt: Date?
@@ -52,6 +64,7 @@ final class AppState {
     private var hydratedButtonBindingsDeviceID: String?
     private var keyboardDraftApplyTaskBySlot: [Int: Task<Void, Never>] = [:]
     private var isPollingDevices = false
+    private var refreshFailureCountByDeviceID: [String: Int] = [:]
 
     var selectedDevice: MouseDevice? {
         guard let selectedDeviceID else { return nil }
@@ -67,7 +80,7 @@ final class AppState {
             return buttonSlots.filter { visible.contains($0.slot) }
         }
         // Hide slot 6 in the UI pending a validated write path.
-        return buttonSlots.filter { $0.slot != 96 && $0.slot != 6 }
+        return buttonSlots.filter { $0.slot != 6 }
     }
 
     func isButtonSlotEditable(_ slot: Int) -> Bool {
@@ -134,6 +147,9 @@ final class AppState {
             hydratedLightingStateByDeviceID.subtract(removedIDs)
             if let hydratedButtonBindingsDeviceID, removedIDs.contains(hydratedButtonBindingsDeviceID) {
                 self.hydratedButtonBindingsDeviceID = nil
+            }
+            for id in removedIDs {
+                refreshFailureCountByDeviceID[id] = nil
             }
         }
 
@@ -207,6 +223,7 @@ final class AppState {
             }
             let merged = fetched.merged(with: stateCacheByDeviceID[selectedDevice.id])
             stateCacheByDeviceID[selectedDevice.id] = merged
+            refreshFailureCountByDeviceID[selectedDevice.id] = 0
             if state != merged {
                 state = merged
             }
@@ -217,6 +234,7 @@ final class AppState {
                 hydrateButtonBindingsIfNeeded(device: selectedDevice)
             }
             errorMessage = nil
+            warningMessage = telemetryWarning(for: merged, device: selectedDevice)
             AppLog.debug(
                 "AppState",
                 "refreshState ok device=\(selectedDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
@@ -224,13 +242,21 @@ final class AppState {
                 "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s"
             )
         } catch {
+            let failures = (refreshFailureCountByDeviceID[selectedDevice.id] ?? 0) + 1
+            refreshFailureCountByDeviceID[selectedDevice.id] = failures
             if stateCacheByDeviceID[selectedDevice.id] == nil {
                 AppLog.error("AppState", "refreshState failed no-cache: \(error.localizedDescription)")
                 errorMessage = error.localizedDescription
+                warningMessage = nil
             } else {
                 // Keep last known-good UI stable on transient polling failures.
                 AppLog.debug("AppState", "refreshState transient-failure masked: \(error.localizedDescription)")
-                errorMessage = nil
+                if failures >= 3 {
+                    errorMessage = "Device read is failing repeatedly (\(failures)x): \(error.localizedDescription)"
+                } else {
+                    errorMessage = nil
+                }
+                warningMessage = "Showing cached values while live device reads are unstable."
             }
         }
     }
@@ -271,8 +297,9 @@ final class AppState {
 
     func applyActiveStageOnly() async {
         let count = max(1, min(5, editableStageCount))
+        let values = Array(editableStageValues.prefix(count)).map { max(100, min(30000, $0)) }
         let active = max(0, min(count - 1, editableActiveStage - 1))
-        enqueueApply(DevicePatch(activeStage: active))
+        enqueueApply(DevicePatch(dpiStages: values, activeStage: active))
     }
 
     func scheduleAutoApplyActiveStage() {
@@ -331,6 +358,108 @@ final class AppState {
         }
     }
 
+    func applyDeviceMode() async {
+        let mode = editableDeviceMode == 0x03 ? 0x03 : 0x00
+        enqueueApply(DevicePatch(deviceMode: DeviceMode(mode: mode, param: 0x00)))
+    }
+
+    func scheduleAutoApplyDeviceMode() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        deviceModeApplyTask?.cancel()
+        deviceModeApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyDeviceMode()
+        }
+    }
+
+    func applyLowBatteryThreshold() async {
+        let raw = max(0x0C, min(0x3F, editableLowBatteryThresholdRaw))
+        enqueueApply(DevicePatch(lowBatteryThresholdRaw: raw))
+    }
+
+    func scheduleAutoApplyLowBatteryThreshold() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        lowBatteryApplyTask?.cancel()
+        lowBatteryApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 220_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyLowBatteryThreshold()
+        }
+    }
+
+    func applyScrollMode() async {
+        enqueueApply(DevicePatch(scrollMode: max(0, min(1, editableScrollMode))))
+    }
+
+    func scheduleAutoApplyScrollMode() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        scrollModeApplyTask?.cancel()
+        scrollModeApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 220_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyScrollMode()
+        }
+    }
+
+    func applyScrollAcceleration() async {
+        enqueueApply(DevicePatch(scrollAcceleration: editableScrollAcceleration))
+    }
+
+    func scheduleAutoApplyScrollAcceleration() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        scrollAccelerationApplyTask?.cancel()
+        scrollAccelerationApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 220_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyScrollAcceleration()
+        }
+    }
+
+    func applyScrollSmartReel() async {
+        enqueueApply(DevicePatch(scrollSmartReel: editableScrollSmartReel))
+    }
+
+    func scheduleAutoApplyScrollSmartReel() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        scrollSmartReelApplyTask?.cancel()
+        scrollSmartReelApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 220_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyScrollSmartReel()
+        }
+    }
+
     func applyLedBrightness() async {
         enqueueApply(DevicePatch(ledBrightness: editableLedBrightness))
     }
@@ -372,8 +501,13 @@ final class AppState {
     }
 
     func applyLightingEffect() async {
-        editableLightingEffect = .staticColor
-        enqueueApply(DevicePatch(ledRGB: RGBPatch(r: editableColor.r, g: editableColor.g, b: editableColor.b)))
+        guard let selectedDevice else { return }
+        if selectedDevice.transport == "bluetooth" {
+            editableLightingEffect = .staticColor
+            enqueueApply(DevicePatch(ledRGB: RGBPatch(r: editableColor.r, g: editableColor.g, b: editableColor.b)))
+            return
+        }
+        enqueueApply(DevicePatch(lightingEffect: currentLightingEffectPatch()))
     }
 
     func scheduleAutoApplyLightingEffect() {
@@ -393,8 +527,11 @@ final class AppState {
     }
 
     func updateLightingEffect(_ kind: LightingEffectKind) {
-        editableLightingEffect = .staticColor
-        _ = kind
+        guard selectedDevice?.transport != "bluetooth" else {
+            editableLightingEffect = .staticColor
+            return
+        }
+        editableLightingEffect = kind
     }
 
     func updateLightingWaveDirection(_ direction: LightingWaveDirection) {
@@ -529,9 +666,15 @@ final class AppState {
     }
 
     func refreshDpiFast() async {
-        guard let selectedDevice, selectedDevice.transport == "bluetooth" else { return }
+        guard let selectedDevice else { return }
+        guard selectedDevice.transport == "bluetooth" || selectedDevice.transport == "usb" else { return }
         guard !isRefreshingDpiFast, !isRefreshingState, !isApplying else { return }
         guard !hasPendingLocalEdits else { return }
+        if selectedDevice.transport == "usb",
+           let lastUSBFastDpiAt,
+           Date().timeIntervalSince(lastUSBFastDpiAt) < 0.55 {
+            return
+        }
         if let until = suppressFastDpiUntil {
             if Date() < until { return }
             suppressFastDpiUntil = nil
@@ -543,6 +686,9 @@ final class AppState {
 
         do {
             guard let fast = try await client.readDpiStagesFast(device: selectedDevice) else { return }
+            if selectedDevice.transport == "usb" {
+                lastUSBFastDpiAt = Date()
+            }
             guard fastRevision == stateRevision else {
                 AppLog.debug("AppState", "refreshDpiFast stale-drop rev=\(fastRevision) current=\(stateRevision)")
                 return
@@ -638,6 +784,14 @@ final class AppState {
             }
             if let lightingEffect = patch.lightingEffect {
                 persistLightingEffect(lightingEffect, device: selectedDevice)
+                persistLightingColor(
+                    RGBColor(
+                        r: lightingEffect.primary.r,
+                        g: lightingEffect.primary.g,
+                        b: lightingEffect.primary.b
+                    ),
+                    device: selectedDevice
+                )
                 hydratedLightingStateByDeviceID.insert(selectedDevice.id)
             }
             if let buttonBinding = patch.buttonBinding {
@@ -645,6 +799,7 @@ final class AppState {
                 hydratedButtonBindingsDeviceID = selectedDevice.id
             }
             errorMessage = nil
+            warningMessage = telemetryWarning(for: merged, device: selectedDevice)
             AppLog.event(
                 "AppState",
                 "apply ok device=\(selectedDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
@@ -654,6 +809,7 @@ final class AppState {
         } catch {
             AppLog.error("AppState", "apply failed device=\(selectedDevice.id): \(error.localizedDescription)")
             errorMessage = error.localizedDescription
+            warningMessage = nil
         }
     }
 
@@ -661,6 +817,17 @@ final class AppState {
         guard !isApplying, !isEditingDpiControl, !hasPendingLocalEdits else { return false }
         guard let lastLocalEditAt else { return true }
         return Date().timeIntervalSince(lastLocalEditAt) > 0.8
+    }
+
+    private func telemetryWarning(for state: MouseState, device: MouseDevice) -> String? {
+        guard device.transport == "usb" else { return nil }
+        var missing: [String] = []
+        if state.dpi_stages.values == nil { missing.append("DPI stages") }
+        if state.poll_rate == nil { missing.append("poll rate") }
+        if state.led_value == nil { missing.append("lighting") }
+        guard !missing.isEmpty else { return nil }
+        return "USB telemetry is incomplete (missing \(missing.joined(separator: ", "))). " +
+            "Controls stay visible, but values may be stale until readback succeeds."
     }
 
     private func hydrateEditable(from state: MouseState) {
@@ -674,11 +841,16 @@ final class AppState {
                     editableStageValues[i] = max(100, min(30000, values[i]))
                 }
             }
+        } else if let dpi = state.dpi?.x {
+            editableStageCount = 1
+            editableStageValues[0] = max(100, min(30000, dpi))
         }
 
         if let active = state.dpi_stages.active_stage {
             let maxStage = max(1, editableStageCount)
             editableActiveStage = max(1, min(maxStage, active + 1))
+        } else {
+            editableActiveStage = 1
         }
 
         if let poll = state.poll_rate {
@@ -687,6 +859,26 @@ final class AppState {
 
         if let timeout = state.sleep_timeout {
             editableSleepTimeout = max(60, min(900, timeout))
+        }
+
+        if let mode = state.device_mode?.mode {
+            editableDeviceMode = mode == 0x03 ? 0x03 : 0x00
+        }
+
+        if let lowBatteryRaw = state.low_battery_threshold_raw {
+            editableLowBatteryThresholdRaw = max(0x0C, min(0x3F, lowBatteryRaw))
+        }
+
+        if let scrollMode = state.scroll_mode {
+            editableScrollMode = max(0, min(1, scrollMode))
+        }
+
+        if let scrollAcceleration = state.scroll_acceleration {
+            editableScrollAcceleration = scrollAcceleration
+        }
+
+        if let scrollSmartReel = state.scroll_smart_reel {
+            editableScrollSmartReel = scrollSmartReel
         }
 
         if let led = state.led_value {
@@ -714,7 +906,20 @@ final class AppState {
             AppLog.debug("AppState", "lighting color read unavailable for device id=\(device.id)")
         }
 
-        if loadedPersistedColor {
+        if device.transport != "bluetooth", let persistedEffect = loadPersistedLightingEffect(device: device) {
+            editableLightingEffect = persistedEffect.kind
+            editableLightingWaveDirection = persistedEffect.waveDirection
+            editableLightingReactiveSpeed = persistedEffect.reactiveSpeed
+            editableSecondaryColor = persistedEffect.secondaryColor
+            AppLog.debug(
+                "AppState",
+                "hydrated lighting effect from persisted cache id=\(device.id) kind=\(persistedEffect.kind.rawValue)"
+            )
+        } else if device.transport == "bluetooth" {
+            editableLightingEffect = .staticColor
+        }
+
+        if loadedPersistedColor, device.transport == "bluetooth" {
             enqueueApply(DevicePatch(ledRGB: RGBPatch(r: editableColor.r, g: editableColor.g, b: editableColor.b)))
             AppLog.debug("AppState", "queued persisted lighting color reapply id=\(device.id)")
         }
@@ -989,6 +1194,11 @@ final class AppState {
 private extension DevicePatch {
     var describe: String {
         var parts: [String] = []
+        if let deviceMode { parts.append("mode=(\(deviceMode.mode),\(deviceMode.param))") }
+        if let lowBatteryThresholdRaw { parts.append("lowBatt=0x\(String(lowBatteryThresholdRaw, radix: 16))") }
+        if let scrollMode { parts.append("scrollMode=\(scrollMode)") }
+        if let scrollAcceleration { parts.append("scrollAccel=\(scrollAcceleration)") }
+        if let scrollSmartReel { parts.append("smartReel=\(scrollSmartReel)") }
         if let pollRate { parts.append("poll=\(pollRate)") }
         if let sleepTimeout { parts.append("sleep=\(sleepTimeout)") }
         if let dpiStages { parts.append("stages=\(dpiStages)") }

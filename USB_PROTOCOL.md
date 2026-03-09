@@ -195,12 +195,12 @@ TxnID:    0x1F
 Command:  Class 0x04, ID 0x86, Size 0x26
 Args:     [0] = VARSTORE (0x01)
 Response: args[0] = storage
-          args[1] = active stage (0-indexed)
+          args[1] = active stage ID (on Basilisk V3 X this is 1-indexed)
           args[2] = number of stages (1-5)
           args[3+n*7] = stage data for each stage
 
 Stage data (7 bytes each):
-  [0] = stage number (0-indexed)
+  [0] = stage ID (commonly 1-indexed on Basilisk V3 X)
   [1-2] = DPI X (big-endian)
   [3-4] = DPI Y (big-endian)
   [5-6] = reserved (0x00)
@@ -211,11 +211,13 @@ TxnID:    0x1F
 ```
 Command:  Class 0x04, ID 0x06, Size 0x26
 Args:     [0] = VARSTORE (0x01)
-          [1] = active stage (0-indexed)
+          [1] = active stage ID (must match a stage entry ID)
           [2] = count (1-5)
           [3+n*7] = stage data (same format as above)
 TxnID:    0x1F
 ```
+
+Client note: treat `active` as a stage-ID token and map it against entry `[0]` stage IDs. Do not assume a fixed zero-based index.
 
 ---
 

@@ -13,8 +13,9 @@ Options:
   --output <dir>                    Output directory for .app (default: OpenSnekMac/.dist)
   --bundle-id <id>                  CFBundleIdentifier (default: io.opensnek.OpenSnekMac)
   --version <semver>                CFBundleShortVersionString (default: 0.1.0)
-  --build-number <value>            CFBundleVersion (default: timestamp)
+  --build-number <value>            CFBundleVersion (default: 1)
   --icon <png-or-icns-path>         Optional app icon source
+  --sign-identity <value>           Signing identity: auto|preserve|adhoc|none|<codesign identity>
   --open                            Open app after build
   -h, --help                        Show this help
 
@@ -23,6 +24,7 @@ Environment overrides:
   OPEN_SNEK_VERSION
   OPEN_SNEK_BUILD_NUMBER
   OPEN_SNEK_APP_ICON
+  OPEN_SNEK_SIGN_IDENTITY
 USAGE
 }
 
@@ -30,8 +32,9 @@ CONFIGURATION="debug"
 OUTPUT_DIR=""
 BUNDLE_ID="${OPEN_SNEK_BUNDLE_ID:-io.opensnek.OpenSnekMac}"
 VERSION="${OPEN_SNEK_VERSION:-0.1.0}"
-BUILD_NUMBER="${OPEN_SNEK_BUILD_NUMBER:-$(date +%Y%m%d%H%M%S)}"
+BUILD_NUMBER="${OPEN_SNEK_BUILD_NUMBER:-1}"
 ICON_SOURCE="${OPEN_SNEK_APP_ICON:-}"
+SIGN_IDENTITY="${OPEN_SNEK_SIGN_IDENTITY:-auto}"
 OPEN_AFTER_BUILD=false
 
 while [[ $# -gt 0 ]]; do
@@ -58,6 +61,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --icon)
       ICON_SOURCE="${2:-}"
+      shift 2
+      ;;
+    --sign-identity)
+      SIGN_IDENTITY="${2:-}"
       shift 2
       ;;
     --open)
@@ -134,6 +141,93 @@ build_icns_from_png() {
   iconutil -c icns "$ICONSET_DIR" -o "$dest_icns"
   return 0
 }
+
+detect_preferred_sign_identity() {
+  if ! command -v security >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local identities
+  identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  if [[ -z "$identities" ]]; then
+    return 1
+  fi
+
+  local preferred
+  preferred="$(printf '%s\n' "$identities" | awk -F'"' '/"Apple Development:/{print $2; exit}')"
+  if [[ -z "$preferred" ]]; then
+    preferred="$(printf '%s\n' "$identities" | awk -F'"' '/"Developer ID Application:/{print $2; exit}')"
+  fi
+  if [[ -z "$preferred" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$preferred"
+  return 0
+}
+
+detect_existing_sign_identity() {
+  local app_bundle="$1"
+  [[ -d "$app_bundle" ]] || return 1
+  local details
+  details="$(codesign -dv --verbose=4 "$app_bundle" 2>&1 || true)"
+  [[ -n "$details" ]] || return 1
+
+  if printf '%s\n' "$details" | grep -q '^Signature=adhoc$'; then
+    printf '%s\n' "adhoc"
+    return 0
+  fi
+
+  local authority
+  authority="$(printf '%s\n' "$details" | awk -F= '/^Authority=/{print $2; exit}')"
+  [[ -n "$authority" ]] || return 1
+  printf '%s\n' "$authority"
+  return 0
+}
+
+resolve_sign_identity() {
+  local requested="$1"
+  local existing="$2"
+
+  case "$requested" in
+    preserve)
+      if [[ -n "$existing" ]]; then
+        printf '%s\n' "$existing"
+      else
+        printf '%s\n' "auto"
+      fi
+      ;;
+    auto)
+      if [[ -n "$existing" && "$existing" != "adhoc" ]]; then
+        printf '%s\n' "$existing"
+      else
+        printf '%s\n' "auto"
+      fi
+      ;;
+    *)
+      printf '%s\n' "$requested"
+      ;;
+  esac
+}
+
+EXISTING_SIGN_IDENTITY=""
+if [[ -d "$APP_BUNDLE" ]]; then
+  EXISTING_SIGN_IDENTITY="$(detect_existing_sign_identity "$APP_BUNDLE" || true)"
+fi
+RESOLVED_SIGN_IDENTITY="$(resolve_sign_identity "$SIGN_IDENTITY" "$EXISTING_SIGN_IDENTITY")"
+if [[ "$SIGN_IDENTITY" == "preserve" ]]; then
+  if [[ -n "$EXISTING_SIGN_IDENTITY" ]]; then
+    echo "[open-snek] Reusing existing signing identity: $EXISTING_SIGN_IDENTITY"
+  else
+    echo "[open-snek] No prior app signature found; falling back to auto signing"
+  fi
+fi
+if [[ "$SIGN_IDENTITY" == "auto" && -n "$EXISTING_SIGN_IDENTITY" && "$EXISTING_SIGN_IDENTITY" != "adhoc" ]]; then
+  echo "[open-snek] Auto mode reusing existing signing identity: $EXISTING_SIGN_IDENTITY"
+fi
+if [[ "$SIGN_IDENTITY" == "auto" && "$EXISTING_SIGN_IDENTITY" == "adhoc" ]]; then
+  echo "[open-snek] Existing app is ad-hoc signed; auto mode will try a real signing identity for stable TCC grants"
+fi
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -212,7 +306,63 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1 || true
+  ADHOC_REQ="=designated => identifier \"$BUNDLE_ID\""
+  sign_adhoc() {
+    if codesign --force --deep --sign - --requirements "$ADHOC_REQ" "$APP_BUNDLE" >/dev/null 2>&1; then
+      echo "[open-snek] Signed app with ad-hoc identity (stable designated requirement: identifier \"$BUNDLE_ID\")"
+      echo "[open-snek] If HID remains blocked after this build, run once: tccutil reset ListenEvent $BUNDLE_ID"
+      return 0
+    fi
+    if codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1; then
+      echo "[open-snek] Signed app with ad-hoc identity"
+      echo "[open-snek] Warning: stable designated requirement could not be applied; Input Monitoring grants may not survive rebuilds."
+      echo "[open-snek] If HID remains blocked, run: tccutil reset ListenEvent $BUNDLE_ID"
+      return 0
+    fi
+    return 1
+  }
+
+  case "$RESOLVED_SIGN_IDENTITY" in
+    none)
+      echo "[open-snek] Skipping codesign (sign identity: none)"
+      ;;
+    adhoc|-)
+      if sign_adhoc; then
+        :
+      else
+        echo "[open-snek] Warning: ad-hoc codesign failed"
+      fi
+      ;;
+    auto)
+      if detected_identity="$(detect_preferred_sign_identity)"; then
+        if codesign --force --deep --sign "$detected_identity" "$APP_BUNDLE" >/dev/null 2>&1; then
+          echo "[open-snek] Signed app with detected identity: $detected_identity"
+        else
+          echo "[open-snek] Warning: signing with detected identity failed; falling back to ad-hoc"
+          if sign_adhoc; then
+            :
+          else
+            echo "[open-snek] Warning: ad-hoc codesign failed"
+          fi
+        fi
+      else
+        echo "[open-snek] No signing identity detected; using ad-hoc signature"
+        if sign_adhoc; then
+          :
+        else
+          echo "[open-snek] Warning: ad-hoc codesign failed"
+        fi
+      fi
+      ;;
+    *)
+      if codesign --force --deep --sign "$RESOLVED_SIGN_IDENTITY" "$APP_BUNDLE" >/dev/null 2>&1; then
+        echo "[open-snek] Signed app with requested identity: $RESOLVED_SIGN_IDENTITY"
+      else
+        echo "[open-snek] Error: codesign failed for identity: $RESOLVED_SIGN_IDENTITY" >&2
+        exit 1
+      fi
+      ;;
+  esac
 fi
 
 echo "[open-snek] App bundle ready: $APP_BUNDLE"

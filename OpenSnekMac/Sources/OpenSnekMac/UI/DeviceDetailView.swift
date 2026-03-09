@@ -20,13 +20,20 @@ struct DeviceDetailView: View {
                         DpiStagesCard(appState: appState)
                     }
                     if state.capabilities.lighting {
-                        LightingCard(appState: appState, swatches: swatches)
+                        LightingCard(appState: appState, selected: selected, swatches: swatches)
                     }
                     if state.capabilities.poll_rate {
                         PollRateCard(appState: appState)
                     }
                     if state.capabilities.power_management {
                         SleepTimeoutCard(appState: appState)
+                    }
+                    if selected.transport != "bluetooth", state.low_battery_threshold_raw != nil {
+                        LowBatteryThresholdCard(appState: appState)
+                    }
+                    if selected.transport != "bluetooth",
+                       state.scroll_mode != nil || state.scroll_acceleration != nil || state.scroll_smart_reel != nil {
+                        ScrollControlsCard(appState: appState, state: state)
                     }
                     if state.capabilities.button_remap {
                         ButtonMappingTableCard(
@@ -108,6 +115,7 @@ struct DeviceOverviewBar: View {
 
 struct LightingCard: View {
     @Bindable var appState: AppState
+    let selected: MouseDevice
     let swatches: [Color]
 
     private var accentBase: Color {
@@ -149,17 +157,121 @@ struct LightingCard: View {
             .tint(accentBase)
             .padding(.vertical, 8)
 
-            LightingColorEditor(
-                title: "Color",
-                color: Binding(
-                    get: { appState.editableColor },
-                    set: {
-                        appState.editableColor = $0
-                        appState.scheduleAutoApplyLedColor()
+            if selected.transport == "bluetooth" {
+                LightingColorEditor(
+                    title: "Color",
+                    color: Binding(
+                        get: { appState.editableColor },
+                        set: {
+                            appState.editableColor = $0
+                            appState.scheduleAutoApplyLedColor()
+                        }
+                    ),
+                    swatches: swatches
+                )
+            } else {
+                HStack {
+                    Text("Profile")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                    Spacer()
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { appState.editableLightingEffect },
+                            set: {
+                                appState.updateLightingEffect($0)
+                                appState.scheduleAutoApplyLightingEffect()
+                            }
+                        )
+                    ) {
+                        ForEach(LightingEffectKind.allCases) { kind in
+                            Text(kind.label).tag(kind)
+                        }
                     }
-                ),
-                swatches: swatches
-            )
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 220, alignment: .trailing)
+                }
+
+                if appState.editableLightingEffect.usesWaveDirection {
+                    HStack {
+                        Text("Direction")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.82))
+                        Spacer()
+                        Picker(
+                            "Direction",
+                            selection: Binding(
+                                get: { appState.editableLightingWaveDirection },
+                                set: {
+                                    appState.updateLightingWaveDirection($0)
+                                    appState.scheduleAutoApplyLightingEffect()
+                                }
+                            )
+                        ) {
+                            Text("Left").tag(LightingWaveDirection.left)
+                            Text("Right").tag(LightingWaveDirection.right)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 220)
+                    }
+                }
+
+                if appState.editableLightingEffect.usesReactiveSpeed {
+                    HStack {
+                        Text("Speed")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.82))
+                        Spacer()
+                        Picker(
+                            "Speed",
+                            selection: Binding(
+                                get: { appState.editableLightingReactiveSpeed },
+                                set: {
+                                    appState.updateLightingReactiveSpeed($0)
+                                    appState.scheduleAutoApplyLightingEffect()
+                                }
+                            )
+                        ) {
+                            Text("1").tag(1)
+                            Text("2").tag(2)
+                            Text("3").tag(3)
+                            Text("4").tag(4)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 220)
+                    }
+                }
+
+                if appState.editableLightingEffect.usesPrimaryColor {
+                    LightingColorEditor(
+                        title: "Primary Color",
+                        color: Binding(
+                            get: { appState.editableColor },
+                            set: {
+                                appState.editableColor = $0
+                                appState.scheduleAutoApplyLightingEffect()
+                            }
+                        ),
+                        swatches: swatches
+                    )
+                }
+
+                if appState.editableLightingEffect.usesSecondaryColor {
+                    LightingColorEditor(
+                        title: "Secondary Color",
+                        color: Binding(
+                            get: { appState.editableSecondaryColor },
+                            set: {
+                                appState.editableSecondaryColor = $0
+                                appState.scheduleAutoApplyLightingEffect()
+                            }
+                        ),
+                        swatches: swatches
+                    )
+                }
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: 14)
@@ -272,14 +384,17 @@ struct DpiStagesCard: View {
     @Bindable var appState: AppState
 
     var body: some View {
+        let supportsMultiStage = true
+        let stageCount = supportsMultiStage ? appState.editableStageCount : 1
         Card(title: "DPI Stages") {
             HStack {
-                Text("Enabled stages: \(appState.editableStageCount) / 5")
+                Text(supportsMultiStage ? "Enabled stages: \(appState.editableStageCount) / 5" : "Single-stage DPI")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.82))
                 Spacer()
                 HStack(spacing: 8) {
                     Button {
+                        guard supportsMultiStage else { return }
                         let next = max(1, appState.editableStageCount - 1)
                         guard next != appState.editableStageCount else { return }
                         appState.editableStageCount = next
@@ -290,10 +405,11 @@ struct DpiStagesCard: View {
                             .font(.system(size: 20, weight: .bold))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(appState.editableStageCount > 1 ? .white : .white.opacity(0.35))
-                    .disabled(appState.editableStageCount <= 1)
+                    .foregroundStyle(supportsMultiStage && appState.editableStageCount > 1 ? .white : .white.opacity(0.35))
+                    .disabled(!supportsMultiStage || appState.editableStageCount <= 1)
 
                     Button {
+                        guard supportsMultiStage else { return }
                         let next = min(5, appState.editableStageCount + 1)
                         guard next != appState.editableStageCount else { return }
                         appState.editableStageCount = next
@@ -303,16 +419,16 @@ struct DpiStagesCard: View {
                             .font(.system(size: 20, weight: .bold))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(appState.editableStageCount < 5 ? .white : .white.opacity(0.35))
-                    .disabled(appState.editableStageCount >= 5)
+                    .foregroundStyle(supportsMultiStage && appState.editableStageCount < 5 ? .white : .white.opacity(0.35))
+                    .disabled(!supportsMultiStage || appState.editableStageCount >= 5)
                 }
             }
 
-            ForEach(0..<appState.editableStageCount, id: \.self) { idx in
+            ForEach(0..<stageCount, id: \.self) { idx in
                 let stageColor = stageAccent(for: idx)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        if appState.editableStageCount == 1 {
+                        if stageCount == 1 {
                             Text("DPI")
                                 .foregroundStyle(.white)
                         } else {
@@ -443,6 +559,110 @@ struct SleepTimeoutCard: View {
         let mins = clamped / 60
         let secs = clamped % 60
         return "\(mins)m \(String(format: "%02d", secs))s"
+    }
+}
+
+struct LowBatteryThresholdCard: View {
+    @Bindable var appState: AppState
+
+    var body: some View {
+        Card(title: "Low Battery Threshold") {
+            HStack {
+                Text("Threshold")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+                Spacer()
+                let raw = max(0x0C, min(0x3F, appState.editableLowBatteryThresholdRaw))
+                Text("\(String(format: "0x%02X", raw)) (~\(approxPercent(raw))%)")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { Double(max(0x0C, min(0x3F, appState.editableLowBatteryThresholdRaw))) },
+                    set: { newValue in
+                        appState.editableLowBatteryThresholdRaw = max(0x0C, min(0x3F, Int(round(newValue))))
+                        appState.scheduleAutoApplyLowBatteryThreshold()
+                    }
+                ),
+                in: Double(0x0C)...Double(0x3F)
+            )
+
+            Text("Approximate warning level")
+                .hintTextStyle()
+        }
+    }
+
+    private func approxPercent(_ raw: Int) -> Int {
+        let clamped = max(0x0C, min(0x3F, raw))
+        let ratio = Double(clamped - 0x0C) / Double(0x3F - 0x0C)
+        return Int(round(5.0 + (ratio * 20.0)))
+    }
+}
+
+struct ScrollControlsCard: View {
+    @Bindable var appState: AppState
+    let state: MouseState
+
+    var body: some View {
+        Card(title: "Scroll Controls") {
+            if state.scroll_mode != nil {
+                HStack {
+                    Text("Mode")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                    Spacer()
+                    Picker(
+                        "Scroll Mode",
+                        selection: Binding(
+                            get: { appState.editableScrollMode },
+                            set: {
+                                appState.editableScrollMode = ($0 == 1 ? 1 : 0)
+                                appState.scheduleAutoApplyScrollMode()
+                            }
+                        )
+                    ) {
+                        Text("Tactile").tag(0)
+                        Text("Free Spin").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                }
+            }
+
+            if state.scroll_acceleration != nil {
+                Toggle(
+                    "Acceleration",
+                    isOn: Binding(
+                        get: { appState.editableScrollAcceleration },
+                        set: {
+                            appState.editableScrollAcceleration = $0
+                            appState.scheduleAutoApplyScrollAcceleration()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+            }
+
+            if state.scroll_smart_reel != nil {
+                Toggle(
+                    "Smart Reel",
+                    isOn: Binding(
+                        get: { appState.editableScrollSmartReel },
+                        set: {
+                            appState.editableScrollSmartReel = $0
+                            appState.scheduleAutoApplyScrollSmartReel()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+            }
+        }
     }
 }
 
