@@ -84,6 +84,16 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(Array(payload), [0x01, 0x0A, 0x00, 0x01, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00])
     }
 
+    func testButtonPayloadMouseBack() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x05, kind: .mouseBack, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x05, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadMouseForward() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x04, kind: .mouseForward, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x04, 0x00, 0x01, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00])
+    }
+
     func testButtonPayloadRightClickTurbo() {
         let payload = BLEVendorProtocol.buildButtonPayload(
             slot: 0x02,
@@ -100,9 +110,51 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(Array(payload), [0x01, 0x02, 0x00, 0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00])
     }
 
+    func testButtonPayloadDefaultSlot1UsesLeftClickRestore() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x01, kind: .default, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadDefaultSlot4UsesBackRestore() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x04, kind: .default, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x04, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00])
+    }
+
     func testButtonPayloadDefaultSlot60UsesCaptureBackedDpiRestore() {
         let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x60, kind: .default, hidKey: nil)
         XCTAssertEqual(Array(payload), [0x01, 0x60, 0x00, 0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testScrollLEDEffectStaticArgs() {
+        let args = BLEVendorProtocol.buildScrollLEDEffectArgs(
+            effect: LightingEffectPatch(
+                kind: .staticColor,
+                primary: RGBPatch(r: 0x12, g: 0x34, b: 0x56)
+            )
+        )
+        XCTAssertEqual(args, [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, 0x12, 0x34, 0x56])
+    }
+
+    func testScrollLEDEffectReactiveArgsClampSpeed() {
+        let args = BLEVendorProtocol.buildScrollLEDEffectArgs(
+            effect: LightingEffectPatch(
+                kind: .reactive,
+                primary: RGBPatch(r: 0xAA, g: 0xBB, b: 0xCC),
+                reactiveSpeed: 9
+            )
+        )
+        XCTAssertEqual(args, [0x01, 0x01, 0x05, 0x00, 0x04, 0x01, 0xAA, 0xBB, 0xCC])
+    }
+
+    func testScrollLEDEffectPulseDualArgs() {
+        let args = BLEVendorProtocol.buildScrollLEDEffectArgs(
+            effect: LightingEffectPatch(
+                kind: .pulseDual,
+                primary: RGBPatch(r: 0x01, g: 0x02, b: 0x03),
+                secondary: RGBPatch(r: 0x10, g: 0x20, b: 0x30)
+            )
+        )
+        XCTAssertEqual(args, [0x01, 0x01, 0x02, 0x02, 0x00, 0x02, 0x01, 0x02, 0x03, 0x10, 0x20, 0x30])
     }
 
     func testParseVariableLengthDpiBlob() {

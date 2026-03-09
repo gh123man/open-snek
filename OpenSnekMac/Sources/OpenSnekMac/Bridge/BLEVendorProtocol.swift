@@ -17,6 +17,7 @@ enum BLEVendorProtocol {
         static let dpiStagesSet = Key(b0: 0x0B, b1: 0x04, b2: 0x01, b3: 0x00)
         static let lightingGet = Key(b0: 0x10, b1: 0x85, b2: 0x01, b3: 0x01)
         static let lightingSet = Key(b0: 0x10, b1: 0x05, b2: 0x01, b3: 0x00)
+        static let lightingModeSet = Key(b0: 0x10, b1: 0x03, b2: 0x00, b3: 0x00)
         static let lightingFrameGet = Key(b0: 0x10, b1: 0x84, b2: 0x00, b3: 0x00)
         static let lightingFrameSet = Key(b0: 0x10, b1: 0x04, b2: 0x00, b3: 0x00)
         static let powerTimeoutGet = Key(b0: 0x05, b1: 0x84, b2: 0x00, b3: 0x00)
@@ -236,14 +237,14 @@ enum BLEVendorProtocol {
 
         switch kind {
         case .default:
-            // Capture-backed default restore variants:
-            // - slot 0x02 uses explicit right-click payload
-            // - slot 0x60 (DPI cycle button) uses action 0x06 payload
-            if slot == 0x02 {
-                return Data([0x01, slot, 0x00, 0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00])
-            }
+            // Slot-specific default restore:
+            // - button slots map to their native mouse action id
+            // - slot 0x60 (DPI cycle button) uses capture-backed action 0x06 payload
             if slot == 0x60 {
                 return Data([0x01, slot, 0x00, 0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00])
+            }
+            if let buttonID = defaultMouseButtonID(forSlot: slot) {
+                return Data([0x01, slot, 0x00, 0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00])
             }
             return Data([0x01, slot, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
         case .leftClick:
@@ -270,6 +271,40 @@ enum BLEVendorProtocol {
         }
     }
 
+    static func buildScrollLEDEffectArgs(effect: LightingEffectPatch) -> [UInt8] {
+        let varStore: UInt8 = 0x01
+        let ledScrollWheel: UInt8 = 0x01
+        let p = effect.primary
+        let s = effect.secondary
+        let pr = UInt8(max(0, min(255, p.r)))
+        let pg = UInt8(max(0, min(255, p.g)))
+        let pb = UInt8(max(0, min(255, p.b)))
+        let sr = UInt8(max(0, min(255, s.r)))
+        let sg = UInt8(max(0, min(255, s.g)))
+        let sb = UInt8(max(0, min(255, s.b)))
+        let speed = UInt8(max(1, min(4, effect.reactiveSpeed)))
+
+        switch effect.kind {
+        case .off:
+            return [varStore, ledScrollWheel, 0x00, 0x00, 0x00, 0x00]
+        case .staticColor:
+            return [varStore, ledScrollWheel, 0x01, 0x00, 0x00, 0x01, pr, pg, pb]
+        case .spectrum:
+            return [varStore, ledScrollWheel, 0x03, 0x00, 0x00, 0x00]
+        case .wave:
+            let direction: UInt8 = effect.waveDirection == .left ? 0x01 : 0x02
+            return [varStore, ledScrollWheel, 0x04, direction, 0x28, 0x00]
+        case .reactive:
+            return [varStore, ledScrollWheel, 0x05, 0x00, speed, 0x01, pr, pg, pb]
+        case .pulseRandom:
+            return [varStore, ledScrollWheel, 0x02, 0x00, 0x00, 0x00]
+        case .pulseSingle:
+            return [varStore, ledScrollWheel, 0x02, 0x01, 0x00, 0x01, pr, pg, pb]
+        case .pulseDual:
+            return [varStore, ledScrollWheel, 0x02, 0x02, 0x00, 0x02, pr, pg, pb, sr, sg, sb]
+        }
+    }
+
     private static func mouseButtonID(for kind: ButtonBindingKind) -> UInt8? {
         switch kind {
         case .leftClick: return 0x01
@@ -281,6 +316,19 @@ enum BLEVendorProtocol {
         case .scrollDown: return 0x0A
         case .default, .keyboardSimple, .clearLayer:
             return nil
+        }
+    }
+
+    private static func defaultMouseButtonID(forSlot slot: UInt8) -> UInt8? {
+        switch slot {
+        case 0x01: return 0x01 // left click
+        case 0x02: return 0x02 // right click
+        case 0x03: return 0x03 // middle click
+        case 0x04: return 0x04 // back
+        case 0x05: return 0x05 // forward
+        case 0x09: return 0x09 // scroll up
+        case 0x0A: return 0x0A // scroll down
+        default: return nil
         }
     }
 }

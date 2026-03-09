@@ -149,8 +149,9 @@ actor BridgeClient {
 
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
         if device.transport == "bluetooth" {
+            let handle = handleFor(device: device)
             let changedDpi = patch.dpiStages != nil || patch.activeStage != nil
-            let changedLighting = patch.ledBrightness != nil || patch.ledRGB != nil
+            let changedLighting = patch.ledBrightness != nil || patch.ledRGB != nil || patch.lightingEffect != nil
             let changedPower = patch.sleepTimeout != nil
 
             if patch.dpiStages != nil || patch.activeStage != nil {
@@ -179,6 +180,22 @@ actor BridgeClient {
             if let rgb = patch.ledRGB {
                 guard try await btSetLightingRGB(r: rgb.r, g: rgb.g, b: rgb.b) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth RGB")
+                }
+            }
+
+            if let effect = patch.lightingEffect {
+                var applied = false
+                if let handle {
+                    applied = try setScrollLEDEffect(handle, device, effect: effect)
+                }
+                if !applied {
+                    applied = try await btApplyLightingEffectFallback(effect: effect)
+                }
+                if !applied {
+                    AppLog.debug(
+                        "Bridge",
+                        "lighting effect fallback unavailable kind=\(effect.kind.rawValue) transport=\(device.transport)"
+                    )
                 }
             }
 
@@ -251,6 +268,12 @@ actor BridgeClient {
             if let brightness = patch.ledBrightness {
                 guard try setScrollLEDBrightness(handle, device, value: brightness) else {
                     throw BridgeError.commandFailed("Failed to set LED brightness")
+                }
+            }
+
+            if let effect = patch.lightingEffect {
+                guard try setScrollLEDEffect(handle, device, effect: effect) else {
+                    throw BridgeError.commandFailed("Failed to set lighting effect")
                 }
             }
 
@@ -624,6 +647,32 @@ actor BridgeClient {
         return btAckSuccess(notifies: notifies, req: req)
     }
 
+    private func btSetLightingModeRaw(value: UInt32) async throws -> Bool {
+        try await btSetScalar(
+            key: .lightingModeSet,
+            value: Int(value),
+            size: 4,
+            payloadLength: 0x04
+        )
+    }
+
+    private func btApplyLightingEffectFallback(effect: LightingEffectPatch) async throws -> Bool {
+        switch effect.kind {
+        case .off:
+            // On BLE-only paths, emulate "off" via brightness scalar.
+            return try await btSetLightingValue(value: 0)
+        case .staticColor:
+            return try await btSetLightingRGB(r: effect.primary.r, g: effect.primary.g, b: effect.primary.b)
+        case .spectrum:
+            // Capture-backed selector key from all-lighting-modes.pcapng.
+            return try await btSetLightingModeRaw(value: 0x00000008)
+        case .wave, .reactive, .pulseRandom, .pulseSingle, .pulseDual:
+            // No capture-backed BLE vendor selector values for these profile families yet.
+            // Keep UI/app-state consistent without throwing hard errors.
+            return false
+        }
+    }
+
     private func parseLightingRGB(payload: Data) -> RGBPatch? {
         guard !payload.isEmpty else { return nil }
 
@@ -868,12 +917,52 @@ actor BridgeClient {
         return r[0] == 0x02
     }
 
+    private func setScrollLEDEffect(_ handle: IOHIDDevice, _ device: MouseDevice, effect: LightingEffectPatch) throws -> Bool {
+        let args = BLEVendorProtocol.buildScrollLEDEffectArgs(effect: effect)
+        guard let r = try perform(
+            device,
+            handle,
+            classID: 0x0F,
+            cmdID: 0x02,
+            size: UInt8(max(0, min(255, args.count))),
+            args: args
+        ) else { return false }
+        return r[0] == 0x02
+    }
+
     private func setButtonBindingUSB(_ handle: IOHIDDevice, _ device: MouseDevice, slot: Int, kind: String, hidKey: Int) throws -> Bool {
         let profile: UInt8 = 0x01
         let button = UInt8(max(0, min(255, slot)))
         let actionType: UInt8
         let params: [UInt8]
         switch kind {
+        case "default":
+            switch slot {
+            case 1:
+                actionType = 0x01
+                params = [0x01, 0x01]
+            case 2:
+                actionType = 0x01
+                params = [0x01, 0x02]
+            case 3:
+                actionType = 0x01
+                params = [0x01, 0x03]
+            case 4:
+                actionType = 0x01
+                params = [0x01, 0x04]
+            case 5:
+                actionType = 0x01
+                params = [0x01, 0x05]
+            case 9:
+                actionType = 0x01
+                params = [0x01, 0x09]
+            case 10:
+                actionType = 0x01
+                params = [0x01, 0x0A]
+            default:
+                actionType = 0x01
+                params = []
+            }
         case "left_click":
             actionType = 0x01
             params = [0x01, 0x01]

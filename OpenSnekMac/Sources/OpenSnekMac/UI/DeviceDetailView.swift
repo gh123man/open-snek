@@ -20,7 +20,7 @@ struct DeviceDetailView: View {
                         DpiStagesCard(appState: appState)
                     }
                     if state.capabilities.lighting {
-                        LightingCard(appState: appState, state: state, swatches: swatches)
+                        LightingCard(appState: appState, swatches: swatches)
                     }
                     if state.capabilities.poll_rate {
                         PollRateCard(appState: appState)
@@ -108,7 +108,6 @@ struct DeviceOverviewBar: View {
 
 struct LightingCard: View {
     @Bindable var appState: AppState
-    let state: MouseState
     let swatches: [Color]
 
     private var accentBase: Color {
@@ -150,67 +149,17 @@ struct LightingCard: View {
             .tint(accentBase)
             .padding(.vertical, 8)
 
-            if state.connection == "Bluetooth" {
-                HStack(spacing: 8) {
-                    ForEach(Array(swatches.enumerated()), id: \.offset) { _, swatch in
-                        ColorSwatchButton(
-                            color: swatch,
-                            isSelected: RGBColor.fromColor(swatch) == appState.editableColor,
-                            action: {
-                                appState.editableColor = RGBColor.fromColor(swatch)
-                                appState.scheduleAutoApplyLedColor()
-                            }
-                        )
+            LightingColorEditor(
+                title: "Color",
+                color: Binding(
+                    get: { appState.editableColor },
+                    set: {
+                        appState.editableColor = $0
+                        appState.scheduleAutoApplyLedColor()
                     }
-                }
-
-                RGBSliderRow(
-                    label: "R",
-                    tint: Color.red,
-                    value: Binding(
-                        get: { appState.editableColor.r },
-                        set: {
-                            appState.editableColor.r = max(0, min(255, $0))
-                            appState.scheduleAutoApplyLedColor()
-                        }
-                    )
-                )
-
-                RGBSliderRow(
-                    label: "G",
-                    tint: Color.green,
-                    value: Binding(
-                        get: { appState.editableColor.g },
-                        set: {
-                            appState.editableColor.g = max(0, min(255, $0))
-                            appState.scheduleAutoApplyLedColor()
-                        }
-                    )
-                )
-
-                RGBSliderRow(
-                    label: "B",
-                    tint: Color.blue,
-                    value: Binding(
-                        get: { appState.editableColor.b },
-                        set: {
-                            appState.editableColor.b = max(0, min(255, $0))
-                            appState.scheduleAutoApplyLedColor()
-                        }
-                    )
-                )
-
-                Text(
-                    String(
-                        format: "#%02X%02X%02X",
-                        appState.editableColor.r,
-                        appState.editableColor.g,
-                        appState.editableColor.b
-                    )
-                )
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.82))
-            }
+                ),
+                swatches: swatches
+            )
         }
         .background(
             RoundedRectangle(cornerRadius: 14)
@@ -223,6 +172,70 @@ struct LightingCard: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
+                )
+        )
+    }
+}
+
+struct LightingColorEditor: View {
+    let title: String
+    @Binding var color: RGBColor
+    let swatches: [Color]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.74))
+
+            HStack(spacing: 8) {
+                ForEach(Array(swatches.enumerated()), id: \.offset) { _, swatch in
+                    ColorSwatchButton(
+                        color: swatch,
+                        isSelected: RGBColor.fromColor(swatch) == color,
+                        action: { color = RGBColor.fromColor(swatch) }
+                    )
+                }
+            }
+
+            RGBSliderRow(
+                label: "R",
+                tint: Color.red,
+                value: Binding(
+                    get: { color.r },
+                    set: { color.r = max(0, min(255, $0)) }
+                )
+            )
+
+            RGBSliderRow(
+                label: "G",
+                tint: Color.green,
+                value: Binding(
+                    get: { color.g },
+                    set: { color.g = max(0, min(255, $0)) }
+                )
+            )
+
+            RGBSliderRow(
+                label: "B",
+                tint: Color.blue,
+                value: Binding(
+                    get: { color.b },
+                    set: { color.b = max(0, min(255, $0)) }
+                )
+            )
+
+            Text(String(format: "#%02X%02X%02X", color.r, color.g, color.b))
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
     }
@@ -441,6 +454,8 @@ struct ButtonMappingTableCard: View {
         Card(title: title) {
             ForEach(appState.visibleButtonSlots) { slot in
                 let isEditable = appState.isButtonSlotEditable(slot.slot)
+                let selectedKind = appState.buttonBindingKind(for: slot.slot)
+                let turboEligible = (appState.selectedDevice?.transport == "bluetooth") && selectedKind != .default && selectedKind.supportsTurbo
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 12) {
                         Text(slot.friendlyName)
@@ -496,7 +511,6 @@ struct ButtonMappingTableCard: View {
                         }
                     }
 
-                    let turboEligible = (appState.selectedDevice?.transport == "bluetooth") && appState.buttonBindingKind(for: slot.slot).supportsTurbo
                     if turboEligible {
                         HStack(spacing: 8) {
                             Spacer()
@@ -508,33 +522,45 @@ struct ButtonMappingTableCard: View {
                                 )
                             )
                             .toggleStyle(.switch)
-                            .labelsHidden()
-                            Text("Turbo")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.76))
-                                .frame(width: 54, alignment: .leading)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.76))
+                            .disabled(!isEditable)
 
                             if appState.buttonBindingTurboEnabled(for: slot.slot) {
-                                Text("Rate")
+                                Text("Slow")
                                     .font(.system(size: 12, weight: .bold, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.62))
 
                                 Slider(
                                     value: Binding(
-                                        get: { Double(appState.buttonBindingTurboRate(for: slot.slot)) },
-                                        set: { appState.updateButtonBindingTurboRate(slot: slot.slot, rate: Int(round($0))) }
+                                        get: { Double(appState.buttonBindingTurboRatePressesPerSecond(for: slot.slot)) },
+                                        set: { appState.updateButtonBindingTurboPressesPerSecond(slot: slot.slot, pressesPerSecond: Int(round($0))) }
                                     ),
-                                    in: 1...255
+                                    in: 1...20
                                 )
                                 .frame(width: 140)
+                                .disabled(!isEditable)
 
-                                Text("\(appState.buttonBindingTurboRate(for: slot.slot))")
+                                Text("Fast")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.62))
+
+                                Text("\(appState.buttonBindingTurboRatePressesPerSecond(for: slot.slot))/s")
                                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                                     .foregroundStyle(.white.opacity(0.78))
-                                    .frame(width: 34, alignment: .trailing)
+                                    .frame(width: 54, alignment: .trailing)
                             }
                         }
                         .disabled(!isEditable)
+
+                        if appState.buttonBindingTurboEnabled(for: slot.slot) {
+                            HStack {
+                                Spacer()
+                                Text("Turbo rate: 1..20 presses per second")
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.58))
+                            }
+                        }
                     }
 
                     if let notice = appState.buttonSlotNotice(slot.slot) {

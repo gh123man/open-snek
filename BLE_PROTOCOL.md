@@ -191,7 +191,16 @@ Observed layer-clear mapping (`all-key-binding-functions.pcapng`):
 
 Observed slot-specific default mapping (`dpi-cycle-left-click-default.pcapng`):
 - slot `0x60` restore payload: `01 60 00 06 0106 0000 0000`
-- this differs from the generic default payload (`action_type=0x01`, `p0=0x0000`).
+- this differs from mouse-button slot defaults, which resolve to slot-native `action_type=0x01` payloads.
+
+Implemented default restore mapping (slot-native):
+- `0x01` -> left click (`p0=0x0101`)
+- `0x02` -> right click (`p0=0x0201`)
+- `0x03` -> middle click (`p0=0x0301`)
+- `0x04` -> back (`p0=0x0401`)
+- `0x05` -> forward (`p0=0x0501`)
+- `0x09` -> scroll up (`p0=0x0901`)
+- `0x0A` -> scroll down (`p0=0x0A01`)
 
 ## 8. Non-Vendor BLE Paths Used by `razer_ble.py`
 
@@ -256,6 +265,9 @@ The Swift app (`OpenSnekMac`) applies additional runtime safety around the same 
 - BT DPI apply uses a single vendor stage-table write (no active-stage nudge/toggle sequence)
 - BT writer preserves stage-id bytes from the current snapshot so hardware stage-button cycling stays in sync with UI selection
 - invalid DPI read filtering + immediate retry for transient malformed payloads
+- `razer_ble.py` includes HID scroll LED effect families (`0x0F:0x02`), but on current macOS BT stack these HID writes are commonly unsupported (`send result=-1`).
+- OpenSnekMac currently treats lighting as static-only in UI (brightness + RGB frame write) until a reliable cross-transport effect path is validated.
+- persisted lighting settings are keyed by stable device identity and replayed on reconnect/discovery
 - log-backed diagnostics at `~/Library/Logs/OpenSnekMac/open-snek.log`
 
 These are transport-consumer behaviors and do not change the on-wire packet format.
@@ -292,9 +304,9 @@ These are transport-consumer behaviors and do not change the on-wire packet form
 | Scroll mode | `02:94/14` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll acceleration | `02:96/16` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll smart reel | `02:97/17` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
-| Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping for non-HID parity |
+| Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts and OpenSnekMac via HID path | Need BLE vendor mapping for non-HID parity |
 | Button remap | USB experimental raw writer only | `08 04 01 <slot>` + payload | BLE implemented + USB experimental writer | Mouse + keyboard turbo payloads are mapped on BLE; USB taxonomy still incomplete |
-| Lighting / matrix | USB class `0x0F` partly implemented (scroll LED) | Scalar key (`10 85` / `10 05`) + frame stream key (`10 04`) | USB scroll LED + BLE scalar + BLE frame writes | Need full effect model + persistence on both transports |
+| Lighting / matrix | USB class `0x0F` partly implemented (scroll LED) | Scalar key (`10 85` / `10 05`) + frame stream key (`10 04`) | USB/BLE HID scroll LED profiles + BLE scalar/frame writes | Need vendor-key parity for non-HID BLE effect writes |
 
 ## 13. `razer_ble.py` Feature Overlap Checklist
 

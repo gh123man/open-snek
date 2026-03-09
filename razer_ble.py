@@ -715,10 +715,22 @@ class RazerMouse:
     @staticmethod
     def _build_button_payload_default(slot: int) -> bytes:
         # Capture-backed defaults:
-        # - Generic: 01 <slot> 00 01 0000 0000 0000
+        # - Slot-specific default mouse actions
         # - DPI cycle button (slot 0x60): 01 60 00 06 0106 0000 0000
-        if int(slot) == 0x60:
+        slot_i = int(slot)
+        if slot_i == 0x60:
             return RazerMouse._build_button_payload_action(slot, 0x06, 0x0601, 0x0000, 0x0000, layer=0x00)
+        default_mouse_map = {
+            0x01: 0x01,  # left
+            0x02: 0x02,  # right
+            0x03: 0x03,  # middle
+            0x04: 0x04,  # back
+            0x05: 0x05,  # forward
+            0x09: 0x09,  # scroll up
+            0x0A: 0x0A,  # scroll down
+        }
+        if slot_i in default_mouse_map:
+            return RazerMouse._build_button_payload_mouse_button(slot, default_mouse_map[slot_i])
         return RazerMouse._build_button_payload_action(slot, 0x01, 0x0000, 0x0000, 0x0000, layer=0x00)
 
     @staticmethod
@@ -765,9 +777,6 @@ class RazerMouse:
 
     def set_button_default(self, slot: int) -> bool:
         slot = int(slot)
-        # Capture-backed special case: slot 0x02 default is explicit right-click action.
-        if slot == 0x02:
-            return self.set_button_binding_raw(slot, self._build_button_payload_mouse_button(slot, 0x02))
         return self.set_button_binding_raw(slot, self._build_button_payload_default(slot))
 
     def set_button_clear_layer(self, slot: int, layer: int = 0x01) -> bool:

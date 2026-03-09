@@ -20,7 +20,11 @@ final class AppState {
     var editablePollRate = 1000
     var editableSleepTimeout = 300
     var editableLedBrightness = 64
+    var editableLightingEffect: LightingEffectKind = .staticColor
+    var editableLightingWaveDirection: LightingWaveDirection = .left
+    var editableLightingReactiveSpeed = 2
     var editableColor = RGBColor(r: 0, g: 255, b: 0)
+    var editableSecondaryColor = RGBColor(r: 0, g: 170, b: 255)
     let buttonSlots = ButtonSlotDescriptor.defaults
     var editableButtonBindings: [Int: ButtonBindingDraft] = [:]
     var keyboardTextDraftBySlot: [Int: String] = [:]
@@ -32,6 +36,7 @@ final class AppState {
     private var powerApplyTask: Task<Void, Never>?
     private var ledApplyTask: Task<Void, Never>?
     private var colorApplyTask: Task<Void, Never>?
+    private var lightingEffectApplyTask: Task<Void, Never>?
     private var buttonApplyTask: Task<Void, Never>?
     private var activeStageApplyTask: Task<Void, Never>?
     private var hasPendingLocalEdits = false
@@ -43,8 +48,10 @@ final class AppState {
     private var stateRevision: UInt64 = 0
     var isEditingDpiControl = false
     private var lastLocalEditAt: Date?
-    private var hydratedLightingColorByDeviceID: Set<String> = []
+    private var hydratedLightingStateByDeviceID: Set<String> = []
+    private var hydratedButtonBindingsDeviceID: String?
     private var keyboardDraftApplyTaskBySlot: [Int: Task<Void, Never>] = [:]
+    private var knownDeviceIDs: Set<String> = []
 
     var selectedDevice: MouseDevice? {
         guard let selectedDeviceID else { return nil }
@@ -83,6 +90,15 @@ final class AppState {
         do {
             let listed = try await client.listDevices()
             devices = listed
+            let currentIDs = Set(listed.map(\.id))
+            let removedIDs = knownDeviceIDs.subtracting(currentIDs)
+            if !removedIDs.isEmpty {
+                hydratedLightingStateByDeviceID.subtract(removedIDs)
+                if let hydratedButtonBindingsDeviceID, removedIDs.contains(hydratedButtonBindingsDeviceID) {
+                    self.hydratedButtonBindingsDeviceID = nil
+                }
+            }
+            knownDeviceIDs = currentIDs
             AppLog.event("AppState", "refreshDevices found=\(listed.count)")
             if selectedDeviceID == nil {
                 selectedDeviceID = listed.first?.id
@@ -139,7 +155,8 @@ final class AppState {
             lastUpdated = Date()
             if shouldHydrateEditable {
                 hydrateEditable(from: merged)
-                await hydrateLightingColorIfNeeded(device: selectedDevice)
+                await hydrateLightingStateIfNeeded(device: selectedDevice)
+                hydrateButtonBindingsIfNeeded(device: selectedDevice)
             }
             errorMessage = nil
             AppLog.debug(
@@ -296,6 +313,40 @@ final class AppState {
         }
     }
 
+    func applyLightingEffect() async {
+        editableLightingEffect = .staticColor
+        enqueueApply(DevicePatch(ledRGB: RGBPatch(r: editableColor.r, g: editableColor.g, b: editableColor.b)))
+    }
+
+    func scheduleAutoApplyLightingEffect() {
+        guard !isHydrating else { return }
+        hasPendingLocalEdits = true
+        lastLocalEditAt = Date()
+        lightingEffectApplyTask?.cancel()
+        lightingEffectApplyTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyLightingEffect()
+        }
+    }
+
+    func updateLightingEffect(_ kind: LightingEffectKind) {
+        editableLightingEffect = .staticColor
+        _ = kind
+    }
+
+    func updateLightingWaveDirection(_ direction: LightingWaveDirection) {
+        editableLightingWaveDirection = direction
+    }
+
+    func updateLightingReactiveSpeed(_ speed: Int) {
+        editableLightingReactiveSpeed = max(1, min(4, speed))
+    }
+
     private func applyButtonBinding(slot: Int) async {
         let resolved = editableButtonBindings[slot] ?? defaultButtonBinding(for: slot)
         let binding = ButtonBindingPatch(
@@ -338,6 +389,10 @@ final class AppState {
 
     func buttonBindingTurboRate(for slot: Int) -> Int {
         editableButtonBindings[slot]?.turboRate ?? defaultButtonBinding(for: slot).turboRate
+    }
+
+    func buttonBindingTurboRatePressesPerSecond(for slot: Int) -> Int {
+        Self.turboRawToPressesPerSecond(buttonBindingTurboRate(for: slot))
     }
 
     func updateButtonBindingKind(slot: Int, kind: ButtonBindingKind) {
@@ -385,6 +440,11 @@ final class AppState {
         next.turboRate = max(1, min(255, rate))
         editableButtonBindings[slot] = next
         scheduleAutoApplyButton(slot: slot)
+    }
+
+    func updateButtonBindingTurboPressesPerSecond(slot: Int, pressesPerSecond: Int) {
+        let pps = max(1, min(20, pressesPerSecond))
+        updateButtonBindingTurboRate(slot: slot, rate: Self.turboPressesPerSecondToRaw(pps))
     }
 
     func keyboardTextDraft(for slot: Int) -> String {
@@ -515,8 +575,16 @@ final class AppState {
             lastLocalEditAt = nil
             hydrateEditable(from: merged)
             if patch.ledRGB != nil {
-                persistLightingColor(editableColor, deviceID: selectedDevice.id)
-                hydratedLightingColorByDeviceID.insert(selectedDevice.id)
+                persistLightingColor(editableColor, device: selectedDevice)
+                hydratedLightingStateByDeviceID.insert(selectedDevice.id)
+            }
+            if let lightingEffect = patch.lightingEffect {
+                persistLightingEffect(lightingEffect, device: selectedDevice)
+                hydratedLightingStateByDeviceID.insert(selectedDevice.id)
+            }
+            if let buttonBinding = patch.buttonBinding {
+                persistButtonBinding(buttonBinding, device: selectedDevice)
+                hydratedButtonBindingsDeviceID = selectedDevice.id
             }
             errorMessage = nil
             AppLog.event(
@@ -568,41 +636,45 @@ final class AppState {
         }
     }
 
-    private func hydrateLightingColorIfNeeded(device: MouseDevice) async {
-        guard device.transport == "bluetooth" else { return }
-        guard !hydratedLightingColorByDeviceID.contains(device.id) else { return }
+    private func hydrateLightingStateIfNeeded(device: MouseDevice) async {
+        guard !hydratedLightingStateByDeviceID.contains(device.id) else { return }
+        var loadedPersistedColor = false
 
-        if let rgb = try? await client.readLightingColor(device: device) {
+        if device.transport == "bluetooth",
+           let rgb = try? await client.readLightingColor(device: device) {
             editableColor = RGBColor(r: rgb.r, g: rgb.g, b: rgb.b)
-            persistLightingColor(editableColor, deviceID: device.id)
-            hydratedLightingColorByDeviceID.insert(device.id)
+            persistLightingColor(editableColor, device: device)
             AppLog.debug("AppState", "hydrated lighting color from device id=\(device.id) rgb=(\(rgb.r),\(rgb.g),\(rgb.b))")
-            return
-        }
-
-        if let persisted = loadPersistedLightingColor(deviceID: device.id) {
+        } else if let persisted = loadPersistedLightingColor(device: device) {
             editableColor = persisted
-            hydratedLightingColorByDeviceID.insert(device.id)
+            loadedPersistedColor = true
             AppLog.debug(
                 "AppState",
                 "hydrated lighting color from persisted cache id=\(device.id) rgb=(\(persisted.r),\(persisted.g),\(persisted.b))"
             )
-            return
+        } else {
+            AppLog.debug("AppState", "lighting color read unavailable for device id=\(device.id)")
         }
 
-        // Avoid retrying this unsupported read every refresh tick.
-        hydratedLightingColorByDeviceID.insert(device.id)
-        AppLog.debug("AppState", "lighting color read unavailable for device id=\(device.id)")
+        if loadedPersistedColor {
+            enqueueApply(DevicePatch(ledRGB: RGBPatch(r: editableColor.r, g: editableColor.g, b: editableColor.b)))
+            AppLog.debug("AppState", "queued persisted lighting color reapply id=\(device.id)")
+        }
+
+        hydratedLightingStateByDeviceID.insert(device.id)
     }
 
-    private func persistLightingColor(_ color: RGBColor, deviceID: String) {
-        let key = "lightingColor.\(deviceID)"
+    private func persistLightingColor(_ color: RGBColor, device: MouseDevice) {
+        let key = "lightingColor.\(persistenceKey(for: device))"
         UserDefaults.standard.set([color.r, color.g, color.b], forKey: key)
     }
 
-    private func loadPersistedLightingColor(deviceID: String) -> RGBColor? {
-        let key = "lightingColor.\(deviceID)"
-        guard let values = UserDefaults.standard.array(forKey: key) as? [Int], values.count == 3 else { return nil }
+    private func loadPersistedLightingColor(device: MouseDevice) -> RGBColor? {
+        let key = "lightingColor.\(persistenceKey(for: device))"
+        let legacyKey = "lightingColor.\(legacyPersistenceKey(for: device))"
+        let values = (UserDefaults.standard.array(forKey: key) as? [Int])
+            ?? (UserDefaults.standard.array(forKey: legacyKey) as? [Int])
+        guard let values, values.count == 3 else { return nil }
         return RGBColor(
             r: max(0, min(255, values[0])),
             g: max(0, min(255, values[1])),
@@ -610,10 +682,154 @@ final class AppState {
         )
     }
 
+    private func persistLightingEffect(_ effect: LightingEffectPatch, device: MouseDevice) {
+        let key = "lightingEffect.\(persistenceKey(for: device))"
+        let persisted = PersistedLightingEffect(
+            kindRaw: effect.kind.rawValue,
+            waveDirectionRaw: effect.waveDirection.rawValue,
+            reactiveSpeed: max(1, min(4, effect.reactiveSpeed)),
+            secondaryRGB: [effect.secondary.r, effect.secondary.g, effect.secondary.b]
+        )
+        guard let data = try? JSONEncoder().encode(persisted) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    private func loadPersistedLightingEffect(device: MouseDevice) -> (
+        kind: LightingEffectKind,
+        waveDirection: LightingWaveDirection,
+        reactiveSpeed: Int,
+        secondaryColor: RGBColor
+    )? {
+        let key = "lightingEffect.\(persistenceKey(for: device))"
+        let legacyKey = "lightingEffect.\(legacyPersistenceKey(for: device))"
+        let data = UserDefaults.standard.data(forKey: key) ?? UserDefaults.standard.data(forKey: legacyKey)
+        guard
+            let data,
+            let decoded = try? JSONDecoder().decode(PersistedLightingEffect.self, from: data),
+            let kind = LightingEffectKind(rawValue: decoded.kindRaw)
+        else {
+            return nil
+        }
+
+        let direction = LightingWaveDirection(rawValue: decoded.waveDirectionRaw) ?? .left
+        let speed = max(1, min(4, decoded.reactiveSpeed))
+        let fallback = [0, 170, 255]
+        let values = (0..<3).map { idx -> Int in
+            if idx < decoded.secondaryRGB.count {
+                return decoded.secondaryRGB[idx]
+            }
+            return fallback[idx]
+        }
+        let color = RGBColor(
+            r: max(0, min(255, values[0])),
+            g: max(0, min(255, values[1])),
+            b: max(0, min(255, values[2]))
+        )
+        return (kind: kind, waveDirection: direction, reactiveSpeed: speed, secondaryColor: color)
+    }
+
+    private func hydrateButtonBindingsIfNeeded(device: MouseDevice) {
+        guard hydratedButtonBindingsDeviceID != device.id else { return }
+
+        editableButtonBindings = loadPersistedButtonBindings(device: device)
+        keyboardTextDraftBySlot = editableButtonBindings.reduce(into: [:]) { partialResult, pair in
+            let slot = pair.key
+            let draft = pair.value
+            if draft.kind == .keyboardSimple {
+                partialResult[slot] = AppState.keyboardText(forHidKey: draft.hidKey) ?? ""
+            }
+        }
+        hydratedButtonBindingsDeviceID = device.id
+        AppLog.debug("AppState", "hydrated button bindings from persisted cache id=\(device.id) slots=\(editableButtonBindings.keys.sorted())")
+    }
+
+    private func persistButtonBinding(_ binding: ButtonBindingPatch, device: MouseDevice) {
+        var persisted = loadPersistedButtonBindings(device: device)
+        persisted[binding.slot] = ButtonBindingDraft(
+            kind: binding.kind,
+            hidKey: binding.kind == .keyboardSimple ? max(4, min(231, binding.hidKey ?? 4)) : 4,
+            turboEnabled: binding.kind.supportsTurbo ? binding.turboEnabled : false,
+            turboRate: max(1, min(255, binding.turboRate ?? 0x8E))
+        )
+        savePersistedButtonBindings(device: device, bindings: persisted)
+    }
+
+    private func savePersistedButtonBindings(device: MouseDevice, bindings: [Int: ButtonBindingDraft]) {
+        let key = "buttonBindings.\(persistenceKey(for: device))"
+        let encoded = bindings.reduce(into: [String: PersistedButtonBinding]()) { partialResult, pair in
+            partialResult[String(pair.key)] = PersistedButtonBinding(
+                kindRaw: pair.value.kind.rawValue,
+                hidKey: pair.value.hidKey,
+                turboEnabled: pair.value.turboEnabled,
+                turboRate: pair.value.turboRate
+            )
+        }
+        guard let data = try? JSONEncoder().encode(encoded) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    private func loadPersistedButtonBindings(device: MouseDevice) -> [Int: ButtonBindingDraft] {
+        let key = "buttonBindings.\(persistenceKey(for: device))"
+        let legacyKey = "buttonBindings.\(legacyPersistenceKey(for: device))"
+        let data = UserDefaults.standard.data(forKey: key) ?? UserDefaults.standard.data(forKey: legacyKey)
+        guard
+            let data,
+            let decoded = try? JSONDecoder().decode([String: PersistedButtonBinding].self, from: data)
+        else {
+            return [:]
+        }
+
+        return decoded.reduce(into: [Int: ButtonBindingDraft]()) { partialResult, pair in
+            guard
+                let slot = Int(pair.key),
+                let kind = ButtonBindingKind(rawValue: pair.value.kindRaw),
+                buttonSlots.contains(where: { $0.slot == slot })
+            else {
+                return
+            }
+            partialResult[slot] = ButtonBindingDraft(
+                kind: kind,
+                hidKey: max(4, min(231, pair.value.hidKey)),
+                turboEnabled: kind.supportsTurbo ? pair.value.turboEnabled : false,
+                turboRate: max(1, min(255, pair.value.turboRate))
+            )
+        }
+    }
+
+    private func persistenceKey(for device: MouseDevice) -> String {
+        if let serial = device.serial?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !serial.isEmpty {
+            return "serial:\(serial.lowercased())"
+        }
+        return String(
+            format: "vp:%04x:%04x:%@",
+            device.vendor_id,
+            device.product_id,
+            device.transport.lowercased()
+        )
+    }
+
+    private func legacyPersistenceKey(for device: MouseDevice) -> String {
+        device.id
+    }
+
     private func defaultButtonBinding(for slot: Int) -> ButtonBindingDraft {
         let fallback = ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
-        guard let descriptor = buttonSlots.first(where: { $0.slot == slot }) else { return fallback }
-        return ButtonBindingDraft(kind: descriptor.defaultKind, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
+        guard buttonSlots.contains(where: { $0.slot == slot }) else { return fallback }
+        // We currently do not have a capture-backed button-binding read path, so startup
+        // should present the neutral selection and let users choose/apply explicit mappings.
+        return fallback
+    }
+
+    private func currentLightingEffectPatch() -> LightingEffectPatch {
+        LightingEffectPatch(
+            kind: editableLightingEffect,
+            primary: RGBPatch(r: editableColor.r, g: editableColor.g, b: editableColor.b),
+            secondary: RGBPatch(r: editableSecondaryColor.r, g: editableSecondaryColor.g, b: editableSecondaryColor.b),
+            waveDirection: editableLightingWaveDirection,
+            reactiveSpeed: editableLightingReactiveSpeed
+        )
     }
 
     private func applyKeyboardTextDraft(slot: Int) {
@@ -696,6 +912,20 @@ final class AppState {
         default: return nil
         }
     }
+
+    static func turboRawToPressesPerSecond(_ rawRate: Int) -> Int {
+        let raw = max(1, min(255, rawRate))
+        // Normalize device raw rate (1..255, inverse speed) to Synapse-style 1..20 presses/sec.
+        let scaled = 20.0 - (Double(raw - 1) * 19.0 / 254.0)
+        return max(1, min(20, Int(round(scaled))))
+    }
+
+    static func turboPressesPerSecondToRaw(_ pressesPerSecond: Int) -> Int {
+        let pps = max(1, min(20, pressesPerSecond))
+        // Inverse of turboRawToPressesPerSecond.
+        let scaled = 1.0 + (Double(20 - pps) * 254.0 / 19.0)
+        return max(1, min(255, Int(round(scaled))))
+    }
 }
 
 private extension DevicePatch {
@@ -707,6 +937,22 @@ private extension DevicePatch {
         if let activeStage { parts.append("active=\(activeStage)") }
         if let ledBrightness { parts.append("led=\(ledBrightness)") }
         if let ledRGB { parts.append("rgb=(\(ledRGB.r),\(ledRGB.g),\(ledRGB.b))") }
+        if let lightingEffect {
+            var detail = "fx=\(lightingEffect.kind.rawValue)"
+            if lightingEffect.kind.usesWaveDirection {
+                detail += ",dir=\(lightingEffect.waveDirection.rawValue)"
+            }
+            if lightingEffect.kind.usesReactiveSpeed {
+                detail += ",speed=\(lightingEffect.reactiveSpeed)"
+            }
+            if lightingEffect.kind.usesPrimaryColor {
+                detail += ",p=(\(lightingEffect.primary.r),\(lightingEffect.primary.g),\(lightingEffect.primary.b))"
+            }
+            if lightingEffect.kind.usesSecondaryColor {
+                detail += ",s=(\(lightingEffect.secondary.r),\(lightingEffect.secondary.g),\(lightingEffect.secondary.b))"
+            }
+            parts.append(detail)
+        }
         if let buttonBinding {
             var detail = "button(slot=\(buttonBinding.slot),kind=\(buttonBinding.kind.rawValue)"
             if buttonBinding.turboEnabled {
@@ -736,11 +982,11 @@ struct ButtonSlotDescriptor: Identifiable, Hashable {
         ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
         ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
         ButtonSlotDescriptor(slot: 3, friendlyName: "Middle Click", defaultKind: .middleClick),
-        ButtonSlotDescriptor(slot: 4, friendlyName: "Forward Button", defaultKind: .mouseForward),
-        ButtonSlotDescriptor(slot: 5, friendlyName: "Back Button", defaultKind: .mouseBack),
+        ButtonSlotDescriptor(slot: 4, friendlyName: "Back Button", defaultKind: .mouseBack),
+        ButtonSlotDescriptor(slot: 5, friendlyName: "Forward Button", defaultKind: .mouseForward),
         ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
         ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
-        ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Cycle / Side Button 3", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Cycle", defaultKind: .default),
     ]
 }
 
@@ -749,4 +995,18 @@ struct ButtonBindingDraft: Hashable {
     var hidKey: Int
     var turboEnabled: Bool
     var turboRate: Int
+}
+
+private struct PersistedButtonBinding: Codable {
+    let kindRaw: String
+    let hidKey: Int
+    let turboEnabled: Bool
+    let turboRate: Int
+}
+
+private struct PersistedLightingEffect: Codable {
+    let kindRaw: String
+    let waveDirectionRaw: Int
+    let reactiveSpeed: Int
+    let secondaryRGB: [Int]
 }

@@ -149,6 +149,89 @@ struct RGBPatch: Sendable {
     let b: Int
 }
 
+enum LightingEffectKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case off
+    case staticColor = "static"
+    case spectrum
+    case wave
+    case reactive
+    case pulseRandom = "pulse_random"
+    case pulseSingle = "pulse_single"
+    case pulseDual = "pulse_dual"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .staticColor: return "Static"
+        case .spectrum: return "Spectrum"
+        case .wave: return "Wave"
+        case .reactive: return "Reactive"
+        case .pulseRandom: return "Pulse (Random)"
+        case .pulseSingle: return "Pulse (Single)"
+        case .pulseDual: return "Pulse (Dual)"
+        }
+    }
+
+    var usesPrimaryColor: Bool {
+        switch self {
+        case .staticColor, .reactive, .pulseSingle, .pulseDual:
+            return true
+        case .off, .spectrum, .wave, .pulseRandom:
+            return false
+        }
+    }
+
+    var usesSecondaryColor: Bool {
+        self == .pulseDual
+    }
+
+    var usesWaveDirection: Bool {
+        self == .wave
+    }
+
+    var usesReactiveSpeed: Bool {
+        self == .reactive
+    }
+}
+
+enum LightingWaveDirection: Int, CaseIterable, Identifiable, Codable, Sendable {
+    case left = 1
+    case right = 2
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .left: return "Left"
+        case .right: return "Right"
+        }
+    }
+}
+
+struct LightingEffectPatch: Sendable {
+    let kind: LightingEffectKind
+    let primary: RGBPatch
+    let secondary: RGBPatch
+    let waveDirection: LightingWaveDirection
+    let reactiveSpeed: Int
+
+    init(
+        kind: LightingEffectKind,
+        primary: RGBPatch = RGBPatch(r: 0, g: 255, b: 0),
+        secondary: RGBPatch = RGBPatch(r: 0, g: 170, b: 255),
+        waveDirection: LightingWaveDirection = .left,
+        reactiveSpeed: Int = 2
+    ) {
+        self.kind = kind
+        self.primary = primary
+        self.secondary = secondary
+        self.waveDirection = waveDirection
+        self.reactiveSpeed = max(1, min(4, reactiveSpeed))
+    }
+}
+
 struct ButtonBindingPatch: Sendable {
     let slot: Int
     let kind: ButtonBindingKind
@@ -172,6 +255,7 @@ struct DevicePatch: Sendable {
     var activeStage: Int? = nil
     var ledBrightness: Int? = nil
     var ledRGB: RGBPatch? = nil
+    var lightingEffect: LightingEffectPatch? = nil
     var buttonBinding: ButtonBindingPatch? = nil
 }
 
@@ -184,6 +268,7 @@ extension DevicePatch {
             activeStage: newer.activeStage ?? activeStage,
             ledBrightness: newer.ledBrightness ?? ledBrightness,
             ledRGB: newer.ledRGB ?? ledRGB,
+            lightingEffect: newer.lightingEffect ?? lightingEffect,
             buttonBinding: newer.buttonBinding ?? buttonBinding
         )
     }
