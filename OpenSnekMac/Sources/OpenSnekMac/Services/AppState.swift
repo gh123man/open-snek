@@ -231,7 +231,7 @@ final class AppState {
             if shouldHydrateEditable {
                 hydrateEditable(from: merged)
                 await hydrateLightingStateIfNeeded(device: selectedDevice)
-                hydrateButtonBindingsIfNeeded(device: selectedDevice)
+                await hydrateButtonBindingsIfNeeded(device: selectedDevice)
             }
             errorMessage = nil
             warningMessage = telemetryWarning(for: merged, device: selectedDevice)
@@ -995,11 +995,26 @@ final class AppState {
         return (kind: kind, waveDirection: direction, reactiveSpeed: speed, secondaryColor: color)
     }
 
-    private func hydrateButtonBindingsIfNeeded(device: MouseDevice) {
+    private func hydrateButtonBindingsIfNeeded(device: MouseDevice) async {
         guard hydratedButtonBindingsDeviceID != device.id else { return }
 
-        editableButtonBindings = loadPersistedButtonBindings(device: device)
-        keyboardTextDraftBySlot = editableButtonBindings.reduce(into: [:]) { partialResult, pair in
+        var hydrated = loadPersistedButtonBindings(device: device)
+        if device.transport == "usb", let fromDevice = await loadUSBButtonBindingsFromDevice(device: device) {
+            hydrated.merge(fromDevice) { _, fromDevice in fromDevice }
+            savePersistedButtonBindings(device: device, bindings: hydrated)
+            AppLog.debug(
+                "AppState",
+                "hydrated button bindings from USB readback id=\(device.id) slots=\(fromDevice.keys.sorted())"
+            )
+        } else {
+            AppLog.debug(
+                "AppState",
+                "hydrated button bindings from persisted cache id=\(device.id) slots=\(hydrated.keys.sorted())"
+            )
+        }
+
+        editableButtonBindings = hydrated
+        keyboardTextDraftBySlot = hydrated.reduce(into: [:]) { partialResult, pair in
             let slot = pair.key
             let draft = pair.value
             if draft.kind == .keyboardSimple {
@@ -1007,7 +1022,41 @@ final class AppState {
             }
         }
         hydratedButtonBindingsDeviceID = device.id
-        AppLog.debug("AppState", "hydrated button bindings from persisted cache id=\(device.id) slots=\(editableButtonBindings.keys.sorted())")
+    }
+
+    private func loadUSBButtonBindingsFromDevice(device: MouseDevice) async -> [Int: ButtonBindingDraft]? {
+        let slots = buttonSlots
+            .map(\.slot)
+            .filter { $0 != 6 }
+        var bindings: [Int: ButtonBindingDraft] = [:]
+        var readAnyBlock = false
+
+        for slot in slots {
+            do {
+                let persistentBlock = try await client.debugUSBReadButtonBinding(device: device, slot: slot, profile: 0x01)
+                let directBlock: [UInt8]?
+                if persistentBlock == nil {
+                    directBlock = try await client.debugUSBReadButtonBinding(device: device, slot: slot, profile: 0x00)
+                } else {
+                    directBlock = nil
+                }
+                let block = persistentBlock ?? directBlock
+                if let block {
+                    readAnyBlock = true
+                    if let draft = Self.buttonBindingDraftFromUSBFunctionBlock(slot: slot, functionBlock: block) {
+                        bindings[slot] = draft
+                    }
+                }
+            } catch {
+                AppLog.debug(
+                    "AppState",
+                    "usb button hydration read failed id=\(device.id) slot=\(slot): \(error.localizedDescription)"
+                )
+            }
+        }
+
+        guard readAnyBlock else { return nil }
+        return bindings
     }
 
     private func persistButtonBinding(_ binding: ButtonBindingPatch, device: MouseDevice) {
@@ -1084,9 +1133,95 @@ final class AppState {
     private func defaultButtonBinding(for slot: Int) -> ButtonBindingDraft {
         let fallback = ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
         guard buttonSlots.contains(where: { $0.slot == slot }) else { return fallback }
-        // We currently do not have a capture-backed button-binding read path, so startup
-        // should present the neutral selection and let users choose/apply explicit mappings.
         return fallback
+    }
+
+    nonisolated static func buttonBindingDraftFromUSBFunctionBlock(slot: Int, functionBlock: [UInt8]) -> ButtonBindingDraft? {
+        guard functionBlock.count == 7 else { return nil }
+        let fallbackRate = 0x8E
+
+        if let defaultBlock = defaultUSBFunctionBlock(for: slot), functionBlock == defaultBlock {
+            return ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+        }
+
+        let fnClass = functionBlock[0]
+        let length = max(0, min(5, Int(functionBlock[1])))
+        let data = Array(functionBlock[2..<(2 + length)])
+
+        switch fnClass {
+        case 0x00:
+            return ButtonBindingDraft(kind: .clearLayer, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+        case 0x01:
+            guard let mouseButton = data.first,
+                  let kind = buttonKindFromUSBMouseButton(mouseButton)
+            else { return nil }
+            return ButtonBindingDraft(kind: kind, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+        case 0x02:
+            guard !data.isEmpty else { return nil }
+            let hidKey = data.count >= 2 ? Int(data[1]) : Int(data[0])
+            return ButtonBindingDraft(
+                kind: .keyboardSimple,
+                hidKey: max(4, min(231, hidKey)),
+                turboEnabled: false,
+                turboRate: fallbackRate
+            )
+        case 0x0D:
+            guard data.count >= 4 else { return nil }
+            let hidKey = Int(data[1])
+            let rawRate = (Int(data[2]) << 8) | Int(data[3])
+            return ButtonBindingDraft(
+                kind: .keyboardSimple,
+                hidKey: max(4, min(231, hidKey)),
+                turboEnabled: true,
+                turboRate: max(1, min(255, rawRate))
+            )
+        case 0x0E:
+            guard data.count >= 3,
+                  let kind = buttonKindFromUSBMouseButton(data[0])
+            else { return nil }
+            let rawRate = (Int(data[1]) << 8) | Int(data[2])
+            return ButtonBindingDraft(
+                kind: kind,
+                hidKey: 4,
+                turboEnabled: true,
+                turboRate: max(1, min(255, rawRate))
+            )
+        case 0x06:
+            // Treat the known DPI-cycle default block on slot 96 as "Default" in UI.
+            if slot == 96 {
+                return ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func buttonKindFromUSBMouseButton(_ value: UInt8) -> ButtonBindingKind? {
+        switch value {
+        case 0x01: return .leftClick
+        case 0x02: return .rightClick
+        case 0x03: return .middleClick
+        case 0x04: return .mouseBack
+        case 0x05: return .mouseForward
+        case 0x09: return .scrollUp
+        case 0x0A: return .scrollDown
+        default: return nil
+        }
+    }
+
+    nonisolated private static func defaultUSBFunctionBlock(for slot: Int) -> [UInt8]? {
+        switch slot {
+        case 1: return [0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00]
+        case 2: return [0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00]
+        case 3: return [0x01, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00]
+        case 4: return [0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00]
+        case 5: return [0x01, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00]
+        case 9: return [0x01, 0x01, 0x09, 0x00, 0x00, 0x00, 0x00]
+        case 10: return [0x01, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00]
+        case 96: return [0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00]
+        default: return nil
+        }
     }
 
     private func currentLightingEffectPatch() -> LightingEffectPatch {
