@@ -2,6 +2,12 @@ import Foundation
 import Observation
 import OpenSnekAppSupport
 import OpenSnekCore
+import SwiftUI
+
+struct DeviceStatusIndicator {
+    let label: String
+    let color: Color
+}
 
 @MainActor
 @Observable
@@ -75,6 +81,35 @@ final class AppState {
 
     var visibleButtonSlots: [ButtonSlotDescriptor] {
         selectedDevice?.button_layout?.visibleSlots ?? buttonSlots
+    }
+
+    var currentDeviceStatusIndicator: DeviceStatusIndicator {
+        if selectedDevice == nil {
+            return DeviceStatusIndicator(label: "Disconnected", color: Color(hex: 0xFF453A))
+        }
+
+        if let errorMessage, !errorMessage.isEmpty {
+            let lowered = errorMessage.lowercased()
+            let label = lowered.contains("no device") || lowered.contains("disconnected") ? "Disconnected" : "Error"
+            return DeviceStatusIndicator(label: label, color: Color(hex: 0xFF453A))
+        }
+
+        if let selectedDevice {
+            let failures = refreshFailureCountByDeviceID[selectedDevice.id] ?? 0
+            if failures > 0 {
+                return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
+            }
+        }
+
+        if let lastUpdated {
+            let age = Date().timeIntervalSince(lastUpdated)
+            if age > 4.5 {
+                return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
+            }
+            return DeviceStatusIndicator(label: "Connected", color: Color(hex: 0x30D158))
+        }
+
+        return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
     }
 
     func isButtonSlotEditable(_ slot: Int) -> Bool {
@@ -247,7 +282,7 @@ final class AppState {
                 } else {
                     errorMessage = nil
                 }
-                warningMessage = "Showing cached values while live device reads are unstable."
+                warningMessage = "Using the last known values while live telemetry settles."
             }
         }
     }
@@ -277,7 +312,7 @@ final class AppState {
         dpiApplyTask?.cancel()
         dpiApplyTask = Task { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 220_000_000)
+                try await Task.sleep(nanoseconds: 320_000_000)
             } catch {
                 return
             }
@@ -759,14 +794,23 @@ final class AppState {
             if state != merged {
                 state = merged
             }
+            let localEditsChangedDuringApply = (lastLocalEditAt ?? .distantPast) > start
+            let shouldHydrateEditableState = !localEditsChangedDuringApply && !applyCoordinator.hasPending
             if patch.dpiStages != nil || patch.activeStage != nil {
                 // Avoid showing transient in-flight stage states from fast polling
                 // while BLE latching settles after a write.
                 suppressFastDpiUntil = Date().addingTimeInterval(0.9)
             }
             lastUpdated = Date()
-            lastLocalEditAt = nil
-            hydrateEditable(from: merged)
+            if shouldHydrateEditableState {
+                lastLocalEditAt = nil
+                hydrateEditable(from: merged)
+            } else {
+                AppLog.debug(
+                    "AppState",
+                    "apply hydrate skipped pending=\(applyCoordinator.hasPending) localEditsDuringApply=\(localEditsChangedDuringApply)"
+                )
+            }
             if patch.ledRGB != nil {
                 persistLightingColor(editableColor, device: selectedDevice)
                 hydratedLightingStateByDeviceID.insert(selectedDevice.id)

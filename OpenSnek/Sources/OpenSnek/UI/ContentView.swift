@@ -64,87 +64,21 @@ struct ContentView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if showsUSBAccessCallout {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(usbCalloutTitle)
-                        .font(.system(size: 14, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                    Text(usbCalloutMessage)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.88))
-                    if isInputMonitoringError(appState.errorMessage) {
-                        Text("Grant Input Monitoring for the app host (Open Snek, Terminal, or Xcode), then relaunch.")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.80))
-                        Text("If already granted but still blocked, reset stale TCC grant: tccutil reset ListenEvent \(Bundle.main.bundleIdentifier ?? "io.opensnek.OpenSnek")")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.78))
-                        Text("Denied host: \(currentHostLabel)")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.78))
-                    }
-                    HStack(spacing: 8) {
-                        if isInputMonitoringError(appState.errorMessage) {
-                            Button("Open Settings") {
-                                openInputMonitoringSettings()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
-
-                        Button("Refresh") {
-                            Task { await appState.refreshDevices() }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+            if !noticeItems.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(noticeItems.enumerated()), id: \.offset) { _, notice in
+                        StatusNoticeCard(
+                            title: notice.title,
+                            message: notice.message,
+                            detailLines: notice.detailLines,
+                            tone: notice.tone,
+                            actions: notice.actions
+                        )
                     }
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill((isInputMonitoringError(appState.errorMessage) ? Color(hex: 0xB3261E) : Color(hex: 0x8A6A00)).opacity(0.92))
-                )
                 .padding(.top, 10)
                 .padding(.leading, 12)
                 .frame(maxWidth: 520, alignment: .leading)
-            }
-        }
-        .overlay(alignment: .top) {
-            if let error = appState.errorMessage, showTopErrorBanner {
-                HStack(spacing: 10) {
-                    Text(error)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-
-                    if isInputMonitoringError(error) {
-                        Button("Open Settings") {
-                            openInputMonitoringSettings()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(hex: 0xB3261E), in: Capsule())
-                .padding(.top, 10)
-                .padding(.horizontal, 14)
-            }
-        }
-        .overlay(alignment: .top) {
-            if appState.errorMessage == nil, let warning = appState.warningMessage, showTopWarningBanner {
-                HStack(spacing: 10) {
-                    Text(warning)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(hex: 0x8A6A00), in: Capsule())
-                .padding(.top, 10)
-                .padding(.horizontal, 14)
             }
         }
     }
@@ -191,20 +125,6 @@ struct ContentView: View {
         return state.dpi_stages.values == nil || state.poll_rate == nil || state.led_value == nil
     }
 
-    private var showTopErrorBanner: Bool {
-        if appState.selectedDevice?.transport == .usb, isInputMonitoringError(appState.errorMessage), showsUSBAccessCallout {
-            return false
-        }
-        return true
-    }
-
-    private var showTopWarningBanner: Bool {
-        if appState.selectedDevice?.transport == .usb, showsUSBAccessCallout {
-            return false
-        }
-        return true
-    }
-
     private var usbCalloutTitle: String {
         if isInputMonitoringError(appState.errorMessage) {
             return "USB Access Blocked"
@@ -217,5 +137,200 @@ struct ContentView: View {
             return warning
         }
         return "DPI, polling, or lighting readback is unavailable for this device session."
+    }
+
+    private var noticeItems: [NoticeItem] {
+        var notices: [NoticeItem] = []
+
+        if showsUSBAccessCallout {
+            var detailLines: [String] = []
+            var actions: [NoticeAction] = [
+                NoticeAction(title: "Refresh") {
+                    Task { await appState.refreshDevices() }
+                }
+            ]
+
+            if isInputMonitoringError(appState.errorMessage) {
+                detailLines = [
+                    "Grant Input Monitoring for the app host (Open Snek, Terminal, or Xcode), then relaunch.",
+                    "If already granted but still blocked, reset stale TCC grant: tccutil reset ListenEvent \(Bundle.main.bundleIdentifier ?? "io.opensnek.OpenSnek")",
+                    "Denied host: \(currentHostLabel)"
+                ]
+                actions.insert(
+                    NoticeAction(title: "Open Settings", isProminent: true) {
+                        openInputMonitoringSettings()
+                    },
+                    at: 0
+                )
+            }
+
+            notices.append(
+                NoticeItem(
+                    title: usbCalloutTitle,
+                    message: usbCalloutMessage,
+                    detailLines: detailLines,
+                    tone: isInputMonitoringError(appState.errorMessage) ? .error : .warning,
+                    actions: actions
+                )
+            )
+        }
+
+        if let error = appState.errorMessage, shouldShowSeparateErrorNotice {
+            notices.append(
+                NoticeItem(
+                    title: errorNoticeTitle(for: error),
+                    message: error,
+                    tone: .error,
+                    actions: []
+                )
+            )
+        }
+
+        if let warning = appState.warningMessage, shouldShowSeparateWarningNotice {
+            notices.append(
+                NoticeItem(
+                    title: "Warning",
+                    message: warning,
+                    tone: .warning,
+                    actions: []
+                )
+            )
+        }
+
+        return notices
+    }
+
+    private var shouldShowSeparateErrorNotice: Bool {
+        guard appState.errorMessage != nil else { return false }
+        if isInputMonitoringError(appState.errorMessage), showsUSBAccessCallout {
+            return false
+        }
+        return true
+    }
+
+    private var shouldShowSeparateWarningNotice: Bool {
+        guard appState.warningMessage != nil else { return false }
+        return !showsUSBAccessCallout
+    }
+
+    private func errorNoticeTitle(for message: String) -> String {
+        let lowered = message.lowercased()
+        if lowered.contains("device read is failing repeatedly") {
+            return "Device Read Unstable"
+        }
+        if lowered.contains("failed") || lowered.contains("error") {
+            return "Action Required"
+        }
+        return "Notice"
+    }
+}
+
+private struct NoticeItem {
+    let title: String
+    let message: String
+    var detailLines: [String] = []
+    let tone: StatusNoticeTone
+    var actions: [NoticeAction] = []
+}
+
+private struct NoticeAction {
+    let title: String
+    var isProminent: Bool = false
+    let handler: () -> Void
+}
+
+private enum StatusNoticeTone {
+    case error
+    case warning
+
+    var backgroundColor: Color {
+        switch self {
+        case .error:
+            Color(hex: 0xB3261E)
+        case .warning:
+            Color(hex: 0x8A6A00)
+        }
+    }
+
+    var borderColor: Color {
+        switch self {
+        case .error:
+            Color(hex: 0xFF8A80)
+        case .warning:
+            Color(hex: 0xF4C65D)
+        }
+    }
+}
+
+private struct StatusNoticeCard: View {
+    let title: String
+    let message: String
+    let detailLines: [String]
+    let tone: StatusNoticeTone
+    let actions: [NoticeAction]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 14, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+
+            Text(message)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.90))
+
+            detailLinesView
+
+            actionButtons
+        }
+        .padding(12)
+        .background(cardBackground)
+        .shadow(color: .black.opacity(0.20), radius: 12, y: 4)
+    }
+
+    @ViewBuilder
+    private var detailLinesView: some View {
+        ForEach(Array(detailLines.enumerated()), id: \.offset) { _, line in
+            detailLineView(for: line)
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        if !actions.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                    if action.isProminent {
+                        Button(action.title, action: action.handler)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    } else {
+                        Button(action.title, action: action.handler)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    private func detailLineView(for line: String) -> some View {
+        let usesMonospace = line.contains("tccutil") || line.contains("Denied host:")
+        let fontSize = usesMonospace ? 11.0 : 12.0
+        let fontDesign: Font.Design = usesMonospace ? .monospaced : .rounded
+
+        return Text(line)
+            .font(.system(size: fontSize, weight: .medium, design: fontDesign))
+            .foregroundStyle(.white.opacity(0.80))
+            .textSelection(.enabled)
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 14)
+            .fill(tone.backgroundColor.opacity(0.92))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(tone.borderColor.opacity(0.55), lineWidth: 1)
+            )
     }
 }

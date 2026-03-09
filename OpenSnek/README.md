@@ -57,6 +57,12 @@ From the repo root, the shortest path is:
 ./run.sh
 ```
 
+To launch the current app bundle without rebuilding:
+
+```bash
+./run.sh --no-build
+```
+
 Direct app-package workflows:
 
 ```bash

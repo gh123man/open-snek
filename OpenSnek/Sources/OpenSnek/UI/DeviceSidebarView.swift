@@ -1,6 +1,5 @@
 import SwiftUI
 import OpenSnekCore
-import AppKit
 
 struct DeviceSidebarView: View {
     @Bindable var appState: AppState
@@ -15,17 +14,12 @@ struct DeviceSidebarView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "cursorarrow.motionlines")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color(hex: 0xA8F46A))
-                        Text("Open Snek")
-                            .font(.system(size: 19, weight: .black, design: .rounded))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                    }
-                    .layoutPriority(1)
+                    Text("Open Snek")
+                        .font(.system(size: 19, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .layoutPriority(1)
 
                     Spacer(minLength: 8)
 
@@ -36,8 +30,7 @@ struct DeviceSidebarView: View {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 11, weight: .bold))
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color(hex: 0x9BEA5D))
+                        .buttonStyle(.bordered)
                         .controlSize(.small)
 
                         Button {
@@ -90,35 +83,52 @@ struct DeviceSidebarView: View {
 struct DeviceRow: View {
     let device: MouseDevice
     let isSelected: Bool
+    private let transportPillWidth: CGFloat = 46
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
+        let backgroundFill = isSelected ? Color.white.opacity(0.16) : Color.white.opacity(0.04)
+        let borderStroke = isSelected ? Color.white.opacity(0.30) : Color.white.opacity(0.10)
+
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(device.product_name)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(device.connectionLabel)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            Text(device.transport.shortLabel)
-                .font(.system(size: 10, weight: .black, design: .rounded))
-                .foregroundStyle(Color(hex: 0x101010))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(device.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0x9BEA5D), in: Capsule())
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            transportPill
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 9)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? Color.white.opacity(0.16) : Color.white.opacity(0.04))
+                .fill(backgroundFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(isSelected ? Color.white.opacity(0.30) : Color.white.opacity(0.10), lineWidth: 1)
+                        .stroke(borderStroke, lineWidth: 1)
                 )
         )
+    }
+
+    private var transportPill: some View {
+        Text(device.transport.shortLabel)
+            .font(.system(size: 11, weight: .black, design: .rounded))
+            .foregroundStyle(device.transport == .bluetooth ? Color(hex: 0x7DE4FF) : Color(hex: 0xB8FF73))
+            .frame(width: transportPillWidth)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.30))
+                    .overlay(
+                        Capsule()
+                            .stroke((device.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0x9BEA5D)).opacity(0.70), lineWidth: 1)
+                    )
+            )
     }
 }

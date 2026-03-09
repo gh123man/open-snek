@@ -5,6 +5,13 @@ struct DeviceDetailView: View {
     @Bindable var appState: AppState
     let selected: MouseDevice
     let state: MouseState
+    @State private var usesTwoColumns = false
+    private let cardSpacing: CGFloat = 14
+    private let detailTwoColumnMinWidth: CGFloat = 360
+    private let twoColumnBreakpointPadding: CGFloat = 100
+    private let twoColumnBreakpointHysteresis: CGFloat = 90
+    private let detailCardMaxWidth: CGFloat = 560
+    private let detailContentMaxWidth: CGFloat = 1400
 
     private let swatches: [Color] = [
         Color(hex: 0xFF3B30), Color(hex: 0xFF9500), Color(hex: 0xFFCC00), Color(hex: 0x34C759),
@@ -12,45 +19,167 @@ struct DeviceDetailView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                DeviceOverviewBar(appState: appState, selected: selected, state: state)
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    DeviceOverviewBar(appState: appState, selected: selected, state: state)
 
-                VStack(spacing: 14) {
-                    if state.capabilities.dpi_stages {
-                        DpiStagesCard(appState: appState)
-                    }
-                    if state.capabilities.lighting {
-                        LightingCard(appState: appState, selected: selected, swatches: swatches)
-                    }
-                    if state.capabilities.poll_rate {
-                        PollRateCard(appState: appState)
-                    }
-                    if state.capabilities.power_management {
-                        SleepTimeoutCard(appState: appState)
-                    }
-                    if selected.transport != .bluetooth, state.low_battery_threshold_raw != nil {
-                        LowBatteryThresholdCard(appState: appState)
-                    }
-                    if selected.transport != .bluetooth,
-                       state.scroll_mode != nil || state.scroll_acceleration != nil || state.scroll_smart_reel != nil {
-                        ScrollControlsCard(appState: appState, state: state)
-                    }
-                    if state.capabilities.button_remap {
-                        ButtonMappingTableCard(
-                            appState: appState,
-                            title: selected.transport == .bluetooth ? "Button Remap (Broad)" : "Button Remap"
-                        )
+                    if usesTwoColumns {
+                        let columnWidth = twoColumnCardWidth(for: proxy.size.width)
+                        HStack(alignment: .top, spacing: cardSpacing) {
+                            VStack(alignment: .leading, spacing: cardSpacing) {
+                                ForEach(leftColumnSections, id: \.self) { section in
+                                    detailCardCell(maxWidth: columnWidth) {
+                                        detailCard(for: section)
+                                    }
+                                }
+                            }
+                            .frame(width: columnWidth, alignment: .leading)
+
+                            VStack(alignment: .leading, spacing: cardSpacing) {
+                                ForEach(rightColumnSections, id: \.self) { section in
+                                    detailCardCell(maxWidth: columnWidth) {
+                                        detailCard(for: section)
+                                    }
+                                }
+                            }
+                            .frame(width: columnWidth, alignment: .leading)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    } else {
+                        VStack(alignment: .leading, spacing: cardSpacing) {
+                            ForEach(detailSections, id: \.self) { section in
+                                detailCardCell(maxWidth: singleColumnCardWidth(for: proxy.size.width)) {
+                                    detailCard(for: section)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                 }
+                .frame(maxWidth: detailContentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .top)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
             }
-            .frame(maxWidth: 1020, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onAppear {
+                updateColumnMode(for: proxy.size.width)
+            }
+            .onChange(of: proxy.size.width) { _, newWidth in
+                updateColumnMode(for: newWidth)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
+
+    private var detailSections: [DetailSection] {
+        var sections: [DetailSection] = []
+        if state.capabilities.dpi_stages {
+            sections.append(.dpiStages)
+        }
+        if state.capabilities.lighting {
+            sections.append(.lighting)
+        }
+        if state.capabilities.power_management {
+            sections.append(.powerManagement)
+        }
+        if selected.transport != .bluetooth, state.capabilities.poll_rate {
+            sections.append(.pollRate)
+        }
+        if selected.transport != .bluetooth, state.low_battery_threshold_raw != nil {
+            sections.append(.lowBatteryThreshold)
+        }
+        if selected.transport != .bluetooth,
+           state.scroll_mode != nil || state.scroll_acceleration != nil || state.scroll_smart_reel != nil {
+            sections.append(.scrollControls)
+        }
+        if state.capabilities.button_remap {
+            sections.append(.buttonRemap)
+        }
+        return sections
+    }
+
+    private var leftColumnSections: [DetailSection] {
+        balancedSections.enumerated().compactMap { index, section in
+            index.isMultiple(of: 2) ? section : nil
+        }
+    }
+
+    private var rightColumnSections: [DetailSection] {
+        var sections = balancedSections.enumerated().compactMap { index, section in
+            index.isMultiple(of: 2) ? nil : section
+        }
+        if detailSections.contains(.buttonRemap) {
+            sections.append(.buttonRemap)
+        }
+        return sections
+    }
+
+    private var balancedSections: [DetailSection] {
+        detailSections.filter { $0 != .buttonRemap }
+    }
+
+    private func twoColumnActivationWidth() -> CGFloat {
+        (detailTwoColumnMinWidth * 2) + cardSpacing + twoColumnBreakpointPadding
+    }
+
+    private func updateColumnMode(for availableWidth: CGFloat) {
+        let contentWidth = min(max(availableWidth - 40, 0), detailContentMaxWidth)
+        let enterThreshold = twoColumnActivationWidth()
+        let exitThreshold = enterThreshold - twoColumnBreakpointHysteresis
+
+        if usesTwoColumns {
+            if contentWidth < exitThreshold {
+                usesTwoColumns = false
+            }
+        } else if contentWidth >= enterThreshold {
+            usesTwoColumns = true
+        }
+    }
+
+    private func twoColumnCardWidth(for availableWidth: CGFloat) -> CGFloat {
+        let contentWidth = min(max(availableWidth - 40, 0), detailContentMaxWidth)
+        return min(detailCardMaxWidth, floor((contentWidth - cardSpacing) / 2))
+    }
+
+    @ViewBuilder
+    private func detailCard(for section: DetailSection) -> some View {
+        switch section {
+        case .dpiStages:
+            DpiStagesCard(appState: appState)
+        case .lighting:
+            LightingCard(appState: appState, selected: selected, swatches: swatches)
+        case .pollRate:
+            PollRateCard(appState: appState)
+        case .powerManagement:
+            SleepTimeoutCard(appState: appState)
+        case .lowBatteryThreshold:
+            LowBatteryThresholdCard(appState: appState)
+        case .scrollControls:
+            ScrollControlsCard(appState: appState, state: state)
+        case .buttonRemap:
+            ButtonMappingTableCard(appState: appState, title: "Button Remap")
+        }
+    }
+
+    private func singleColumnCardWidth(for availableWidth: CGFloat) -> CGFloat {
+        min(max(availableWidth - 40, 0), detailContentMaxWidth)
+    }
+
+    private func detailCardCell<Content: View>(maxWidth: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .frame(maxWidth: maxWidth, alignment: .leading)
+    }
+}
+
+private enum DetailSection: Hashable {
+    case dpiStages
+    case lighting
+    case pollRate
+    case powerManagement
+    case lowBatteryThreshold
+    case scrollControls
+    case buttonRemap
 }
 
 struct DeviceOverviewBar: View {
@@ -88,12 +217,6 @@ struct DeviceOverviewBar: View {
                         .font(.system(size: 24, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
                     }
-
-                    if let updated = appState.lastUpdated {
-                        Text("Updated \(updated.formatted(date: .omitted, time: .standard))")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
                 }
             }
 
@@ -102,15 +225,40 @@ struct DeviceOverviewBar: View {
                     text: state.connection,
                     color: selected.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A)
                 )
-                if let fw = state.device.firmware {
-                    Pill(text: "FW \(fw)", color: Color(hex: 0xE7B566))
-                }
+                DeviceStatusBadge(indicator: appState.currentDeviceStatusIndicator)
             }
 
             Rectangle()
                 .fill(Color.white.opacity(0.14))
                 .frame(height: 1)
         }
+    }
+}
+
+struct DeviceStatusBadge: View {
+    let indicator: DeviceStatusIndicator
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(indicator.color)
+                .frame(width: 9, height: 9)
+                .shadow(color: indicator.color.opacity(0.45), radius: 6, y: 0)
+
+            Text(indicator.label)
+                .font(.system(size: 11, weight: .black, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -427,12 +575,13 @@ struct DpiStagesCard: View {
             }
 
             ForEach(0..<stageCount, id: \.self) { idx in
-                let stageColor = stageAccent(for: idx)
+                let isSelectedStage = stageCount == 1 || appState.editableActiveStage == (idx + 1)
+                let stageColor = stageAccent(for: idx, isSelected: isSelectedStage)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         if stageCount == 1 {
                             Text("DPI")
-                                .foregroundStyle(.white)
+                                .foregroundStyle(stageColor)
                         } else {
                             Button {
                                 let selected = idx + 1
@@ -448,7 +597,7 @@ struct DpiStagesCard: View {
                                 .labelStyle(.titleAndIcon)
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(isSelectedStage ? stageColor : .white)
                         }
 
                         Spacer()
@@ -483,28 +632,29 @@ struct DpiStagesCard: View {
                             appState.isEditingDpiControl = editing
                         }
                     )
-                    .tint(Color.white.opacity(0.85))
+                    .tint(isSelectedStage ? stageColor : Color.white.opacity(0.80))
                 }
                 .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(stageColor.opacity(0.10))
+                        .fill(isSelectedStage ? stageColor.opacity(0.24) : stageColor.opacity(0.10))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(stageColor.opacity(0.35), lineWidth: 1)
+                                .stroke(isSelectedStage ? stageColor.opacity(0.95) : stageColor.opacity(0.35), lineWidth: isSelectedStage ? 2 : 1)
                         )
                 )
+                .shadow(color: isSelectedStage ? stageColor.opacity(0.30) : .clear, radius: 12, y: 0)
             }
         }
     }
 
-    private func stageAccent(for index: Int) -> Color {
+    private func stageAccent(for index: Int, isSelected: Bool) -> Color {
         switch index {
-        case 0: return Color(hex: 0xFF3B30) // Red
-        case 1: return Color(hex: 0x34C759) // Green
-        case 2: return Color(hex: 0x0A84FF) // Blue
-        case 3: return Color(hex: 0x00C7BE) // Teal
-        default: return Color(hex: 0xFFD60A) // Yellow
+        case 0: return Color(hex: isSelected ? 0xFF6B61 : 0xFF3B30) // Red
+        case 1: return Color(hex: isSelected ? 0x5BEB7E : 0x34C759) // Green
+        case 2: return Color(hex: isSelected ? 0x4FA7FF : 0x0A84FF) // Blue
+        case 3: return Color(hex: isSelected ? 0x36F0E8 : 0x00C7BE) // Teal
+        default: return Color(hex: isSelected ? 0xFFE35A : 0xFFD60A) // Yellow
         }
     }
 }
@@ -575,7 +725,7 @@ struct LowBatteryThresholdCard: View {
                     .foregroundStyle(.white.opacity(0.82))
                 Spacer()
                 let raw = max(0x0C, min(0x3F, appState.editableLowBatteryThresholdRaw))
-                Text("\(String(format: "0x%02X", raw)) (~\(approxPercent(raw))%)")
+                Text("~\(approxPercent(raw))%")
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
             }
@@ -677,7 +827,7 @@ struct ButtonMappingTableCard: View {
             ForEach(appState.visibleButtonSlots) { slot in
                 let isEditable = appState.isButtonSlotEditable(slot.slot)
                 let selectedKind = appState.buttonBindingKind(for: slot.slot)
-                let turboEligible = (appState.selectedDevice?.transport == .bluetooth) && selectedKind != .default && selectedKind.supportsTurbo
+                let turboEligible = selectedKind != .default && selectedKind.supportsTurbo
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 12) {
                         Text(slot.friendlyName)

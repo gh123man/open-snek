@@ -10,7 +10,13 @@ From the repo root:
 ./run.sh
 ```
 
-That builds and launches the app bundle through the canonical macOS path in `OpenSnek/scripts/run_macos_app.sh`.
+That rebuilds and launches the app bundle through the canonical macOS path in `OpenSnek/scripts/run_macos_app.sh`.
+
+If you want to reuse the current app bundle without rebuilding:
+
+```bash
+./run.sh --no-build
+```
 
 ## Build
 
