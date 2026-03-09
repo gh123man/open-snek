@@ -36,7 +36,7 @@ Legend:
 | Scroll smart reel | `02:97/17` | unknown vendor key | both scripts (HID path) | PARTIAL | BLE vendor mapping missing. OpenSnekMac reads/writes on USB and hides the control when unsupported. |
 | Scroll LED brightness | `0F:84/04` (`VARSTORE`, `LED=0x01`) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated; BLE vendor key not mapped |
 | Scroll LED effects | `0F:02` (none/spectrum/wave/static/reactive/breath) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated on Basilisk V3 X |
-| Button remapping | class `0x02`, `0x0D/0x12` family | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB experimental raw writer | PARTIAL | Added layer-clear mapping (`layer=1, action=0x00`), scroll up/down, and capture-backed turbo payloads (`0x0E` mouse, `0x0D` keyboard); slot `0x06` is rejected (`status 0x03`) on mapped BLE vendor path; on Basilisk V3 X USB (`0x00B9`) remap writes remain unsupported so OpenSnekMac hides USB remap UI; media/macro catalog still pending |
+| Button remapping | class `0x02`, `0x8C/0x0C` button-function block | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB validated (`OpenSnekMac` + `OpenSnekProbe`) | PARTIAL | USB uses `profile,slot,hypershift` + 7-byte function block (`class,len,data[5]`); mouse + simple keyboard remaps validate on `0x00B9`, including default restore behavior and readback. BLE slot `0x06` remains rejected (`status 0x03`); macro/media catalogs still pending on both paths. |
 | Lighting/effects | class `0x0F` (OpenRazer documented) | mode (`10 03`) + scalar (`10 85`/`10 05`) + frame stream (`10 04`) | USB scroll LED effects + BLE mode/scalar/frame writes | PARTIAL | OpenSnekMac is transport-scoped: USB exposes full profile/effect controls; BLE remains static-only (brightness + color). |
 | Profiles | partially documented in ecosystem | unknown | none | UNKNOWN | Needs capture-backed mapping |
 
@@ -47,9 +47,9 @@ Legend:
 - scroll mode / acceleration / smart reel
 - firmware
 
-2. Implement USB button remapping path:
-- class `0x02` command family (`0x0D`/`0x12`), capture-backed payloads
-- align action taxonomy with BLE `10-byte` payload model
+2. Expand USB button-remap action taxonomy:
+- validate advanced classes (consumer/media, macro families, analog variants)
+- tighten profile-layer semantics (`direct` vs persistent) and document per-device differences
 
 3. Build common feature abstraction:
 - one logical setting model with transport-specific encoders
@@ -60,8 +60,9 @@ Legend:
 Validated in-session over USB:
 - working: serial, firmware, device mode read/write, poll-rate read/write, idle-time read/write, low-battery-threshold read/write, DPI/stages, battery
 - working: scroll LED brightness + effects (none/spectrum/wave/static/reactive/breath single/dual/random)
+- working: button remap read/write on class `0x02` (`0x8C`/`0x0C`) for tested slots (`0x01..0x05`, `0x09`, `0x0A`, `0x60`) with readback confirmation via `OpenSnekProbe` and hardware XCTest harness
 - unsupported (returns `None`): scroll mode, scroll acceleration, scroll smart reel
-- USB remap probes (`0x02:0x0D`) still return `not_supported` on this model with tested payloads
+- legacy non-analog remap write (`0x02:0x0D`) remains unreliable on this model and is now treated as fallback-only
 
 CLI behavior has been updated to skip unsupported scroll controls with warnings instead of failing runs.
 

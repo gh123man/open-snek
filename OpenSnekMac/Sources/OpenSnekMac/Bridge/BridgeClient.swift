@@ -615,13 +615,22 @@ actor BridgeClient {
             }
 
             if let binding = patch.buttonBinding {
-                guard usbSupportsButtonRemap(device) else {
-                    throw BridgeError.commandFailed("USB button remapping is not supported on this device yet.")
-                }
                 let slot = binding.slot
                 let kind = binding.kind.rawValue
                 let hidKey = binding.hidKey ?? 4
-                guard try runUSBWrite({ try setButtonBindingUSB($0, device, slot: slot, kind: kind, hidKey: hidKey) }) else {
+                let turboEnabled = binding.kind.supportsTurbo && binding.turboEnabled
+                let turboRate = max(1, min(255, binding.turboRate ?? 0x8E))
+                guard try runUSBWrite({
+                    try setButtonBindingUSB(
+                        $0,
+                        device,
+                        slot: slot,
+                        kind: kind,
+                        hidKey: hidKey,
+                        turboEnabled: turboEnabled,
+                        turboRate: turboRate
+                    )
+                }) else {
                     throw BridgeError.commandFailed("Failed to set button binding")
                 }
             }
@@ -641,6 +650,71 @@ actor BridgeClient {
                 throw error
             }
         }
+    }
+
+    func debugUSBReadButtonBinding(
+        device: MouseDevice,
+        slot: Int,
+        profile: Int = 0x01,
+        hypershift: Int = 0x00
+    ) async throws -> [UInt8]? {
+        guard device.transport != "bluetooth" else { return nil }
+        let handles = handlesFor(device: device)
+        guard !handles.isEmpty else {
+            throw BridgeError.commandFailed("Device not available")
+        }
+
+        let clampedSlot = UInt8(max(0, min(255, slot)))
+        let clampedProfile = UInt8(max(0, min(255, profile)))
+        let clampedHypershift = UInt8(max(0, min(1, hypershift)))
+        for handle in handles {
+            if let block = try getButtonBindingUSBRaw(
+                handle,
+                device,
+                profile: clampedProfile,
+                slot: clampedSlot,
+                hypershift: clampedHypershift
+            ) {
+                deviceHandles[device.id] = handle
+                return block
+            }
+        }
+        return nil
+    }
+
+    func debugUSBSetButtonBindingRaw(
+        device: MouseDevice,
+        slot: Int,
+        profile: Int = 0x01,
+        hypershift: Int = 0x00,
+        functionBlock: [UInt8]
+    ) async throws -> Bool {
+        guard device.transport != "bluetooth" else { return false }
+        guard functionBlock.count == 7 else {
+            throw BridgeError.commandFailed("functionBlock must be exactly 7 bytes")
+        }
+        let handles = handlesFor(device: device)
+        guard !handles.isEmpty else {
+            throw BridgeError.commandFailed("Device not available")
+        }
+
+        let clampedSlot = UInt8(max(0, min(255, slot)))
+        let clampedProfile = UInt8(max(0, min(255, profile)))
+        let clampedHypershift = UInt8(max(0, min(1, hypershift)))
+        for handle in handles {
+            if try setButtonBindingUSBRaw(
+                handle,
+                device,
+                profile: clampedProfile,
+                slot: clampedSlot,
+                hypershift: clampedHypershift,
+                functionBlock: functionBlock
+            ) {
+                deviceHandles[device.id] = handle
+                return true
+            }
+        }
+        return false
     }
 
     private func readUSBState(device: MouseDevice, handle: IOHIDDevice) async throws -> MouseState {
@@ -763,7 +837,7 @@ actor BridgeClient {
                 dpi_stages: true,
                 poll_rate: true,
                 power_management: true,
-                button_remap: usbSupportsButtonRemap(device),
+                button_remap: true,
                 lighting: true
             )
         )
@@ -1179,12 +1253,21 @@ actor BridgeClient {
         cmdID: UInt8,
         size: UInt8,
         args: [UInt8] = [],
-        allowTxnRescan: Bool = false
+        allowTxnRescan: Bool = false,
+        responseAttempts: Int = 6,
+        responseDelayUs: useconds_t = 30_000
     ) throws -> [UInt8]? {
         let cachedTxn = txnByDeviceID[device.id]
         for txn in getCandidates(for: device) {
             let report = createReport(txn: txn, classID: classID, cmdID: cmdID, size: size, args: args)
-            guard let response = exchange(handle: handle, report: report, expectedClassID: classID, expectedCmdID: cmdID) else {
+            guard let response = exchange(
+                handle: handle,
+                report: report,
+                expectedClassID: classID,
+                expectedCmdID: cmdID,
+                responseAttempts: responseAttempts,
+                responseDelayUs: responseDelayUs
+            ) else {
                 if hidAccessDenied { break }
                 continue
             }
@@ -1197,7 +1280,14 @@ actor BridgeClient {
         if allowTxnRescan, let cachedTxn {
             for txn in defaultTxnCandidates(for: device) where txn != cachedTxn {
                 let report = createReport(txn: txn, classID: classID, cmdID: cmdID, size: size, args: args)
-                guard let response = exchange(handle: handle, report: report, expectedClassID: classID, expectedCmdID: cmdID) else {
+                guard let response = exchange(
+                    handle: handle,
+                    report: report,
+                    expectedClassID: classID,
+                    expectedCmdID: cmdID,
+                    responseAttempts: responseAttempts,
+                    responseDelayUs: responseDelayUs
+                ) else {
                     if hidAccessDenied { break }
                     continue
                 }
@@ -1234,7 +1324,9 @@ actor BridgeClient {
         handle: IOHIDDevice,
         report: [UInt8],
         expectedClassID: UInt8,
-        expectedCmdID: UInt8
+        expectedCmdID: UInt8,
+        responseAttempts: Int,
+        responseDelayUs: useconds_t
     ) -> [UInt8]? {
         let openResult = IOHIDDeviceOpen(handle, IOOptionBits(kIOHIDOptionsTypeNone))
         guard openResult == kIOReturnSuccess else {
@@ -1263,8 +1355,8 @@ actor BridgeClient {
         }
 
         var lastReadResult: IOReturn = kIOReturnSuccess
-        for _ in 0..<6 {
-            usleep(30_000)
+        for _ in 0..<max(1, responseAttempts) {
+            usleep(responseDelayUs)
             var out = [UInt8](repeating: 0, count: 90)
             var length = out.count
             let readResult = out.withUnsafeMutableBufferPointer { ptr -> IOReturn in
@@ -1579,79 +1671,208 @@ actor BridgeClient {
         return r[0] == 0x02
     }
 
-    private func setButtonBindingUSB(_ handle: IOHIDDevice, _ device: MouseDevice, slot: Int, kind: String, hidKey: Int) throws -> Bool {
-        let profile: UInt8 = 0x01
-        let button = UInt8(max(0, min(255, slot)))
-        let actionType: UInt8
-        let params: [UInt8]
+    private func usbMouseButtonID(for kind: String) -> UInt8? {
+        switch kind {
+        case "left_click": return 0x01
+        case "right_click": return 0x02
+        case "middle_click": return 0x03
+        case "mouse_back": return 0x04
+        case "mouse_forward": return 0x05
+        case "scroll_up": return 0x09
+        case "scroll_down": return 0x0A
+        default: return nil
+        }
+    }
+
+    private func usbDefaultMouseButtonID(for slot: Int) -> UInt8? {
+        switch slot {
+        case 1: return 0x01
+        case 2: return 0x02
+        case 3: return 0x03
+        case 4: return 0x04
+        case 5: return 0x05
+        case 9: return 0x09
+        case 10: return 0x0A
+        default: return nil
+        }
+    }
+
+    private func usbButtonFunctionBlock(
+        slot: Int,
+        kind: String,
+        hidKey: Int,
+        turboEnabled: Bool,
+        turboRate: Int
+    ) -> [UInt8] {
+        let clampedKey = UInt8(max(0, min(255, hidKey)))
+        let turbo = UInt16(max(1, min(255, turboRate)))
+        let turboHi = UInt8((turbo >> 8) & 0xFF)
+        let turboLo = UInt8(turbo & 0xFF)
+
         switch kind {
         case "default":
-            switch slot {
-            case 1:
-                actionType = 0x01
-                params = [0x01, 0x01]
-            case 2:
-                actionType = 0x01
-                params = [0x01, 0x02]
-            case 3:
-                actionType = 0x01
-                params = [0x01, 0x03]
-            case 4:
-                actionType = 0x01
-                params = [0x01, 0x04]
-            case 5:
-                actionType = 0x01
-                params = [0x01, 0x05]
-            case 9:
-                actionType = 0x01
-                params = [0x01, 0x09]
-            case 10:
-                actionType = 0x01
-                params = [0x01, 0x0A]
-            case 96:
-                // Capture-backed DPI cycle default payload pattern.
-                actionType = 0x06
-                params = [0x01, 0x06]
-            default:
-                actionType = 0x01
-                params = []
+            if slot == 96 {
+                // Default DPI-cycle on Basilisk V3 X uses class 0x06, op 0x06 (cycle with wrap).
+                return [0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00]
             }
-        case "left_click":
-            actionType = 0x01
-            params = [0x01, 0x01]
-        case "right_click":
-            actionType = 0x01
-            params = [0x01, 0x02]
-        case "middle_click":
-            actionType = 0x01
-            params = [0x01, 0x03]
-        case "scroll_up":
-            actionType = 0x01
-            params = [0x01, 0x09]
-        case "scroll_down":
-            actionType = 0x01
-            params = [0x01, 0x0A]
-        case "mouse_back":
-            actionType = 0x01
-            params = [0x01, 0x04]
-        case "mouse_forward":
-            actionType = 0x01
-            params = [0x01, 0x05]
-        case "keyboard_simple":
-            actionType = 0x02
-            params = [0x02, 0x00, UInt8(max(0, min(255, hidKey))), 0x00]
+            if let buttonID = usbDefaultMouseButtonID(for: slot) {
+                return [0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00]
+            }
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
         case "clear_layer":
-            actionType = 0x00
-            params = [0x00, 0x00]
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        case "keyboard_simple":
+            if turboEnabled {
+                return [0x0D, 0x04, 0x00, clampedKey, turboHi, turboLo, 0x00]
+            }
+            return [0x02, 0x02, 0x00, clampedKey, 0x00, 0x00, 0x00]
         default:
-            actionType = 0x01
-            params = []
+            if let buttonID = usbMouseButtonID(for: kind) {
+                if turboEnabled {
+                    return [0x0E, 0x03, buttonID, turboHi, turboLo, 0x00, 0x00]
+                }
+                return [0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00]
+            }
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        }
+    }
+
+    private func setButtonBindingUSBRaw(
+        _ handle: IOHIDDevice,
+        _ device: MouseDevice,
+        profile: UInt8,
+        slot: UInt8,
+        hypershift: UInt8,
+        functionBlock: [UInt8]
+    ) throws -> Bool {
+        guard functionBlock.count == 7 else { return false }
+        let args = [profile, slot, hypershift] + functionBlock
+        guard let r = try perform(
+            device,
+            handle,
+            classID: 0x02,
+            cmdID: 0x0C,
+            size: UInt8(args.count),
+            args: args,
+            allowTxnRescan: true,
+            responseAttempts: 12,
+            responseDelayUs: 40_000
+        ) else { return false }
+        return r[0] == 0x02
+    }
+
+    private func setButtonBindingUSB(
+        _ handle: IOHIDDevice,
+        _ device: MouseDevice,
+        slot: Int,
+        kind: String,
+        hidKey: Int,
+        turboEnabled: Bool,
+        turboRate: Int
+    ) throws -> Bool {
+        let button = UInt8(max(0, min(255, slot)))
+        let functionBlock = usbButtonFunctionBlock(
+            slot: slot,
+            kind: kind,
+            hidKey: hidKey,
+            turboEnabled: turboEnabled,
+            turboRate: turboRate
+        )
+        let functionBlockHex = functionBlock.map { String(format: "%02x", $0) }.joined()
+
+        // Candidate 1 (mouse command family): 0x02:0x0C with 10-byte payload:
+        // [profile, button, hypershift, fnClass, fnLen, fnData(5)]
+        // Try default profile first for persistence, then direct profile for immediate behavior.
+        let profileCandidates: [UInt8] = [0x01, 0x00]
+        var ackedProfiles: [UInt8] = []
+        for profile in profileCandidates {
+            if try setButtonBindingUSBRaw(
+                handle,
+                device,
+                profile: profile,
+                slot: button,
+                hypershift: 0x00,
+                functionBlock: functionBlock
+            ) {
+                ackedProfiles.append(profile)
+                AppLog.debug(
+                    "Bridge",
+                    "usb button bind ack cmd=0x0c profile=\(profile) slot=\(slot) kind=\(kind) block=\(functionBlockHex)"
+                )
+                _ = try? getButtonBindingUSBRaw(handle, device, profile: profile, slot: button, hypershift: 0x00)
+            }
+        }
+        if !ackedProfiles.isEmpty { return true }
+
+        // Candidate 2 (legacy non-analog framing): 0x02:0x0D.
+        let actionType = functionBlock[0]
+        let paramCount = Int(min(5, functionBlock[1]))
+        let params = Array(functionBlock[2..<(2 + paramCount)])
+        for profile in profileCandidates {
+            var args: [UInt8] = [profile, button, 0x00, 0x00, 0x00, actionType, UInt8(params.count)]
+            args.append(contentsOf: params)
+            if let r = try perform(
+                device,
+                handle,
+                classID: 0x02,
+                cmdID: 0x0D,
+                size: UInt8(args.count),
+                args: args,
+                allowTxnRescan: true,
+                responseAttempts: 12,
+                responseDelayUs: 40_000
+            ) {
+                if r[0] == 0x02 {
+                    AppLog.debug(
+                        "Bridge",
+                        "usb button bind ack cmd=0x0d profile=\(profile) slot=\(slot) kind=\(kind)"
+                    )
+                    return true
+                }
+                AppLog.debug(
+                    "Bridge",
+                    "usb button bind reject cmd=0x0d profile=\(profile) slot=\(slot) kind=\(kind) status=0x\(String(r[0], radix: 16))"
+                )
+            }
         }
 
-        var args: [UInt8] = [profile, button, 0x00, 0x00, 0x00, actionType, UInt8(params.count)]
-        args.append(contentsOf: params)
-        guard let r = try perform(device, handle, classID: 0x02, cmdID: 0x0D, size: UInt8(args.count), args: args) else { return false }
-        return r[0] == 0x02
+        AppLog.debug(
+            "Bridge",
+            "usb button bind failed slot=\(slot) kind=\(kind) block=\(functionBlockHex)"
+        )
+        return false
+    }
+
+    private func getButtonBindingUSBRaw(
+        _ handle: IOHIDDevice,
+        _ device: MouseDevice,
+        profile: UInt8,
+        slot: UInt8,
+        hypershift: UInt8
+    ) throws -> [UInt8]? {
+        var args: [UInt8] = [profile, slot, hypershift]
+        args.append(contentsOf: [UInt8](repeating: 0x00, count: 7))
+        guard let r = try perform(
+            device,
+            handle,
+            classID: 0x02,
+            cmdID: 0x8C,
+            size: UInt8(args.count),
+            args: args,
+            allowTxnRescan: true,
+            responseAttempts: 12,
+            responseDelayUs: 40_000
+        ),
+              r[0] == 0x02
+        else { return nil }
+
+        if r.count >= 18, r[8] == profile, r[9] == slot, r[10] == hypershift {
+            return Array(r[11..<18])
+        }
+        if r.count >= 15 {
+            return Array(r[8..<15])
+        }
+        return nil
     }
 
     private func intProp(_ device: IOHIDDevice, key: CFString) -> Int? {
@@ -1683,14 +1904,6 @@ actor BridgeClient {
             score += 25
         }
         return score
-    }
-
-    private func usbSupportsButtonRemap(_ device: MouseDevice) -> Bool {
-        // Basilisk V3 X HyperSpeed (USB PID 0x00B9) rejects tested class 0x02 remap writes.
-        if device.transport == "usb", device.vendor_id == usbVID, device.product_id == 0x00B9 {
-            return false
-        }
-        return true
     }
 
     private func readStateAfterUSBWrite(device: MouseDevice, attempts: Int = 4) async throws -> MouseState {

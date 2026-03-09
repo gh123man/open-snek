@@ -1,5 +1,6 @@
 import Foundation
 import CoreBluetooth
+import IOKit.hid
 
 private enum ProbeError: LocalizedError {
     case usage(String)
@@ -23,6 +24,345 @@ private struct DpiSnapshot: Equatable {
     let marker: UInt8
 
     var values: [Int] { Array(slots.prefix(count)) }
+}
+
+private final class USBProbeClient {
+    private let usbVID = 0x1532
+    private let manager: IOHIDManager
+    private let device: IOHIDDevice
+    private let deviceID: String
+    private let productID: Int
+    private var cachedTxn: UInt8?
+
+    init() throws {
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: usbVID] as CFDictionary)
+        let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        guard openResult == kIOReturnSuccess else {
+            throw ProbeError.protocolError("IOHIDManagerOpen failed (\(openResult))")
+        }
+
+        guard
+            let rawSet = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
+            !rawSet.isEmpty
+        else {
+            throw ProbeError.protocolError("No USB Razer HID device found")
+        }
+
+        var best: (score: Int, device: IOHIDDevice, id: String, pid: Int)?
+        for candidate in rawSet {
+            guard
+                Self.intProp(candidate, key: kIOHIDVendorIDKey as CFString) == usbVID,
+                let product = Self.intProp(candidate, key: kIOHIDProductIDKey as CFString)
+            else { continue }
+            let transport = (Self.stringProp(candidate, key: kIOHIDTransportKey as CFString) ?? "").lowercased()
+            if transport.contains("bluetooth") { continue }
+
+            let location = Self.intProp(candidate, key: kIOHIDLocationIDKey as CFString) ?? 0
+            let id = String(format: "%04x:%04x:%08x:usb", usbVID, product, location)
+            let score = Self.handleScore(candidate)
+            if best == nil || score > best!.score {
+                best = (score: score, device: candidate, id: id, pid: product)
+            }
+        }
+
+        guard let best else {
+            throw ProbeError.protocolError("No non-Bluetooth USB Razer HID control interface found")
+        }
+
+        self.manager = manager
+        self.device = best.device
+        self.deviceID = best.id
+        self.productID = best.pid
+    }
+
+    func describe() -> String {
+        "\(deviceID) pid=0x\(String(productID, radix: 16))"
+    }
+
+    func readButtonFunction(profile: UInt8, slot: UInt8, hypershift: UInt8 = 0x00) throws -> [UInt8]? {
+        var args: [UInt8] = [profile, slot, hypershift]
+        args.append(contentsOf: [UInt8](repeating: 0x00, count: 7))
+        guard let response = try perform(
+            classID: 0x02,
+            cmdID: 0x8C,
+            size: UInt8(args.count),
+            args: args,
+            responseAttempts: 12,
+            responseDelayUs: 40_000
+        ), response[0] == 0x02 else {
+            return nil
+        }
+
+        if response.count >= 18,
+           response[8] == profile,
+           response[9] == slot,
+           response[10] == hypershift {
+            return Array(response[11..<18])
+        }
+        if response.count >= 15 {
+            return Array(response[8..<15])
+        }
+        return nil
+    }
+
+    func writeButtonFunction(profile: UInt8, slot: UInt8, hypershift: UInt8 = 0x00, functionBlock: [UInt8]) throws -> Bool {
+        guard functionBlock.count == 7 else {
+            throw ProbeError.usage("Function block must be exactly 7 bytes")
+        }
+        let args = [profile, slot, hypershift] + functionBlock
+        guard let response = try perform(
+            classID: 0x02,
+            cmdID: 0x0C,
+            size: UInt8(args.count),
+            args: args,
+            responseAttempts: 12,
+            responseDelayUs: 40_000
+        ) else {
+            return false
+        }
+        return response[0] == 0x02
+    }
+
+    func writeButtonBinding(
+        profiles: [UInt8],
+        slot: Int,
+        kind: String,
+        hidKey: Int,
+        turboEnabled: Bool,
+        turboRate: Int
+    ) throws -> Bool {
+        let functionBlock = usbButtonFunctionBlock(
+            slot: slot,
+            kind: kind,
+            hidKey: hidKey,
+            turboEnabled: turboEnabled,
+            turboRate: turboRate
+        )
+        let clampedSlot = UInt8(max(0, min(255, slot)))
+        var wroteAny = false
+        for profile in profiles {
+            if try writeButtonFunction(profile: profile, slot: clampedSlot, functionBlock: functionBlock) {
+                wroteAny = true
+            }
+        }
+        return wroteAny
+    }
+
+    func usbButtonFunctionBlock(
+        slot: Int,
+        kind: String,
+        hidKey: Int,
+        turboEnabled: Bool,
+        turboRate: Int
+    ) -> [UInt8] {
+        let key = UInt8(max(0, min(255, hidKey)))
+        let turbo = UInt16(max(1, min(255, turboRate)))
+        let turboHi = UInt8((turbo >> 8) & 0xFF)
+        let turboLo = UInt8(turbo & 0xFF)
+
+        switch kind {
+        case "default":
+            if slot == 96 {
+                return [0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00]
+            }
+            if let buttonID = usbDefaultMouseButtonID(slot: slot) {
+                return [0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00]
+            }
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        case "clear_layer":
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        case "keyboard_simple":
+            if turboEnabled {
+                return [0x0D, 0x04, 0x00, key, turboHi, turboLo, 0x00]
+            }
+            return [0x02, 0x02, 0x00, key, 0x00, 0x00, 0x00]
+        default:
+            if let buttonID = usbMouseButtonID(kind: kind) {
+                if turboEnabled {
+                    return [0x0E, 0x03, buttonID, turboHi, turboLo, 0x00, 0x00]
+                }
+                return [0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00]
+            }
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        }
+    }
+
+    private func usbMouseButtonID(kind: String) -> UInt8? {
+        switch kind {
+        case "left_click": return 0x01
+        case "right_click": return 0x02
+        case "middle_click": return 0x03
+        case "mouse_back": return 0x04
+        case "mouse_forward": return 0x05
+        case "scroll_up": return 0x09
+        case "scroll_down": return 0x0A
+        default: return nil
+        }
+    }
+
+    private func usbDefaultMouseButtonID(slot: Int) -> UInt8? {
+        switch slot {
+        case 1: return 0x01
+        case 2: return 0x02
+        case 3: return 0x03
+        case 4: return 0x04
+        case 5: return 0x05
+        case 9: return 0x09
+        case 10: return 0x0A
+        default: return nil
+        }
+    }
+
+    private func perform(
+        classID: UInt8,
+        cmdID: UInt8,
+        size: UInt8,
+        args: [UInt8],
+        responseAttempts: Int,
+        responseDelayUs: useconds_t
+    ) throws -> [UInt8]? {
+        for txn in txnCandidates() {
+            let report = createReport(txn: txn, classID: classID, cmdID: cmdID, size: size, args: args)
+            guard let response = try exchange(
+                report: report,
+                expectedClassID: classID,
+                expectedCmdID: cmdID,
+                responseAttempts: responseAttempts,
+                responseDelayUs: responseDelayUs
+            ) else {
+                continue
+            }
+            if response.count < 90 { continue }
+            if response[0] == 0x01 { continue }
+            cachedTxn = txn
+            return response
+        }
+        cachedTxn = nil
+        return nil
+    }
+
+    private func txnCandidates() -> [UInt8] {
+        if let cachedTxn {
+            return [cachedTxn]
+        }
+        return [0x1F, 0x3F, 0xFF]
+    }
+
+    private func createReport(txn: UInt8, classID: UInt8, cmdID: UInt8, size: UInt8, args: [UInt8]) -> [UInt8] {
+        var report = [UInt8](repeating: 0, count: 90)
+        report[0] = 0x00
+        report[1] = txn
+        report[5] = size
+        report[6] = classID
+        report[7] = cmdID
+        for (idx, value) in args.prefix(80).enumerated() {
+            report[8 + idx] = value
+        }
+        var crc: UInt8 = 0
+        for idx in 2..<88 {
+            crc ^= report[idx]
+        }
+        report[88] = crc
+        return report
+    }
+
+    private func exchange(
+        report: [UInt8],
+        expectedClassID: UInt8,
+        expectedCmdID: UInt8,
+        responseAttempts: Int,
+        responseDelayUs: useconds_t
+    ) throws -> [UInt8]? {
+        let openResult = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        guard openResult == kIOReturnSuccess else {
+            if openResult == kIOReturnNotPermitted {
+                throw ProbeError.protocolError("USB HID access denied. Grant Input Monitoring and relaunch.")
+            }
+            return nil
+        }
+        defer { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
+
+        let setResult = report.withUnsafeBufferPointer { ptr -> IOReturn in
+            guard let base = ptr.baseAddress else { return kIOReturnError }
+            return IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, CFIndex(0), base, ptr.count)
+        }
+        guard setResult == kIOReturnSuccess else {
+            return nil
+        }
+
+        for _ in 0..<max(1, responseAttempts) {
+            usleep(responseDelayUs)
+            var out = [UInt8](repeating: 0, count: 90)
+            var length = out.count
+            let getResult = out.withUnsafeMutableBufferPointer { ptr -> IOReturn in
+                guard let base = ptr.baseAddress else { return kIOReturnError }
+                return IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(0), base, &length)
+            }
+            guard getResult == kIOReturnSuccess, length > 0 else { continue }
+
+            let raw = Array(out.prefix(length))
+            let candidate: [UInt8]
+            if raw.count == 91 {
+                candidate = Array(raw.dropFirst())
+            } else if raw.count == 90 {
+                candidate = raw
+            } else if raw.count > 90 {
+                candidate = Array(raw.suffix(90))
+            } else {
+                continue
+            }
+
+            if candidate[0] == 0x00 { continue }
+            if !isValidResponse(candidate, classID: expectedClassID, cmdID: expectedCmdID) { continue }
+            return candidate
+        }
+        return nil
+    }
+
+    private func isValidResponse(_ report: [UInt8], classID: UInt8, cmdID: UInt8) -> Bool {
+        guard report.count >= 90 else { return false }
+        guard report[6] == classID else { return false }
+        guard (report[7] & 0x7F) == (cmdID & 0x7F) else { return false }
+        var crc: UInt8 = 0
+        for idx in 2..<88 {
+            crc ^= report[idx]
+        }
+        return report[88] == crc
+    }
+
+    private static func handleScore(_ device: IOHIDDevice) -> Int {
+        let maxFeatureReport = intProp(device, key: kIOHIDMaxFeatureReportSizeKey as CFString) ?? 0
+        let usagePage = intProp(device, key: kIOHIDPrimaryUsagePageKey as CFString) ?? 0
+        let usage = intProp(device, key: kIOHIDPrimaryUsageKey as CFString) ?? 0
+
+        var score = 0
+        if maxFeatureReport >= 90 {
+            score += 100
+        } else if maxFeatureReport > 0 {
+            score += maxFeatureReport
+        }
+        if usagePage == 0x01 && usage == 0x02 {
+            score += 25
+        }
+        return score
+    }
+
+    private static func intProp(_ device: IOHIDDevice, key: CFString) -> Int? {
+        guard let value = IOHIDDeviceGetProperty(device, key) else { return nil }
+        if CFGetTypeID(value) == CFNumberGetTypeID() {
+            return (value as! NSNumber).intValue
+        }
+        return nil
+    }
+
+    private static func stringProp(_ device: IOHIDDevice, key: CFString) -> String? {
+        guard let value = IOHIDDeviceGetProperty(device, key) else { return nil }
+        if CFGetTypeID(value) == CFStringGetTypeID() {
+            return value as? String
+        }
+        return nil
+    }
 }
 
 private enum VendorProtocol {
@@ -436,13 +776,14 @@ struct OpenSnekProbe {
         guard let command = args.first else {
             throw ProbeError.usage(usageText)
         }
-        let bridge = ProbeBridge()
 
         switch command {
         case "dpi-read":
+            let bridge = ProbeBridge()
             let snapshot = try await bridge.readDpi()
             print("active=\(snapshot.active + 1) count=\(snapshot.count) values=\(snapshot.values)")
         case "dpi-set":
+            let bridge = ProbeBridge()
             let parsed = try parseSetArgs(Array(args.dropFirst()))
             let snapshot = try await bridge.setDpi(
                 active: parsed.active,
@@ -452,6 +793,7 @@ struct OpenSnekProbe {
             )
             print("applied active=\(snapshot.active + 1) values=\(snapshot.values)")
         case "dpi-cycle":
+            let bridge = ProbeBridge()
             let parsed = try parseCycleArgs(Array(args.dropFirst()))
             for i in 0..<parsed.loops {
                 let values = parsed.sequence[i % parsed.sequence.count]
@@ -466,6 +808,61 @@ struct OpenSnekProbe {
                     try await Task.sleep(nanoseconds: UInt64(parsed.sleepMs) * 1_000_000)
                 }
             }
+        case "usb-info":
+            let usb = try USBProbeClient()
+            print("usb \(usb.describe())")
+        case "usb-button-read":
+            let parsed = try parseUSBButtonReadArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient()
+            print("usb \(usb.describe())")
+            let slot = UInt8(max(0, min(255, parsed.slot)))
+            for profile in parsed.profiles {
+                if let block = try usb.readButtonFunction(profile: profile, slot: slot, hypershift: parsed.hypershift) {
+                    print("profile=\(profile) slot=\(parsed.slot) hypershift=\(parsed.hypershift) \(describeUSBFunctionBlock(block))")
+                } else {
+                    print("profile=\(profile) slot=\(parsed.slot) hypershift=\(parsed.hypershift) read_failed")
+                }
+            }
+        case "usb-button-set":
+            let parsed = try parseUSBButtonSetArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient()
+            print("usb \(usb.describe())")
+            let wrote = try usb.writeButtonBinding(
+                profiles: parsed.profiles,
+                slot: parsed.slot,
+                kind: parsed.kind,
+                hidKey: parsed.hidKey,
+                turboEnabled: parsed.turboEnabled,
+                turboRate: parsed.turboRate
+            )
+            guard wrote else {
+                throw ProbeError.protocolError("USB button write did not return success")
+            }
+            let slot = UInt8(max(0, min(255, parsed.slot)))
+            for profile in parsed.profiles {
+                if let block = try usb.readButtonFunction(profile: profile, slot: slot, hypershift: 0x00) {
+                    print("readback profile=\(profile) slot=\(parsed.slot) \(describeUSBFunctionBlock(block))")
+                }
+            }
+        case "usb-button-set-raw":
+            let parsed = try parseUSBButtonSetRawArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient()
+            print("usb \(usb.describe())")
+            let slot = UInt8(max(0, min(255, parsed.slot)))
+            var wroteAny = false
+            for profile in parsed.profiles {
+                if try usb.writeButtonFunction(profile: profile, slot: slot, hypershift: 0x00, functionBlock: parsed.functionBlock) {
+                    wroteAny = true
+                }
+            }
+            guard wroteAny else {
+                throw ProbeError.protocolError("USB raw button write did not return success")
+            }
+            for profile in parsed.profiles {
+                if let block = try usb.readButtonFunction(profile: profile, slot: slot, hypershift: 0x00) {
+                    print("readback profile=\(profile) slot=\(parsed.slot) \(describeUSBFunctionBlock(block))")
+                }
+            }
         default:
             throw ProbeError.usage(usageText)
         }
@@ -477,6 +874,13 @@ struct OpenSnekProbe {
           OpenSnekProbe dpi-read
           OpenSnekProbe dpi-set --values 1600,6400 [--active 1] [--verify-retries 6] [--verify-delay-ms 120]
           OpenSnekProbe dpi-cycle --sequence 800,6400;1600,6400 --loops 10 [--active 1] [--sleep-ms 120]
+          OpenSnekProbe usb-info
+          OpenSnekProbe usb-button-read --slot 4 [--profile default|direct|both]
+          OpenSnekProbe usb-button-set --slot 4 --kind right_click [--profile both] [--hid-key 4] [--turbo on|off] [--turbo-rate 142]
+          OpenSnekProbe usb-button-set-raw --slot 4 --hex 01010200000000 [--profile default|direct|both]
+
+        USB button kinds:
+          default left_click right_click middle_click scroll_up scroll_down mouse_back mouse_forward keyboard_simple clear_layer
         """
     }
 
@@ -507,6 +911,71 @@ struct OpenSnekProbe {
         return (sequence, loops, active, sleepMs, verifyRetries, verifyDelayMs)
     }
 
+    private static func parseUSBButtonReadArgs(_ args: [String]) throws -> (slot: Int, profiles: [UInt8], hypershift: UInt8) {
+        let flags = parseFlags(args)
+        guard let slotRaw = flags["--slot"], let slot = Int(slotRaw) else {
+            throw ProbeError.usage("Missing --slot\n\(usageText)")
+        }
+        let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01])
+        let hypershift = UInt8(max(0, min(1, Int(flags["--hypershift"] ?? "0") ?? 0)))
+        return (slot, profiles, hypershift)
+    }
+
+    private static func parseUSBButtonSetArgs(_ args: [String]) throws -> (slot: Int, kind: String, hidKey: Int, turboEnabled: Bool, turboRate: Int, profiles: [UInt8]) {
+        let flags = parseFlags(args)
+        guard let slotRaw = flags["--slot"], let slot = Int(slotRaw) else {
+            throw ProbeError.usage("Missing --slot\n\(usageText)")
+        }
+        guard let kindRaw = flags["--kind"]?.lowercased() else {
+            throw ProbeError.usage("Missing --kind\n\(usageText)")
+        }
+        let validKinds: Set<String> = [
+            "default", "left_click", "right_click", "middle_click",
+            "scroll_up", "scroll_down", "mouse_back", "mouse_forward",
+            "keyboard_simple", "clear_layer",
+        ]
+        guard validKinds.contains(kindRaw) else {
+            throw ProbeError.usage("Invalid --kind '\(kindRaw)'\n\(usageText)")
+        }
+
+        let hidKey = max(0, min(255, Int(flags["--hid-key"] ?? "4") ?? 4))
+        let turboEnabled = parseBoolean(flags["--turbo"] ?? "off")
+        let turboRate = max(1, min(255, Int(flags["--turbo-rate"] ?? "142") ?? 142))
+        let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01, 0x00])
+        return (slot, kindRaw, hidKey, turboEnabled, turboRate, profiles)
+    }
+
+    private static func parseUSBButtonSetRawArgs(_ args: [String]) throws -> (slot: Int, functionBlock: [UInt8], profiles: [UInt8]) {
+        let flags = parseFlags(args)
+        guard let slotRaw = flags["--slot"], let slot = Int(slotRaw) else {
+            throw ProbeError.usage("Missing --slot\n\(usageText)")
+        }
+        guard let hexRaw = flags["--hex"] else {
+            throw ProbeError.usage("Missing --hex\n\(usageText)")
+        }
+        let functionBlock = try parseHexBytes(hexRaw)
+        guard functionBlock.count == 7 else {
+            throw ProbeError.usage("--hex must decode to exactly 7 bytes")
+        }
+        let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01, 0x00])
+        return (slot, functionBlock, profiles)
+    }
+
+    private static func parseUSBProfiles(_ raw: String?, defaultProfiles: [UInt8]) throws -> [UInt8] {
+        guard let raw else { return defaultProfiles }
+        let normalized = raw.lowercased()
+        switch normalized {
+        case "default", "persistent", "1":
+            return [0x01]
+        case "direct", "0":
+            return [0x00]
+        case "both", "all":
+            return [0x01, 0x00]
+        default:
+            throw ProbeError.usage("Invalid --profile '\(raw)' (expected default/direct/both)")
+        }
+    }
+
     private static func parseFlags(_ args: [String]) -> [String: String] {
         var result: [String: String] = [:]
         var i = 0
@@ -529,5 +998,47 @@ struct OpenSnekProbe {
             throw ProbeError.usage("Invalid DPI values: \(raw)")
         }
         return clipped
+    }
+
+    private static func parseBoolean(_ raw: String) -> Bool {
+        switch raw.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func parseHexBytes(_ raw: String) throws -> [UInt8] {
+        let normalized = raw
+            .replacingOccurrences(of: "0x", with: "", options: [.caseInsensitive])
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "_", with: "")
+        guard normalized.count % 2 == 0 else {
+            throw ProbeError.usage("Invalid hex byte string: \(raw)")
+        }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(normalized.count / 2)
+        var idx = normalized.startIndex
+        while idx < normalized.endIndex {
+            let next = normalized.index(idx, offsetBy: 2)
+            let chunk = normalized[idx..<next]
+            guard let value = UInt8(chunk, radix: 16) else {
+                throw ProbeError.usage("Invalid hex byte string: \(raw)")
+            }
+            bytes.append(value)
+            idx = next
+        }
+        return bytes
+    }
+
+    private static func describeUSBFunctionBlock(_ block: [UInt8]) -> String {
+        let hex = block.map { String(format: "%02x", $0) }.joined()
+        guard block.count == 7 else { return "block=\(hex)" }
+        let classID = block[0]
+        let length = Int(min(5, block[1]))
+        let data = Array(block[2..<(2 + length)])
+        let dataHex = data.map { String(format: "%02x", $0) }.joined()
+        return "block=\(hex) class=0x\(String(format: "%02x", classID)) len=\(length) data=\(dataHex)"
     }
 }

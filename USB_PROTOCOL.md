@@ -166,6 +166,32 @@ Args:     [0] = VARSTORE (0x01), [1] = enabled (0x00/0x01)
 TxnID:    0x1F
 ```
 
+#### Get/Set Button Function
+```
+Get:      Class 0x02, ID 0x8C, Size 0x0A
+Set:      Class 0x02, ID 0x0C, Size 0x0A
+Args:     [0] = profile (0x00 direct, 0x01 persistent/default)
+          [1] = button slot
+          [2] = hypershift flag (0x00 normal, 0x01 hypershift layer)
+          [3] = function class
+          [4] = function-data length (0..5)
+          [5..9] = function data bytes
+TxnID:    0x1F
+```
+
+Validated slot ids on Basilisk V3 X HyperSpeed (`0x00B9`): `0x01..0x05`, `0x09`, `0x0A`, `0x60`.
+
+Validated function block examples:
+- right click: `01 01 02 00 00 00 00`
+- back button (default for slot `0x04`): `01 01 04 00 00 00 00`
+- keyboard key `A` (HID `0x04`): `02 02 00 04 00 00 00`
+- disable: `00 00 00 00 00 00 00`
+- DPI cycle (default for slot `0x60`): `06 01 06 00 00 00 00`
+
+Client note:
+- USB function blocks are not BLE `p0/p1/p2` payloads. Use `class,len,data[]` encoding directly.
+- Legacy non-analog write command `0x02:0x0D` is still observed in ecosystem notes but is fallback-only on this device.
+
 ---
 
 ### Class 0x04 - DPI
@@ -314,32 +340,15 @@ Observed-working payload families:
 
 These commands are documented but not yet implemented in this tool.
 
-### Button Remapping (Class 0x02)
+### Advanced Button Action Catalog
 
-**Status**: Protocol partially documented in [OpenRazer Issue #2031](https://github.com/openrazer/openrazer/issues/2031).  
-`razer_usb.py`/`razer_ble.py` now expose an **experimental raw writer** via `--usb-button-action`, but action catalogs and per-button payload semantics are still incomplete.
+`0x02:0x8C/0x0C` is now validated for base function-block transport, but the full action taxonomy
+(macro families, media/consumer, analog variants) is still incomplete per device/firmware.
 
-```
-Command:  Class 0x02, ID 0x0d (non-analog) or 0x12 (analog)
-Args:     [0] = memory slot / profile
-          [1] = key/button identifier
-          [2] = Fn/Hypershift flag
-          [3-4] = actuation point (analog only)
-          [5] = action type
-          [6] = parameter length
-          [7+] = action parameters
-
-Action types (suspected):
-  0x00 = Disable
-  0x01 = Mouse button
-  0x02 = Keyboard key
-  0x03 = Multimedia key
-  0x04 = Double-click
-  0x05 = Fn key
-  0x0C = Remap key (type 12)
-
-Requires USB capture from Synapse to confirm exact format.
-```
+Open questions:
+- exact behavior of advanced function classes (`0x03..0x05`, `0x07`, `0x09`, `0x0A`, `0x0F`, `0x12`)
+- interoperability of legacy non-analog command `0x02:0x0D`
+- per-device slot map differences beyond the validated Basilisk V3 X set
 
 ### Profile Management
 
@@ -386,7 +395,7 @@ Effects:
 | Scroll acceleration | `02:96/16` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll smart reel | `02:97/17` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping for non-HID parity |
-| Button remap | Partial USB docs only | Vendor write path documented and implemented | BLE implemented, USB experimental raw writer | Need USB action taxonomy + validated payload catalog |
+| Button remap | `0x02:0x8C/0x0C` validated for base function blocks | Vendor write path documented and implemented | BLE implemented, USB read/write validated for base categories | Need advanced action taxonomy validation (macro/media/analog) |
 | RGB / matrix effects | OpenRazer-documented classes | Partial BLE raw lighting scalar only | Not implemented end-to-end in scripts | Need cross-transport effect model and commands |
 
 ---

@@ -11,7 +11,7 @@ All notable changes to this project are documented in this file.
 - USB DPI stage writes now preserve/report stage IDs and write active stage as the device stage-ID token (not raw UI index), fixing active-stage `0` timeout failures and off-by-one stage mapping during stage-count edits.
 - Transient USB stage-table read failures no longer collapse state to single-stage fallback; cached stage values remain stable, and fast DPI polling now also runs on USB for quicker on-mouse stage-switch UI updates.
 - Fast DPI refresh now preserves non-DPI USB telemetry fields (including low-battery threshold and scroll controls), fixing card flicker caused by transient nil resets during high-frequency stage polling.
-- USB button-remap writes are now explicitly disabled for Basilisk V3 X HyperSpeed USB (`0x00B9`) where class `0x02` remap writes are rejected; the remap UI is hidden for that unsupported USB path.
+- USB button remapping on Basilisk V3 X HyperSpeed USB (`0x00B9`) now uses validated class `0x02` button-function commands (`0x0C` write / `0x8C` read) with correct 7-byte function-block encoding; remap writes/readback now succeed in hardware tests.
 
 ## [2026-03-08]
 
@@ -89,6 +89,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 - Hardware BLE DPI reliability test (`OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareDpiReliabilityTests`).
+- Hardware USB button-remap test harness (`OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareUSBButtonRemapTests`) with write/readback/restore flow.
 - Regression-focused validation workflow in `README.md`, `OpenSnekMac/README.md`, and `AGENTS.md` including CLI, hardware, and log-based checks.
 - Sleep-timeout power-management control in UI plus USB (`07:83/03`) and BLE (`05 84/05 04`) bridge read/write plumbing.
 - BLE lighting-frame color hydration path on startup (`10 84 00 00`) plus persisted per-device fallback when firmware does not return payload for this read.
@@ -96,3 +97,4 @@ All notable changes to this project are documented in this file.
 - Xcode-distribution scaffold for macOS: `OpenSnekMac/project.yml` (XcodeGen spec), generated `OpenSnekMac/OpenSnekMac.xcodeproj`, and `OpenSnekMac/scripts/generate_xcodeproj.sh`.
 - Native app asset catalog + AppIcon set under `OpenSnekMac/App/Resources/Assets.xcassets`.
 - `OpenSnekMac/scripts/generate_appiconset.sh` to reproducibly regenerate all macOS app icon sizes from a single generated source.
+- `OpenSnekProbe` USB HID commands for button remap validation (`usb-info`, `usb-button-read`, `usb-button-set`, `usb-button-set-raw`).
