@@ -11,4 +11,4 @@ For clarity, documentation is now split:
 - [BLE Protocol Spec](./BLE_PROTOCOL.md)
 - [USB/BLE Parity](./PARITY.md)
 - [BLE Reverse Engineering Notes](./BLE_REVERSE_ENGINEERING.md)
-- [OpenSnekMac App/Probe Guide](./OpenSnekMac/README.md)
+- [OpenSnek App/Probe Guide](./OpenSnek/README.md)

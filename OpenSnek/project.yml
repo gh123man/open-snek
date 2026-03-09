@@ -1,0 +1,132 @@
+name: OpenSnek
+options:
+  minimumXcodeGenVersion: 2.45.0
+  deploymentTarget:
+    macOS: "14.0"
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+targets:
+  OpenSnekCore:
+    type: framework
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/OpenSnekCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnekCore
+        PRODUCT_NAME: OpenSnekCore
+        GENERATE_INFOPLIST_FILE: YES
+
+  OpenSnekProtocols:
+    type: framework
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/OpenSnekProtocols
+    dependencies:
+      - target: OpenSnekCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnekProtocols
+        PRODUCT_NAME: OpenSnekProtocols
+        GENERATE_INFOPLIST_FILE: YES
+
+  OpenSnekHardware:
+    type: framework
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/OpenSnekHardware
+    dependencies:
+      - target: OpenSnekCore
+      - target: OpenSnekProtocols
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnekHardware
+        PRODUCT_NAME: OpenSnekHardware
+        GENERATE_INFOPLIST_FILE: YES
+
+  OpenSnekAppSupport:
+    type: framework
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/OpenSnekAppSupport
+    dependencies:
+      - target: OpenSnekCore
+      - target: OpenSnekHardware
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnekAppSupport
+        PRODUCT_NAME: OpenSnekAppSupport
+        GENERATE_INFOPLIST_FILE: YES
+
+  OpenSnek:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/OpenSnek
+    resources:
+      - path: App/Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnek
+        PRODUCT_NAME: OpenSnek
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        SUPPORTS_MACCATALYST: NO
+    dependencies:
+      - target: OpenSnekCore
+      - target: OpenSnekProtocols
+      - target: OpenSnekHardware
+      - target: OpenSnekAppSupport
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - OpenSnekTests
+
+  OpenSnekProbe:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/OpenSnekProbe
+    settings:
+      base:
+        PRODUCT_NAME: OpenSnekProbe
+        GENERATE_INFOPLIST_FILE: YES
+        OTHER_SWIFT_FLAGS:
+          - -parse-as-library
+    dependencies:
+      - target: OpenSnekCore
+      - target: OpenSnekProtocols
+      - target: OpenSnekHardware
+    scheme:
+      gatherCoverageData: false
+
+  OpenSnekTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/OpenSnekTests
+    dependencies:
+      - target: OpenSnekCore
+      - target: OpenSnekProtocols
+      - target: OpenSnekHardware
+      - target: OpenSnekAppSupport
+      - target: OpenSnek
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnekTests

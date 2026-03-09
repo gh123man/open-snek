@@ -6,7 +6,7 @@
 
 Current project scope includes:
 - Python tooling (`razer_usb.py`, `razer_ble.py`, `razer_poc.py`)
-- Swift macOS app (`OpenSnekMac`) and Swift BLE probe CLI (`OpenSnekProbe`)
+- Swift macOS app (`OpenSnek`) and Swift BLE probe CLI (`OpenSnekProbe`)
 
 ## Canonical Documentation
 
@@ -25,12 +25,12 @@ When protocol behavior changes, update docs in the same change.
 | `razer_poc.py` | Transport wrapper CLI |
 | `razer_usb.py` | USB HID implementation |
 | `razer_ble.py` | BLE vendor + fallback implementation |
-| `OpenSnekMac/Sources/OpenSnekMac/Bridge/BridgeClient.swift` | Swift transport bridge actor |
-| `OpenSnekMac/Sources/OpenSnekMac/Bridge/BTVendorClient.swift` | CoreBluetooth vendor session manager |
-| `OpenSnekMac/Sources/OpenSnekMac/Bridge/BLEVendorProtocol.swift` | BLE framing and payload helpers |
-| `OpenSnekMac/Sources/OpenSnekMac/Services/AppState.swift` | SwiftUI state model + apply scheduling |
-| `OpenSnekMac/Sources/OpenSnekMac/Services/AppLog.swift` | Runtime app logs |
-| `OpenSnekMac/Sources/OpenSnekProbe/main.swift` | BLE probe CLI (read/set/cycle + verify) |
+| `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient.swift` | Swift transport bridge actor |
+| `OpenSnek/Sources/OpenSnek/Bridge/BTVendorClient.swift` | CoreBluetooth vendor session manager |
+| `OpenSnek/Sources/OpenSnek/Bridge/BLEVendorProtocol.swift` | BLE framing and payload helpers |
+| `OpenSnek/Sources/OpenSnek/Services/AppState.swift` | SwiftUI state model + apply scheduling |
+| `OpenSnek/Sources/OpenSnek/Services/AppLog.swift` | Runtime app logs |
+| `OpenSnek/Sources/OpenSnekProbe/main.swift` | BLE probe CLI (read/set/cycle + verify) |
 
 ## Current Device Coverage
 
@@ -71,41 +71,45 @@ python razer_poc.py --force-ble
 ### Swift App / Tests
 
 ```bash
-swift test --package-path OpenSnekMac
-swift run --package-path OpenSnekMac OpenSnekMac
-./OpenSnekMac/scripts/run_macos_app.sh
-./OpenSnekMac/scripts/generate_xcodeproj.sh
-xcodebuild -project OpenSnekMac/OpenSnekMac.xcodeproj -scheme OpenSnekMac -destination 'platform=macOS' build
-xcodebuild -project OpenSnekMac/OpenSnekMac.xcodeproj -scheme OpenSnekMac -destination 'platform=macOS' test
-xcodebuild -project OpenSnekMac/OpenSnekMac.xcodeproj -scheme OpenSnekProbe -destination 'platform=macOS' build
+swift test --package-path OpenSnek
+swift run --package-path OpenSnek OpenSnek
+./OpenSnek/scripts/run_macos_app.sh
+./OpenSnek/scripts/generate_xcodeproj.sh
+xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' build
+xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' test
+xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnekProbe -destination 'platform=macOS' build
 ```
 
 Notes:
 - Use `swift run` for quick local iteration.
-- Use `./OpenSnekMac/scripts/run_macos_app.sh` when validating UI/input behavior (dock icon, foreground activation, text-entry/keybinding interactions).
+- Use `./OpenSnek/scripts/run_macos_app.sh` when validating UI/input behavior (dock icon, foreground activation, text-entry/keybinding interactions).
 - Use Xcode project flows for signing/archive/distribution validation.
-- After changing `OpenSnekMac/project.yml`, regenerate `OpenSnekMac/OpenSnekMac.xcodeproj` via `./OpenSnekMac/scripts/generate_xcodeproj.sh`.
+- After changing `OpenSnek/project.yml`, regenerate `OpenSnek/OpenSnek.xcodeproj` via `./OpenSnek/scripts/generate_xcodeproj.sh`.
 
 ### Swift Hardware Reliability Gate (required for BLE DPI/stage changes)
 
 ```bash
-OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareDpiReliabilityTests
+OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests
 ```
+
+Policy:
+- Always run this gate when a supported mouse is detected and connected during validation.
+- Report explicit outcome in summaries: `pass`, `fail`, or `skipped` (with reason such as no Bluetooth device).
 
 ### Swift Probe CLI (preferred for fast BLE DPI iteration)
 
 ```bash
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-read
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-set --values 1600,6400 --active 2
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-cycle --sequence '1200,6400;2600,6400' --loops 10 --active 2
+swift run --package-path OpenSnek OpenSnekProbe dpi-read
+swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1600,6400 --active 2
+swift run --package-path OpenSnek OpenSnekProbe dpi-cycle --sequence '1200,6400;2600,6400' --loops 10 --active 2
 ```
 
 For stage-selection regressions, run this exact check:
 
 ```bash
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-set --values 1000,2000,3000 --active 1 --verify-retries 8 --verify-delay-ms 120
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-set --values 1000,2000,3000 --active 3 --verify-retries 8 --verify-delay-ms 120
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-read
+swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1000,2000,3000 --active 1 --verify-retries 8 --verify-delay-ms 120
+swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1000,2000,3000 --active 3 --verify-retries 8 --verify-delay-ms 120
+swift run --package-path OpenSnek OpenSnekProbe dpi-read
 ```
 
 Expected final output: `active=3 count=3 values=[1000, 2000, 3000]`.
@@ -115,13 +119,13 @@ Expected final output: `active=3 count=3 values=[1000, 2000, 3000]`.
 App log path:
 
 ```text
-~/Library/Logs/OpenSnekMac/open-snek.log
+~/Library/Logs/OpenSnek/open-snek.log
 ```
 
 Useful regression grep:
 
 ```bash
-tail -n 300 ~/Library/Logs/OpenSnekMac/open-snek.log | rg "btSetDpiStages|btGetDpiStages|stale-read masked|values=\\["
+tail -n 300 ~/Library/Logs/OpenSnek/open-snek.log | rg "btSetDpiStages|btGetDpiStages|stale-read masked|values=\\["
 ```
 
 Fail patterns:

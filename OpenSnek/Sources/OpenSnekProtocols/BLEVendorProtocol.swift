@@ -1,0 +1,314 @@
+import Foundation
+import OpenSnekCore
+
+public enum BLEVendorProtocol {
+    public static let serviceUUID = UUID(uuidString: "52401523-F97C-7F90-0E7F-6C6F4E36DB1C")!
+    public static let writeUUID = UUID(uuidString: "52401524-F97C-7F90-0E7F-6C6F4E36DB1C")!
+    public static let notifyUUID = UUID(uuidString: "52401525-F97C-7F90-0E7F-6C6F4E36DB1C")!
+
+    public struct Key: Equatable, Sendable {
+        public let b0: UInt8
+        public let b1: UInt8
+        public let b2: UInt8
+        public let b3: UInt8
+
+        public init(b0: UInt8, b1: UInt8, b2: UInt8, b3: UInt8) {
+            self.b0 = b0
+            self.b1 = b1
+            self.b2 = b2
+            self.b3 = b3
+        }
+
+        public var bytes: [UInt8] { [b0, b1, b2, b3] }
+
+        public static let dpiStagesGet = Key(b0: 0x0B, b1: 0x84, b2: 0x01, b3: 0x00)
+        public static let dpiStagesSet = Key(b0: 0x0B, b1: 0x04, b2: 0x01, b3: 0x00)
+        public static let lightingGet = Key(b0: 0x10, b1: 0x85, b2: 0x01, b3: 0x01)
+        public static let lightingSet = Key(b0: 0x10, b1: 0x05, b2: 0x01, b3: 0x00)
+        public static let lightingModeSet = Key(b0: 0x10, b1: 0x03, b2: 0x00, b3: 0x00)
+        public static let lightingFrameGet = Key(b0: 0x10, b1: 0x84, b2: 0x00, b3: 0x00)
+        public static let lightingFrameSet = Key(b0: 0x10, b1: 0x04, b2: 0x00, b3: 0x00)
+        public static let powerTimeoutGet = Key(b0: 0x05, b1: 0x84, b2: 0x00, b3: 0x00)
+        public static let powerTimeoutSet = Key(b0: 0x05, b1: 0x04, b2: 0x00, b3: 0x00)
+        public static let batteryRaw = Key(b0: 0x05, b1: 0x81, b2: 0x00, b3: 0x01)
+        public static let batteryStatus = Key(b0: 0x05, b1: 0x80, b2: 0x00, b3: 0x01)
+
+        public static func buttonBind(slot: UInt8) -> Key {
+            Key(b0: 0x08, b1: 0x04, b2: 0x01, b3: slot)
+        }
+    }
+
+    public struct NotifyHeader: Equatable, Sendable {
+        public let req: UInt8
+        public let payloadLength: Int
+        public let status: UInt8
+
+        public init?(data: Data) {
+            guard data.count == 20 else { return nil }
+            req = data[0]
+            payloadLength = Int(data[1])
+            status = data[7]
+        }
+    }
+
+    public static func buildReadHeader(req: UInt8, key: Key) -> Data {
+        Data([req, 0x00, 0x00, 0x00] + key.bytes)
+    }
+
+    public static func buildWriteHeader(req: UInt8, payloadLength: UInt8, key: Key) -> Data {
+        Data([req, payloadLength, 0x00, 0x00] + key.bytes)
+    }
+
+    public static func parsePayloadFrames(notifies: [Data], req: UInt8) -> Data? {
+        guard let headerIndex = notifies.firstIndex(where: { frame in
+            guard let hdr = NotifyHeader(data: frame) else { return false }
+            return hdr.req == req && [0x02, 0x03, 0x05].contains(hdr.status)
+        }), let header = NotifyHeader(data: notifies[headerIndex]), header.status == 0x02 else {
+            return nil
+        }
+
+        let continuation: [Data]
+        if headerIndex + 1 < notifies.count {
+            continuation = Array(notifies[(headerIndex + 1)...]).filter { $0.count == 20 }
+        } else {
+            continuation = []
+        }
+
+        let payload: Data
+        if continuation.isEmpty, header.payloadLength > 0 {
+            payload = Data(notifies[headerIndex].dropFirst(8))
+        } else {
+            payload = continuation.reduce(into: Data()) { partialResult, frame in
+                partialResult.append(frame)
+            }
+        }
+        if header.payloadLength == 0 { return Data() }
+        return payload.prefix(header.payloadLength)
+    }
+
+    public static func parseDpiStageSnapshot(blob: Data) -> (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)? {
+        if blob.count >= 9 {
+            let activeRaw = Int(blob[0])
+            let declaredCount = max(1, min(5, Int(blob[1])))
+            var slots: [Int] = []
+            var stageIDs: [UInt8] = []
+            var marker: UInt8 = 0x03
+
+            for i in 0..<declaredCount {
+                let off = 2 + (i * 7)
+                guard off + 4 < blob.count else { break }
+                let value = Int(blob[off + 1]) | (Int(blob[off + 2]) << 8)
+                slots.append(value)
+                stageIDs.append(blob[off])
+                if off + 6 < blob.count {
+                    marker = blob[off + 6]
+                }
+            }
+
+            if slots.isEmpty {
+                return nil
+            }
+            while slots.count < declaredCount {
+                slots.append(slots.last ?? 800)
+                stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
+            }
+            while slots.count < 5 {
+                slots.append(slots.last ?? 800)
+                stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
+            }
+
+            let count = min(declaredCount, slots.count)
+            let visibleIDs = Array(stageIDs.prefix(count))
+            let active = resolveActiveStage(activeRaw: activeRaw, stageIDs: visibleIDs, count: count)
+            return (
+                active: active,
+                count: count,
+                slots: Array(slots.prefix(5)),
+                stageIDs: Array(stageIDs.prefix(5)),
+                marker: marker
+            )
+        }
+
+        if blob.count >= 7 {
+            let activeRaw = Int(blob[0])
+            let count = max(1, min(5, Int(blob[1])))
+            let value = Int(blob[3]) | (Int(blob[4]) << 8)
+            let active = activeRaw >= 1 ? max(0, min(count - 1, activeRaw - 1)) : 0
+            let sid = blob.count > 2 ? blob[2] : 0
+            return (
+                active: active,
+                count: count,
+                slots: Array(repeating: value, count: 5),
+                stageIDs: Array(repeating: sid, count: 5),
+                marker: 0x03
+            )
+        }
+
+        return nil
+    }
+
+    public static func parseDpiStages(blob: Data) -> (active: Int, count: Int, values: [Int], marker: UInt8)? {
+        guard let snapshot = parseDpiStageSnapshot(blob: blob) else { return nil }
+        return (
+            active: snapshot.active,
+            count: snapshot.count,
+            values: Array(snapshot.slots.prefix(snapshot.count)),
+            marker: snapshot.marker
+        )
+    }
+
+    public static func mergedStageSlots(currentSlots: [Int], requestedCount: Int, requestedValues: [Int]) -> [Int] {
+        let count = max(1, min(5, requestedCount))
+        let clamped = requestedValues.map { max(100, min(30000, $0)) }
+        var slots = Array(currentSlots.prefix(5))
+        if slots.count < 5 {
+            slots += Array(repeating: clamped.first ?? 800, count: 5 - slots.count)
+        }
+
+        if count == 1 {
+            let single = clamped.first ?? slots[0]
+            return Array(repeating: single, count: 5)
+        }
+
+        for i in 0..<count {
+            if i < clamped.count {
+                slots[i] = clamped[i]
+            }
+        }
+        return Array(slots.prefix(5))
+    }
+
+    public static func buildDpiStagePayload(active: Int, count: Int, slots: [Int], marker: UInt8, stageIDs: [UInt8]? = nil) -> Data {
+        let clippedCount = max(1, min(5, count))
+        var ids = Array((stageIDs ?? [0, 1, 2, 3, 4]).prefix(5))
+        while ids.count < 5 {
+            ids.append(ids.last.map { $0 &+ 1 } ?? UInt8(ids.count))
+        }
+        let activeIndex = max(0, min(clippedCount - 1, active))
+        var out = Data([ids[activeIndex], UInt8(clippedCount)])
+        let clamped = slots.map { max(100, min(30000, $0)) }
+
+        for i in 0..<5 {
+            let value = clamped[min(i, max(0, clamped.count - 1))]
+            let lo = UInt8(value & 0xFF)
+            let hi = UInt8((value >> 8) & 0xFF)
+            out.append(ids[i])
+            out.append(lo)
+            out.append(hi)
+            out.append(lo)
+            out.append(hi)
+            out.append(0x00)
+            out.append(i == 4 ? marker : 0x00)
+        }
+        out.append(0x00)
+        return out
+    }
+
+    public static func buildButtonPayload(
+        slot: UInt8,
+        kind: ButtonBindingKind,
+        hidKey: UInt8?,
+        turboEnabled: Bool = false,
+        turboRate: UInt16? = nil
+    ) -> Data {
+        let clampedTurboRate = max(UInt16(1), min(UInt16(0x00FF), turboRate ?? 0x008E))
+        if turboEnabled {
+            if kind == .keyboardSimple {
+                let key = hidKey ?? 0x04
+                return Data([0x01, slot, 0x00, 0x0D, 0x04, 0x00, key, 0x00, UInt8(clampedTurboRate & 0xFF), UInt8((clampedTurboRate >> 8) & 0xFF)])
+            }
+            if let buttonID = mouseButtonID(for: kind) {
+                let index = UInt16(max(0, Int(buttonID) - 1))
+                let p0 = UInt16((index << 8) | 0x0003)
+                return Data([0x01, slot, 0x00, 0x0E, UInt8(p0 & 0xFF), UInt8((p0 >> 8) & 0xFF), UInt8(clampedTurboRate & 0xFF), UInt8((clampedTurboRate >> 8) & 0xFF), 0x00, 0x00])
+            }
+        }
+
+        switch kind {
+        case .default:
+            if slot == 0x60 {
+                return Data([0x01, slot, 0x00, 0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00])
+            }
+            if let buttonID = defaultMouseButtonID(forSlot: slot) {
+                return Data([0x01, slot, 0x00, 0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00])
+            }
+            return Data([0x01, slot, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        case .leftClick:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00])
+        case .rightClick:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00])
+        case .middleClick:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00])
+        case .scrollUp:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x09, 0x00, 0x00, 0x00, 0x00])
+        case .scrollDown:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00])
+        case .mouseBack:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00])
+        case .mouseForward:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00])
+        case .keyboardSimple:
+            return Data([0x01, slot, 0x00, 0x02, 0x02, 0x00, hidKey ?? 0x04, 0x00, 0x00, 0x00])
+        case .clearLayer:
+            return Data([0x01, slot, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        }
+    }
+
+    public static func buildScrollLEDEffectArgs(effect: LightingEffectPatch) -> [UInt8] {
+        switch effect.kind {
+        case .off:
+            return [0x01, 0x01, 0x00]
+        case .staticColor:
+            return [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, UInt8(effect.primary.r), UInt8(effect.primary.g), UInt8(effect.primary.b)]
+        case .spectrum:
+            return [0x01, 0x01, 0x04]
+        case .wave:
+            return [0x01, 0x01, 0x03, 0x00, UInt8(effect.waveDirection.rawValue)]
+        case .reactive:
+            return [0x01, 0x01, 0x05, 0x00, UInt8(max(1, min(4, effect.reactiveSpeed))), 0x01, UInt8(effect.primary.r), UInt8(effect.primary.g), UInt8(effect.primary.b)]
+        case .pulseRandom:
+            return [0x01, 0x01, 0x02, 0x01, 0x00]
+        case .pulseSingle:
+            return [0x01, 0x01, 0x02, 0x00, 0x00, 0x01, UInt8(effect.primary.r), UInt8(effect.primary.g), UInt8(effect.primary.b)]
+        case .pulseDual:
+            return [0x01, 0x01, 0x02, 0x02, 0x00, 0x02, UInt8(effect.primary.r), UInt8(effect.primary.g), UInt8(effect.primary.b), UInt8(effect.secondary.r), UInt8(effect.secondary.g), UInt8(effect.secondary.b)]
+        }
+    }
+
+    public static func resolveActiveStage(activeRaw: Int, stageIDs: [UInt8], count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        if let mapped = stageIDs.firstIndex(of: UInt8(activeRaw & 0xFF)) {
+            return mapped
+        }
+        if activeRaw >= 1, activeRaw <= count {
+            return activeRaw - 1
+        }
+        return max(0, min(count - 1, activeRaw))
+    }
+
+    public static func mouseButtonID(for kind: ButtonBindingKind) -> UInt8? {
+        switch kind {
+        case .leftClick: return 0x01
+        case .rightClick: return 0x02
+        case .middleClick: return 0x03
+        case .mouseBack: return 0x04
+        case .mouseForward: return 0x05
+        case .scrollUp: return 0x09
+        case .scrollDown: return 0x0A
+        default: return nil
+        }
+    }
+
+    public static func defaultMouseButtonID(forSlot slot: UInt8) -> UInt8? {
+        switch slot {
+        case 1: return 0x01
+        case 2: return 0x02
+        case 3: return 0x03
+        case 4: return 0x04
+        case 5: return 0x05
+        case 9: return 0x09
+        case 10: return 0x0A
+        default: return nil
+        }
+    }
+}

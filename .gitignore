@@ -49,11 +49,15 @@ gatt_enumeration_results.json
 OpenSnekMac/.build/
 OpenSnekMac/.dist/
 OpenSnekMac/.xcode-dd/
+OpenSnek/.build/
+OpenSnek/.dist/
+OpenSnek/.xcode-dd/
 .build/
 
 # Swift/Xcode user and local build state
 .swiftpm/
 OpenSnekMac/.swiftpm/
+OpenSnek/.swiftpm/
 DerivedData/
 *.xcuserstate
 *.xccheckout

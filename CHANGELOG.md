@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [2026-03-09]
 
+### Changed
+- Split the Swift package into shared targets: `OpenSnekCore`, `OpenSnekProtocols`, `OpenSnekHardware`, and `OpenSnekAppSupport`, with the app and probe consuming those shared layers incrementally instead of keeping all architecture in the app target.
+- Moved shared Swift domain models, device-profile metadata, button/turbo helpers, persistence key generation, BLE vendor framing, and USB HID report helpers out of `OpenSnek` local sources and into shared library targets.
+- Device discovery in the macOS app now attaches resolved profile metadata to `MouseDevice`, including per-transport button layout and advanced-lighting support, so UI/app-state logic can rely on device capabilities instead of raw transport string branches.
+- `AppState` now delegates patch coalescing and preference persistence to extracted support services (`ApplyCoordinator`, `DevicePreferenceStore`) instead of owning that logic directly.
+- `OpenSnekProbe` now reuses shared BLE vendor and USB HID protocol helpers instead of maintaining fully separate copies of those framing/report builders.
+
+### Added
+- Shared device-profile registry for the validated Basilisk V3 X HyperSpeed family (`0x00B9` USB / `0x00BA` BLE) with explicit button-layout metadata.
+- Unit tests for shared device-profile resolution/persistence keys and extracted apply coordination.
+
 ### Fixed
 - USB apply flows no longer fail immediately on transient post-write telemetry drops; readback now retries with short backoff and falls back to projected cached state when writes succeeded but immediate readback is temporarily unavailable.
 - USB state reads now probe live DPI first and fail fast on non-responsive HID interfaces instead of running full telemetry sweeps on dead handles, removing long timeout storms that caused delayed/intermittent stage switching.
@@ -32,7 +43,7 @@ All notable changes to this project are documented in this file.
 - BLE button remap no longer exposes slot `6` (`Hypershift/Boss key`) in the UI; runtime probes now document slot `6` as rejected (`status 0x03`) on the mapped BLE vendor key family.
 - Lighting profile apply on Bluetooth no longer hard-fails when HID effect writes are unavailable; app now uses best-effort BLE fallback paths (`static`, `off`, `spectrum`) and keeps state/cache consistent.
 - Persisted lighting state now re-applies automatically after reconnect/discovery instead of waiting for a fresh manual UI edit.
-- USB HID feature-report framing in `OpenSnekMac` now matches device expectations (90-byte payload without extra leading byte), fixing missing USB telemetry/control cards where the app previously read request-echo frames (`status 0x00`) instead of real responses.
+- USB HID feature-report framing in `OpenSnek` now matches device expectations (90-byte payload without extra leading byte), fixing missing USB telemetry/control cards where the app previously read request-echo frames (`status 0x00`) instead of real responses.
 - USB state readback now evaluates all HID handle candidates and selects the highest-telemetry interface (DPI/poll/lighting weighted), avoiding partial USB sessions that only surfaced timeout/remap controls.
 - Refresh/apply diagnostics are now explicit in-app: repeated read failures and partial USB telemetry states are surfaced as visible warnings/errors instead of being silently masked behind cache.
 - USB permission diagnostics UI no longer renders duplicate overlapping red banners; input-monitoring failures now collapse to a single callout with host identity context.
@@ -45,16 +56,16 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - Replaced the macOS app icon artwork in `AppIcon.appiconset` with the new Open Snek icon and cropped out the black background letterboxing from the source image.
-- `OpenSnekMac/scripts/build_macos_app.sh` now automatically uses `AppIcon.appiconset/icon_512x512@2x.png` as the default app icon source instead of falling back to the generic macOS icon.
-- `OpenSnekMac/scripts/build_macos_app.sh` now supports stable signing identities (`--sign-identity auto|adhoc|none|<identity>`) and auto-detects a local Apple signing cert when available, reducing TCC/Input Monitoring permission churn across rebuilds.
-- `OpenSnekMac/scripts/build_macos_app.sh` now supports `--sign-identity preserve` and auto-reuses an existing app bundle signature in `auto` mode when available, helping keep TCC grants stable across rebuilds.
-- `OpenSnekMac/scripts/build_macos_app.sh` `auto` signing now ignores existing ad-hoc signatures and prefers a real local signing identity when available, reducing TCC permission churn on rebuild.
-- `OpenSnekMac/scripts/build_macos_app.sh` now applies a stable designated requirement when ad-hoc signing (`identifier "<bundle-id>"`) so Input Monitoring grants can persist across local rebuilds.
-- `OpenSnekMac/scripts/run_macos_app.sh` continues to skip rebuilds unless explicitly requested; when rebuilding, it now defaults signing mode to `auto`.
-- `OpenSnekMac` and `OpenSnekProbe` now decode BLE active stage using stage-id mapping from the current payload entries.
+- `OpenSnek/scripts/build_macos_app.sh` now automatically uses `AppIcon.appiconset/icon_512x512@2x.png` as the default app icon source instead of falling back to the generic macOS icon.
+- `OpenSnek/scripts/build_macos_app.sh` now supports stable signing identities (`--sign-identity auto|adhoc|none|<identity>`) and auto-detects a local Apple signing cert when available, reducing TCC/Input Monitoring permission churn across rebuilds.
+- `OpenSnek/scripts/build_macos_app.sh` now supports `--sign-identity preserve` and auto-reuses an existing app bundle signature in `auto` mode when available, helping keep TCC grants stable across rebuilds.
+- `OpenSnek/scripts/build_macos_app.sh` `auto` signing now ignores existing ad-hoc signatures and prefers a real local signing identity when available, reducing TCC permission churn on rebuild.
+- `OpenSnek/scripts/build_macos_app.sh` now applies a stable designated requirement when ad-hoc signing (`identifier "<bundle-id>"`) so Input Monitoring grants can persist across local rebuilds.
+- `OpenSnek/scripts/run_macos_app.sh` continues to skip rebuilds unless explicitly requested; when rebuilding, it now defaults signing mode to `auto`.
+- `OpenSnek` and `OpenSnekProbe` now decode BLE active stage using stage-id mapping from the current payload entries.
 - BLE stage-table writes in Swift now preserve stage IDs from the current snapshot to keep UI stage selection aligned with hardware cycling.
 - BLE protocol documentation now distinguishes protocol observations from per-client implementation behavior.
-- `OpenSnekMac` UI is split into focused components (`ContentView`, `DeviceSidebarView`, `DeviceDetailView`, `UIPrimitives`) instead of a single monolithic view.
+- `OpenSnek` UI is split into focused components (`ContentView`, `DeviceSidebarView`, `DeviceDetailView`, `UIPrimitives`) instead of a single monolithic view.
 - Top-card lighting UX now uses integrated in-window controls (large brightness slider + inline color controls) instead of detached native color panel behavior.
 - DPI telemetry now displays a single active DPI scalar value.
 - Button remapping now uses a friendly-name table with per-button mapping summaries.
@@ -82,21 +93,21 @@ All notable changes to this project are documented in this file.
 - Lighting card now exposes full scroll LED profile families (off, static, spectrum, wave, reactive, pulse random/single/dual) with per-profile controls (direction/speed/colors).
 - Lighting profile state (mode + wave direction + reactive speed + secondary color) is now cached per device in UserDefaults and restored on reconnect/launch.
 - Lighting/button persistence keys now use a stable per-device identity (`serial` when available, otherwise `VID:PID:transport`) with legacy-key fallback for previously cached values.
-- Lighting profile picker has been temporarily removed from OpenSnekMac UI; app now exposes static lighting controls only while BLE effect parity remains unreliable on current macOS BT HID paths.
-- OpenSnekMac lighting controls are now transport-scoped: USB exposes full effect/profile controls again, while Bluetooth remains static-only (brightness + color) to avoid BLE regressions.
-- OpenSnekMac USB apply/readback now includes device mode (`00:84/04`), low-battery threshold (`07:81/01`), and scroll controls (`02:94/14`, `02:96/16`, `02:97/17`) with per-device capability probing.
+- Lighting profile picker has been temporarily removed from OpenSnek UI; app now exposes static lighting controls only while BLE effect parity remains unreliable on current macOS BT HID paths.
+- OpenSnek lighting controls are now transport-scoped: USB exposes full effect/profile controls again, while Bluetooth remains static-only (brightness + color) to avoid BLE regressions.
+- OpenSnek USB apply/readback now includes device mode (`00:84/04`), low-battery threshold (`07:81/01`), and scroll controls (`02:94/14`, `02:96/16`, `02:97/17`) with per-device capability probing.
 - Unsupported USB controls are now hidden in the UI instead of shown disabled (device mode, low-battery threshold, and each individual scroll control).
 - USB color-only writes now use the static matrix-effect path (`0x0F:0x02`) so RGB color edits apply reliably on USB.
 
 ### Added
-- Hardware BLE DPI reliability test (`OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareDpiReliabilityTests`).
-- Hardware USB button-remap test harness (`OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareUSBButtonRemapTests`) with write/readback/restore flow.
-- Hardware USB startup hydration test harness (`OPEN_SNEK_HW=1 OPEN_SNEK_USB=1 swift test --package-path OpenSnekMac --filter HardwareUSBStartupHydrationTests`) that seeds conflicting cache and verifies startup rehydration prefers device state.
-- Regression-focused validation workflow in `README.md`, `OpenSnekMac/README.md`, and `AGENTS.md` including CLI, hardware, and log-based checks.
+- Hardware BLE DPI reliability test (`OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests`).
+- Hardware USB button-remap test harness (`OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareUSBButtonRemapTests`) with write/readback/restore flow.
+- Hardware USB startup hydration test harness (`OPEN_SNEK_HW=1 OPEN_SNEK_USB=1 swift test --package-path OpenSnek --filter HardwareUSBStartupHydrationTests`) that seeds conflicting cache and verifies startup rehydration prefers device state.
+- Regression-focused validation workflow in `README.md`, `OpenSnek/README.md`, and `AGENTS.md` including CLI, hardware, and log-based checks.
 - Sleep-timeout power-management control in UI plus USB (`07:83/03`) and BLE (`05 84/05 04`) bridge read/write plumbing.
 - BLE lighting-frame color hydration path on startup (`10 84 00 00`) plus persisted per-device fallback when firmware does not return payload for this read.
-- macOS app-bundle build scripts: `OpenSnekMac/scripts/build_macos_app.sh` and `OpenSnekMac/scripts/run_macos_app.sh` for dock/icon/focus-correct launches outside `swift run`.
-- Xcode-distribution scaffold for macOS: `OpenSnekMac/project.yml` (XcodeGen spec), generated `OpenSnekMac/OpenSnekMac.xcodeproj`, and `OpenSnekMac/scripts/generate_xcodeproj.sh`.
-- Native app asset catalog + AppIcon set under `OpenSnekMac/App/Resources/Assets.xcassets`.
-- `OpenSnekMac/scripts/generate_appiconset.sh` to reproducibly regenerate all macOS app icon sizes from a single generated source.
+- macOS app-bundle build scripts: `OpenSnek/scripts/build_macos_app.sh` and `OpenSnek/scripts/run_macos_app.sh` for dock/icon/focus-correct launches outside `swift run`.
+- Xcode-distribution scaffold for macOS: `OpenSnek/project.yml` (XcodeGen spec), generated `OpenSnek/OpenSnek.xcodeproj`, and `OpenSnek/scripts/generate_xcodeproj.sh`.
+- Native app asset catalog + AppIcon set under `OpenSnek/App/Resources/Assets.xcassets`.
+- `OpenSnek/scripts/generate_appiconset.sh` to reproducibly regenerate all macOS app icon sizes from a single generated source.
 - `OpenSnekProbe` USB HID commands for button remap validation (`usb-info`, `usb-button-read`, `usb-button-set`, `usb-button-set-raw`).

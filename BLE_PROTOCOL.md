@@ -135,7 +135,7 @@ Implementation behavior (current code):
 | Consumer | Active decode | Stage IDs on set payload |
 |---|---|---|
 | `razer_ble.py` | raw `active` clamped into `0..count-1` | emits `0..4` |
-| `OpenSnekMac` / `OpenSnekProbe` | maps active byte to entry stage IDs (with fallback normalization) | preserves IDs from current snapshot |
+| `OpenSnek` / `OpenSnekProbe` | maps active byte to entry stage IDs (with fallback normalization) | preserves IDs from current snapshot |
 
 Read-side parsing in `razer_ble.py` accepts:
 - variable-length staged blob (`2 + count*7` bytes), commonly:
@@ -255,9 +255,9 @@ Vendor GATT path in the same environment works when enabled:
 - Direct runtime probes on Basilisk V3 X BT reject slot `0x06` writes on this key family with status `0x03` (error), while slot `0x60` ACKs with `0x02` (success).
 - Practical implication: the Hypershift/Boss clutch button is not currently rebindable via vendor key `08 04 01 <slot>` in this implementation path.
 
-## 9.1 OpenSnekMac Runtime Notes (2026-03)
+## 9.1 OpenSnek Runtime Notes (2026-03)
 
-The Swift app (`OpenSnekMac`) applies additional runtime safety around the same vendor protocol:
+The Swift app (`OpenSnek`) applies additional runtime safety around the same vendor protocol:
 
 - one BLE exchange at a time per connection (serialized request pipeline)
 - coalesced apply queue (latest local edit wins under rapid slider movement)
@@ -266,9 +266,9 @@ The Swift app (`OpenSnekMac`) applies additional runtime safety around the same 
 - BT writer preserves stage-id bytes from the current snapshot so hardware stage-button cycling stays in sync with UI selection
 - invalid DPI read filtering + immediate retry for transient malformed payloads
 - `razer_ble.py` includes HID scroll LED effect families (`0x0F:0x02`), but on current macOS BT stack these HID writes are commonly unsupported (`send result=-1`).
-- OpenSnekMac currently treats lighting as static-only in UI (brightness + RGB frame write) until a reliable cross-transport effect path is validated.
+- OpenSnek currently treats lighting as static-only in UI (brightness + RGB frame write) until a reliable cross-transport effect path is validated.
 - persisted lighting settings are keyed by stable device identity and replayed on reconnect/discovery
-- log-backed diagnostics at `~/Library/Logs/OpenSnekMac/open-snek.log`
+- log-backed diagnostics at `~/Library/Logs/OpenSnek/open-snek.log`
 
 These are transport-consumer behaviors and do not change the on-wire packet format.
 
@@ -304,7 +304,7 @@ These are transport-consumer behaviors and do not change the on-wire packet form
 | Scroll mode | `02:94/14` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll acceleration | `02:96/16` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
 | Scroll smart reel | `02:97/17` | Not mapped | Implemented in both scripts via HID path | Need BLE vendor mapping |
-| Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts and OpenSnekMac via HID path | Need BLE vendor mapping for non-HID parity |
+| Scroll LED brightness/effects | `0F:84/04`, `0F:02` | Not mapped | Implemented in both scripts and OpenSnek via HID path | Need BLE vendor mapping for non-HID parity |
 | Button remap | USB experimental raw writer only | `08 04 01 <slot>` + payload | BLE implemented + USB experimental writer | Mouse + keyboard turbo payloads are mapped on BLE; USB taxonomy still incomplete |
 | Lighting / matrix | USB class `0x0F` partly implemented (scroll LED) | Scalar key (`10 85` / `10 05`) + frame stream key (`10 04`) | USB/BLE HID scroll LED profiles + BLE scalar/frame writes | Need vendor-key parity for non-HID BLE effect writes |
 

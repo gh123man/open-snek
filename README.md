@@ -5,7 +5,7 @@ Configure Razer mice without Razer Synapse.
 - USB / 2.4GHz dongle: full config path (`razer_usb.py`)
 - Bluetooth: partial but expanding support (`razer_ble.py`)
 - Wrapper CLI: `razer_poc.py` auto-selects transport
-- Native macOS app: `OpenSnekMac` (SwiftUI + CoreBluetooth + IOKit HID)
+- Native macOS app: `OpenSnek` (SwiftUI + CoreBluetooth + IOKit HID)
 
 ## Supported Device
 
@@ -31,9 +31,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## macOS App (`OpenSnekMac`)
+## macOS App (`OpenSnek`)
 
-`OpenSnekMac` is a pure Swift macOS app that provides:
+`OpenSnek` is a pure Swift macOS app that provides:
 - device discovery (USB / Bluetooth)
 - live state polling
 - auto-apply settings (DPI stages, active stage, poll rate, sleep timeout, lighting, button remap)
@@ -43,74 +43,74 @@ pip install -r requirements.txt
 Run in-place during development:
 
 ```bash
-swift run --package-path OpenSnekMac OpenSnekMac
+swift run --package-path OpenSnek OpenSnek
 ```
 
 Build and launch as a proper macOS app bundle (recommended for reliable focus, dock icon, and keyboard text-entry behavior):
 
 ```bash
-./OpenSnekMac/scripts/run_macos_app.sh
+./OpenSnek/scripts/run_macos_app.sh
 ```
 
 Generate and use the native Xcode project (recommended for signing/archive/distribution):
 
 ```bash
-./OpenSnekMac/scripts/generate_xcodeproj.sh --open
+./OpenSnek/scripts/generate_xcodeproj.sh --open
 ```
 
 Regenerate app icon assets:
 
 ```bash
-./OpenSnekMac/scripts/generate_appiconset.sh
+./OpenSnek/scripts/generate_appiconset.sh
 ```
 
 Headless Xcode build/test:
 
 ```bash
-xcodebuild -project OpenSnekMac/OpenSnekMac.xcodeproj -scheme OpenSnekMac -destination 'platform=macOS' build
-xcodebuild -project OpenSnekMac/OpenSnekMac.xcodeproj -scheme OpenSnekMac -destination 'platform=macOS' test
+xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' build
+xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' test
 ```
 
 Xcode build for probe CLI:
 
 ```bash
-xcodebuild -project OpenSnekMac/OpenSnekMac.xcodeproj -scheme OpenSnekProbe -destination 'platform=macOS' build
+xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnekProbe -destination 'platform=macOS' build
 ```
 
 Bundle-only build (no launch):
 
 ```bash
-./OpenSnekMac/scripts/build_macos_app.sh --configuration release
+./OpenSnek/scripts/build_macos_app.sh --configuration release
 ```
 
 Prefer stable signing identity (keeps macOS privacy grants like Input Monitoring more consistent across rebuilds):
 
 ```bash
-./OpenSnekMac/scripts/build_macos_app.sh --configuration debug --sign-identity auto --open
+./OpenSnek/scripts/build_macos_app.sh --configuration debug --sign-identity auto --open
 ```
 
 Default output:
 
 ```text
-OpenSnekMac/.dist/Open Snek.app
+OpenSnek/.dist/Open Snek.app
 ```
 
 Optional custom icon:
 
 ```bash
-./OpenSnekMac/scripts/build_macos_app.sh --icon /absolute/path/to/AppIcon.png
+./OpenSnek/scripts/build_macos_app.sh --icon /absolute/path/to/AppIcon.png
 ```
 
 Run tests:
 
 ```bash
-swift test --package-path OpenSnekMac
+swift test --package-path OpenSnek
 ```
 
 Runtime log file:
 
 ```bash
-~/Library/Logs/OpenSnekMac/open-snek.log
+~/Library/Logs/OpenSnek/open-snek.log
 ```
 
 ### Permission Troubleshooting (macOS)
@@ -121,7 +121,7 @@ Runtime log file:
 - If Bluetooth was denied previously, reset and re-prompt:
 
 ```bash
-tccutil reset Bluetooth io.opensnek.OpenSnekMac
+tccutil reset Bluetooth io.opensnek.OpenSnek
 ```
 
 ### DPI Stage Reliability Workflow (Required Before Merge)
@@ -132,21 +132,21 @@ or apply scheduling.
 1. Run fast protocol/unit checks:
 
 ```bash
-swift test --package-path OpenSnekMac
+swift test --package-path OpenSnek
 ```
 
 2. Run hardware reliability loop (real mouse required):
 
 ```bash
-OPEN_SNEK_HW=1 swift test --package-path OpenSnekMac --filter HardwareDpiReliabilityTests
+OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests
 ```
 
 3. Validate deterministic CLI readback path:
 
 ```bash
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-set --values 1000,2000,3000 --active 1 --verify-retries 8 --verify-delay-ms 120
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-set --values 1000,2000,3000 --active 3 --verify-retries 8 --verify-delay-ms 120
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-read
+swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1000,2000,3000 --active 1 --verify-retries 8 --verify-delay-ms 120
+swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1000,2000,3000 --active 3 --verify-retries 8 --verify-delay-ms 120
+swift run --package-path OpenSnek OpenSnekProbe dpi-read
 ```
 
 Expected: final read reports `active=3` with `values=[1000, 2000, 3000]`.
@@ -160,7 +160,7 @@ Expected: final read reports `active=3` with `values=[1000, 2000, 3000]`.
 5. Check logs for known bad signatures:
 
 ```bash
-tail -n 300 ~/Library/Logs/OpenSnekMac/open-snek.log | rg "btSetDpiStages|btGetDpiStages|stale-read masked|values=\\["
+tail -n 300 ~/Library/Logs/OpenSnek/open-snek.log | rg "btSetDpiStages|btGetDpiStages|stale-read masked|values=\\["
 ```
 
 Regression indicators:
@@ -177,13 +177,13 @@ For deterministic protocol verification and stress testing without UI interactio
 
 ```bash
 # Read current BLE DPI table
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-read
+swift run --package-path OpenSnek OpenSnekProbe dpi-read
 
 # Set single-stage DPI and verify readback
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-set --values 1600 --active 1
+swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1600 --active 1
 
 # Cycle through values with readback verification
-swift run --package-path OpenSnekMac OpenSnekProbe dpi-cycle --sequence '1200;2600;3200' --loops 12 --active 1
+swift run --package-path OpenSnek OpenSnekProbe dpi-cycle --sequence '1200;2600;3200' --loops 12 --active 1
 ```
 
 ### BLE DPI Protocol Notes (Regression-Critical)
@@ -228,7 +228,7 @@ python razer_ble.py --vendor-key-get 00810000
 
 ## Feature Matrix
 
-| Feature | USB | BLE | OpenSnekMac | Notes |
+| Feature | USB | BLE | OpenSnek | Notes |
 |---|---|---|---|---|
 | Read/Set DPI | Yes | Partial | Yes | BLE uses staged table writes via vendor GATT; HID direct set may fail per stack |
 | Read/Set DPI Stages | Yes | Yes | Yes | BLE via vendor keys `0B 84` / `0B 04` |
@@ -254,9 +254,9 @@ python razer_ble.py --vendor-key-get 00810000
 | `enumerate_hid_gatt.py` | HID-over-GATT enumeration helper |
 | `enumerate_hid_gatt_linux.py` | Linux HID-over-GATT probing helper |
 | `discover_bt_vendor_keys.py` | Safe BLE vendor key discovery and writeback validator |
-| `OpenSnekMac/` | Swift package containing `OpenSnekMac` app and `OpenSnekProbe` CLI |
-| `OpenSnekMac/OpenSnekMac.xcodeproj` | Native macOS Xcode project for signing/archive/distribution |
-| `OpenSnekMac/project.yml` | XcodeGen source-of-truth used to regenerate the Xcode project |
+| `OpenSnek/` | Swift package containing `OpenSnek` app and `OpenSnekProbe` CLI |
+| `OpenSnek/OpenSnek.xcodeproj` | Native macOS Xcode project for signing/archive/distribution |
+| `OpenSnek/project.yml` | XcodeGen source-of-truth used to regenerate the Xcode project |
 | `captures/` | BLE capture corpus and index |
 | `PROTOCOL.md` | Protocol documentation index |
 | `USB_PROTOCOL.md` | USB transport protocol |
@@ -272,7 +272,7 @@ python razer_ble.py --vendor-key-get 00810000
 - [USB/BLE Parity](PARITY.md)
 - [BLE Reverse Engineering Notes](BLE_REVERSE_ENGINEERING.md)
 - [Capture Corpus](captures/README.md)
-- [OpenSnekMac App/Probe Guide](OpenSnekMac/README.md)
+- [OpenSnek App/Probe Guide](OpenSnek/README.md)
 
 ## License
 
