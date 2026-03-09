@@ -708,6 +708,10 @@ final class AppState {
                 poll_rate: previous.poll_rate,
                 sleep_timeout: previous.sleep_timeout,
                 device_mode: previous.device_mode,
+                low_battery_threshold_raw: previous.low_battery_threshold_raw,
+                scroll_mode: previous.scroll_mode,
+                scroll_acceleration: previous.scroll_acceleration,
+                scroll_smart_reel: previous.scroll_smart_reel,
                 led_value: previous.led_value,
                 capabilities: previous.capabilities
             )

@@ -10,6 +10,8 @@ All notable changes to this project are documented in this file.
 - USB transaction candidate handling now sticks to the last known-good transaction ID for normal traffic, reducing repeated per-command transaction scanning that amplified timeout latency on unstable sessions.
 - USB DPI stage writes now preserve/report stage IDs and write active stage as the device stage-ID token (not raw UI index), fixing active-stage `0` timeout failures and off-by-one stage mapping during stage-count edits.
 - Transient USB stage-table read failures no longer collapse state to single-stage fallback; cached stage values remain stable, and fast DPI polling now also runs on USB for quicker on-mouse stage-switch UI updates.
+- Fast DPI refresh now preserves non-DPI USB telemetry fields (including low-battery threshold and scroll controls), fixing card flicker caused by transient nil resets during high-frequency stage polling.
+- USB button-remap writes are now explicitly disabled for Basilisk V3 X HyperSpeed USB (`0x00B9`) where class `0x02` remap writes are rejected; the remap UI is hidden for that unsupported USB path.
 
 ## [2026-03-08]
 

@@ -615,6 +615,9 @@ actor BridgeClient {
             }
 
             if let binding = patch.buttonBinding {
+                guard usbSupportsButtonRemap(device) else {
+                    throw BridgeError.commandFailed("USB button remapping is not supported on this device yet.")
+                }
                 let slot = binding.slot
                 let kind = binding.kind.rawValue
                 let hidKey = binding.hidKey ?? 4
@@ -760,7 +763,7 @@ actor BridgeClient {
                 dpi_stages: true,
                 poll_rate: true,
                 power_management: true,
-                button_remap: true,
+                button_remap: usbSupportsButtonRemap(device),
                 lighting: true
             )
         )
@@ -1680,6 +1683,14 @@ actor BridgeClient {
             score += 25
         }
         return score
+    }
+
+    private func usbSupportsButtonRemap(_ device: MouseDevice) -> Bool {
+        // Basilisk V3 X HyperSpeed (USB PID 0x00B9) rejects tested class 0x02 remap writes.
+        if device.transport == "usb", device.vendor_id == usbVID, device.product_id == 0x00B9 {
+            return false
+        }
+        return true
     }
 
     private func readStateAfterUSBWrite(device: MouseDevice, attempts: Int = 4) async throws -> MouseState {
