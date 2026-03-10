@@ -185,11 +185,11 @@ Validated slot ids on Basilisk V3 X HyperSpeed (`0x00B9`): `0x01..0x05`, `0x09`,
 Validated slot ids on Basilisk V3 35K (`0x00CB`): `0x01..0x05`, `0x09`, `0x0A`, `0x0E`, `0x0F`, `0x34`, `0x35`, `0x60`, `0x6A`.
 Observed control labels on `0x00CB`:
 - `0x0E`: scroll-mode toggle
-- `0x0F`: sensitivity clutch (readback only; remap not validated)
+- `0x0F`: sensitivity clutch
 - `0x34`: wheel tilt left
 - `0x35`: wheel tilt right
 - `0x60`: top DPI button
-- `0x6A`: profile button (readback only; remap not validated)
+- `0x6A`: profile button
 
 Validated function block examples:
 - right click: `01 01 02 00 00 00 00`
@@ -208,6 +208,11 @@ Client note:
 - Basilisk V3 35K (`0x00CB`) `0x02:0x8C` reads do not use one fixed payload offset for every slot. Observed 35K slots decode from `response[11..<18]`; treating `response[10...]` as the block causes false positives and mislabels on extra buttons such as `0x60` and `0x6A`.
 - Always validate the echoed `profile` and `slot` bytes before decoding a `0x02:0x8C` read. This device will otherwise yield stale-looking success frames that can be mistaken for additional slots.
 - Open Snek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
+- Treat button access as three separate categories during new-device bring-up:
+  - `editable`: validated over `0x02:0x0C`
+  - `protocol-read-only`: readable from `0x02:0x8C`, but no validated writable path
+  - `software-read-only`: fixed control exposed to software through auxiliary HID input/report paths rather than button-function writes
+- On Basilisk V3 35K, OpenRazer documents keyboard-interface report-4 codes `0x50 = profile` and `0x51 = sensitivity clutch`. Those controls should be tracked as software-read-only even if their fixed defaults are also visible through `0x02:0x8C`.
 
 #### Get Onboard Profile Summary
 ```
@@ -465,7 +470,7 @@ Effects:
 | DPI Stages | 5 |
 | Poll Rates | 125, 500, 1000 Hz |
 | Validated matrix LEDs | `0x01` scroll wheel, `0x04` logo, `0x0A` underglow |
-| Extra validated button slots | `0x0E` scroll mode (fixed), `0x0F` sensitivity clutch (fixed), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x60` DPI button, `0x6A` profile button (fixed) |
+| Extra validated button slots | `0x0E` scroll mode (protocol-read-only), `0x0F` sensitivity clutch (software-read-only / report-4 `0x51`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x60` DPI button, `0x6A` profile button (software-read-only / report-4 `0x50`) |
 
 ### Transaction ID by Device
 

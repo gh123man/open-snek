@@ -270,7 +270,7 @@ private struct EmptyDeviceState: View {
                         .foregroundStyle(.white)
                 }
                 Text("Supported devices")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.72))
             }
 
@@ -308,20 +308,23 @@ private struct SupportedDeviceRowView: View {
     let row: SupportedDeviceRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(row.name)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
+                .lineLimit(1)
 
-            HStack(spacing: 8) {
-                ForEach(row.transports, id: \.self) { transport in
-                    Pill(
-                        text: transport.shortLabel,
-                        color: transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A)
-                    )
-                }
+            ForEach(row.transports, id: \.self) { transport in
+                Pill(
+                    text: transport.shortLabel,
+                    color: transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A),
+                    fontSize: 10,
+                    horizontalPadding: 8,
+                    verticalPadding: 4
+                )
             }
-            .frame(alignment: .leading)
+
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
     }

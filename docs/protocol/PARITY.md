@@ -72,7 +72,7 @@ Validated in-session over USB:
 - working: serial, firmware, device mode read/write, poll-rate read/write, DPI/stages, battery, core USB telemetry
 - working: matrix brightness/effect writes on all validated LED IDs (`0x01` scroll wheel, `0x04` logo, `0x0A` underglow)
 - working: button remap read/write/readback on standard slots plus the additional wheel-tilt (`0x34`, `0x35`) and top DPI-button (`0x60`) slots
-- observed fixed-special defaults on `0x00CB`: scroll-mode (`0x0E`), sensitivity clutch (`0x0F`), profile button (`0x6A`)
+- observed non-remappable controls on `0x00CB`: scroll-mode (`0x0E`, protocol-read-only), sensitivity clutch (`0x0F`, software-read-only via report-4 `0x51`), profile button (`0x6A`, software-read-only via report-4 `0x50`)
 - observed alternate USB DPI-button payload on slot `0x60`: `04 02 0F 7B 00 00 00`
 - shipped client behavior: normalize `0x60` to a user-facing `DPI Cycle` action and allow binding `DPI Cycle` to any writable USB slot
 - client note: `0x02:0x8C` response layout is not identical to `0x00B9`; clients must validate echoed `profile`/`slot` bytes before choosing the 35K function-block offset
@@ -92,7 +92,7 @@ Validated in-session over Bluetooth:
   - idle time fallback (`05 84 00 00` / `05 04 00 00`)
   - low battery threshold fallback (`05 82 00 00` / `05 02 00 00`)
   - button remap slots `0x01..0x05`, `0x09`, `0x0A`, `0x60`
-- Vendor GATT button remap slot `0x06` returns error status (`0x03`) and is treated as unsupported in current tooling/UI.
+- Vendor GATT button remap slot `0x06` returns error status (`0x03`) and is treated as a software-read-only Hypershift/sniper control on the current BLE path.
 - `scroll-up-down-rebind.pcapng` confirms slot `0x09`/`0x0A` wheel-button mappings on BLE (`p0=0x0901` / `0x0A01`).
 - `right-click-turbo.pcapng` confirms mouse turbo payloads on BLE (`action=0x0E`, slot `0x02`) with changing rate field.
 - `basic-rebind.pcapng` includes a keyboard turbo-form payload (`action=0x0D`, key + rate fields).

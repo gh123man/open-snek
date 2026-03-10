@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### Added
 - USB device-profile support for Razer Basilisk V3 35K (`0x00CB`) in the macOS app and shared Swift support layers, including its own button layout metadata and three-zone USB lighting IDs.
 - `OpenSnekProbe usb-raw`, a generic USB HID feature-report inspector for new-device bring-up and protocol verification.
+- Shared button-slot access metadata now distinguishes editable, protocol-read-only, and software-read-only controls so future device bring-up can document non-remappable buttons explicitly.
 
 ### Fixed
 - USB lighting apply/readback on Basilisk V3 35K now targets all three validated matrix LED zones (`0x01` scroll wheel, `0x04` logo, and `0x0A` underglow) instead of only the wheel zone.
@@ -17,7 +18,16 @@ All notable changes to this project are documented in this file.
 - The button-binding UI now hides fixed-only 35K controls, and USB button bindings expose an explicit `DPI Cycle` action that can be assigned to any writable button while the 35K DPI button restores to a working DPI-cycle default.
 - The USB lighting card now filters effect choices per device capability, keeps the original background treatment for `All Zones`, and only uses the multi-zone accent gradient when a specific static USB zone is selected.
 - Open Snek now reads the Basilisk V3 35K onboard profile summary on USB, exposes multi-profile UI only on devices that actually advertise multiple onboard profiles, and scopes USB button remap reads/writes to the selected stored profile instead of hard-coding profile 1.
+- Device/profile docs now explicitly record the Basilisk V3 35K software-read-only controls: sensitivity clutch (`0x0F` / report-4 `0x51`) and profile button (`0x6A` / report-4 `0x50`), plus scroll-mode toggle (`0x0E`) as protocol-read-only.
+- Shared button metadata now also marks the Basilisk V3 X HyperSpeed Bluetooth Hypershift/sniper control (`slot 0x06`) as software-read-only so it appears in the unsupported-buttons footnote with the right explanation.
+- The non-functional onboard-profile switcher card has been removed from the macOS UI until an actual active-profile switching path is decoded for supported devices.
+- The button remap card now shows a compact per-device footnote for hidden unsupported buttons, including why each control is currently protocol-read-only or software-read-only.
 - Python USB tooling now recognizes Basilisk V3 35K (`0x00CB`) and mirrors multi-zone USB lighting writes across all validated LED IDs.
+
+### Changed
+- Unsupported-button footnotes now use plain-language UI copy instead of protocol jargon, including the Basilisk V3 X HyperSpeed sniper/Hypershift note.
+- The polling-rate and scroll-control cards now align labels on the left and controls on the right to match the rest of the app.
+- The empty-state supported-devices list now uses smaller inline USB/BT pills so more devices fit cleanly in one row.
 
 ## [2026-03-09]
 

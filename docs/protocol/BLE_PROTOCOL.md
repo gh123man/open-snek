@@ -395,7 +395,7 @@ Validated writable slots in current project:
 - `0x60`
 
 Known rejection:
-- slot `0x06` returns error status `0x03` on the validated BLE key family and is treated as unsupported
+- slot `0x06` returns error status `0x03` on the validated BLE key family and is treated as software-read-only / unsupported for remapping on the current BLE vendor path
 
 ## 7. Complete Transaction Examples
 
@@ -720,7 +720,7 @@ The app may still expose richer lighting on USB HID, but this BLE document only 
 - No source-of-truth BLE vendor key for device mode in Swift
 - No source-of-truth BLE vendor key for low-battery-threshold control in Swift
 - No source-of-truth BLE vendor key for poll-rate control in Swift
-- No decoded BLE vendor path for slot `0x06` / Hypershift/Boss-clutch remap
+- No decoded BLE vendor path for slot `0x06` / Hypershift-Boss-sniper control remap; treat it as software-read-only on the current BLE path until a separate HID/report command family is validated
 - No complete button action taxonomy for media/macro/system families
 - No multi-device validation beyond the Basilisk V3 X Bluetooth family
 

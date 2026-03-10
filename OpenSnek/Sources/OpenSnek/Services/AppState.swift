@@ -89,6 +89,14 @@ final class AppState {
         selectedDevice?.button_layout?.visibleSlots ?? buttonSlots
     }
 
+    var hiddenUnsupportedButtonSlots: [DocumentedButtonSlot] {
+        guard let layout = selectedDevice?.button_layout else { return [] }
+        let visible = Set(layout.visibleSlots.map(\.slot))
+        return layout.documentedSlots.filter { slot in
+            slot.access != .editable && !visible.contains(slot.slot)
+        }
+    }
+
     var visibleUSBLightingZones: [USBLightingZoneDescriptor] {
         guard let selectedDevice else { return [] }
         return DeviceProfiles

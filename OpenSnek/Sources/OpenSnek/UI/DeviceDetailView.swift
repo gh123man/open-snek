@@ -51,9 +51,6 @@ struct DeviceDetailView: View {
 
     private var detailSections: [DetailSection] {
         var sections: [DetailSection] = []
-        if selected.transport == .usb, max(selected.onboard_profile_count, state.onboard_profile_count ?? 1) > 1 {
-            sections.append(.onboardProfiles)
-        }
         if state.capabilities.dpi_stages {
             sections.append(.dpiStages)
         }
@@ -86,8 +83,6 @@ struct DeviceDetailView: View {
     @ViewBuilder
     private func detailCard(for section: DetailSection) -> some View {
         switch section {
-        case .onboardProfiles:
-            OnboardProfilesCard(appState: appState, selected: selected, state: state)
         case .dpiStages:
             DpiStagesCard(appState: appState)
         case .lighting:
@@ -115,7 +110,6 @@ struct DeviceDetailView: View {
 }
 
 private enum DetailSection: Hashable {
-    case onboardProfiles
     case dpiStages
     case lighting
     case pollRate
@@ -141,62 +135,6 @@ struct LightingSwatch: Identifiable, Hashable {
     }
 
     var id: UInt32 { hex }
-}
-
-struct OnboardProfilesCard: View {
-    @Bindable var appState: AppState
-    let selected: MouseDevice
-    let state: MouseState
-
-    private var profileCount: Int {
-        max(selected.onboard_profile_count, state.onboard_profile_count ?? 1)
-    }
-
-    private var activeProfile: Int {
-        max(1, min(profileCount, state.active_onboard_profile ?? 1))
-    }
-
-    var body: some View {
-        Card(title: "Onboard Profiles") {
-            HStack {
-                Text("Active Hardware Profile")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.82))
-                Spacer()
-                Text("Profile \(activeProfile) of \(profileCount)")
-                    .font(.system(size: 13, weight: .black, design: .monospaced))
-                    .foregroundStyle(.white)
-            }
-
-            if selected.transport == .usb {
-                HStack {
-                    Text("Button Remap Profile")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                    Spacer()
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { appState.editableUSBButtonProfile },
-                            set: { appState.updateUSBButtonProfile($0) }
-                        )
-                    ) {
-                        ForEach(1...profileCount, id: \.self) { profile in
-                            let label = profile == activeProfile ? "Profile \(profile) (Active)" : "Profile \(profile)"
-                            Text(label).tag(profile)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 220, alignment: .trailing)
-                }
-
-                Text("Button remaps are stored per onboard profile. DPI and lighting reflect the currently active hardware profile.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.62))
-            }
-        }
-    }
 }
 
 private struct PreferredDetailColumnLayoutKey: LayoutValueKey {
@@ -822,12 +760,16 @@ struct PollRateCard: View {
 
     var body: some View {
         Card(title: "Polling Rate") {
-            Picker("Rate", selection: $appState.editablePollRate) {
-                Text("125 Hz").tag(125)
-                Text("500 Hz").tag(500)
-                Text("1000 Hz").tag(1000)
+            LabeledControlRow(title: "Rate") {
+                Picker("Rate", selection: $appState.editablePollRate) {
+                    Text("125 Hz").tag(125)
+                    Text("500 Hz").tag(500)
+                    Text("1000 Hz").tag(1000)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 220)
             }
-            .pickerStyle(.segmented)
         }
         .onChange(of: appState.editablePollRate) { _, _ in
             appState.scheduleAutoApplyPollRate()
@@ -917,61 +859,65 @@ struct ScrollControlsCard: View {
 
     var body: some View {
         Card(title: "Scroll Controls") {
-            if state.scroll_mode != nil {
-                HStack {
-                    Text("Mode")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                    Spacer()
-                    Picker(
-                        "Scroll Mode",
-                        selection: Binding(
-                            get: { appState.editableScrollMode },
-                            set: {
-                                appState.editableScrollMode = ($0 == 1 ? 1 : 0)
-                                appState.scheduleAutoApplyScrollMode()
-                            }
-                        )
-                    ) {
-                        Text("Tactile").tag(0)
-                        Text("Free Spin").tag(1)
+            VStack(alignment: .leading, spacing: 12) {
+                if state.scroll_mode != nil {
+                    LabeledControlRow(title: "Wheel") {
+                        Picker(
+                            "Wheel",
+                            selection: Binding(
+                                get: { appState.editableScrollMode },
+                                set: {
+                                    appState.editableScrollMode = ($0 == 1 ? 1 : 0)
+                                    appState.scheduleAutoApplyScrollMode()
+                                }
+                            )
+                        ) {
+                            Text("Tactile").tag(0)
+                            Text("Free Spin").tag(1)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 220, alignment: .trailing)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
+                }
+
+                if state.scroll_acceleration != nil {
+                    LabeledControlRow(title: "Acceleration") {
+                        Toggle(
+                            "Acceleration",
+                            isOn: Binding(
+                                get: { appState.editableScrollAcceleration },
+                                set: {
+                                    appState.editableScrollAcceleration = $0
+                                    appState.scheduleAutoApplyScrollAcceleration()
+                                }
+                            )
+                        )
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.regular)
+                    }
+                }
+
+                if state.scroll_smart_reel != nil {
+                    LabeledControlRow(title: "Smart Reel") {
+                        Toggle(
+                            "Smart Reel",
+                            isOn: Binding(
+                                get: { appState.editableScrollSmartReel },
+                                set: {
+                                    appState.editableScrollSmartReel = $0
+                                    appState.scheduleAutoApplyScrollSmartReel()
+                                }
+                            )
+                        )
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.regular)
+                    }
                 }
             }
-
-            if state.scroll_acceleration != nil {
-                Toggle(
-                    "Acceleration",
-                    isOn: Binding(
-                        get: { appState.editableScrollAcceleration },
-                        set: {
-                            appState.editableScrollAcceleration = $0
-                            appState.scheduleAutoApplyScrollAcceleration()
-                        }
-                    )
-                )
-                .toggleStyle(.switch)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            }
-
-            if state.scroll_smart_reel != nil {
-                Toggle(
-                    "Smart Reel",
-                    isOn: Binding(
-                        get: { appState.editableScrollSmartReel },
-                        set: {
-                            appState.editableScrollSmartReel = $0
-                            appState.scheduleAutoApplyScrollSmartReel()
-                        }
-                    )
-                )
-                .toggleStyle(.switch)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -1001,12 +947,77 @@ struct ButtonMappingTableCard: View {
 
     var body: some View {
         Card(title: title) {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach(rows) { row in
-                    ButtonBindingRow(appState: appState, row: row)
+            VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(rows) { row in
+                        ButtonBindingRow(appState: appState, row: row)
+                    }
+                }
+
+                if !appState.hiddenUnsupportedButtonSlots.isEmpty {
+                    UnsupportedButtonsFootnote(entries: appState.hiddenUnsupportedButtonSlots)
                 }
             }
         }
+    }
+}
+
+private struct UnsupportedButtonsFootnote: View {
+    let entries: [DocumentedButtonSlot]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.72))
+                Text("Some buttons can't be changed yet")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+
+            Text("Open Snek can still use the rest of the device normally.")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.60))
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(entries) { entry in
+                    Text("\(entry.descriptor.friendlyName): \(entry.note ?? entry.access.defaultNotice ?? "Unsupported")")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.035))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct LabeledControlRow<Control: View>: View {
+    let title: String
+    @ViewBuilder let control: () -> Control
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+
+            Spacer(minLength: 12)
+
+            control()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

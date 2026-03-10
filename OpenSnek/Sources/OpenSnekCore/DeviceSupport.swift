@@ -25,21 +25,83 @@ public struct ButtonSlotDescriptor: Identifiable, Hashable, Codable, Sendable {
     ]
 }
 
+public enum ButtonSlotAccess: String, Codable, Hashable, Sendable {
+    case editable
+    case protocolReadOnly
+    case softwareReadOnly
+
+    public var defaultNotice: String? {
+        switch self {
+        case .editable:
+            return nil
+        case .protocolReadOnly:
+            return "Open Snek can see this button, but it cannot change it yet."
+        case .softwareReadOnly:
+            return "Open Snek can detect this button, but this mouse does not expose remapping for it yet."
+        }
+    }
+}
+
+public struct DocumentedButtonSlot: Identifiable, Hashable, Codable, Sendable {
+    public let descriptor: ButtonSlotDescriptor
+    public let access: ButtonSlotAccess
+    public let note: String?
+
+    public init(descriptor: ButtonSlotDescriptor, access: ButtonSlotAccess, note: String? = nil) {
+        self.descriptor = descriptor
+        self.access = access
+        self.note = note
+    }
+
+    public var id: Int { descriptor.slot }
+    public var slot: Int { descriptor.slot }
+}
+
 public struct ButtonSlotLayout: Codable, Hashable, Sendable {
     public let visibleSlots: [ButtonSlotDescriptor]
     public let writableSlots: [Int]
+    public let documentedSlots: [DocumentedButtonSlot]
 
-    public init(visibleSlots: [ButtonSlotDescriptor], writableSlots: [Int]) {
+    public init(
+        visibleSlots: [ButtonSlotDescriptor],
+        writableSlots: [Int],
+        documentedSlots: [DocumentedButtonSlot] = []
+    ) {
         self.visibleSlots = visibleSlots
         self.writableSlots = writableSlots.sorted()
+
+        let writable = Set(self.writableSlots)
+        var documentedBySlot = Dictionary(uniqueKeysWithValues: visibleSlots.map { descriptor in
+            let access: ButtonSlotAccess = writable.contains(descriptor.slot) ? .editable : .protocolReadOnly
+            return (
+                descriptor.slot,
+                DocumentedButtonSlot(descriptor: descriptor, access: access)
+            )
+        })
+        for slot in documentedSlots {
+            documentedBySlot[slot.slot] = slot
+        }
+        self.documentedSlots = documentedBySlot.values.sorted { $0.slot < $1.slot }
     }
 
     public func isEditable(_ slot: Int) -> Bool {
         writableSlots.contains(slot)
     }
 
+    public func access(for slot: Int) -> ButtonSlotAccess {
+        documentedSlots.first(where: { $0.slot == slot })?.access ?? (isEditable(slot) ? .editable : .protocolReadOnly)
+    }
+
+    public func documentedSlot(for slot: Int) -> DocumentedButtonSlot? {
+        documentedSlots.first(where: { $0.slot == slot })
+    }
+
     public func notice(for slot: Int) -> String? {
-        isEditable(slot) ? nil : "Not writable over current protocol"
+        documentedSlot(for: slot)?.note ?? access(for: slot).defaultNotice
+    }
+
+    public var softwareReadOnlySlots: [DocumentedButtonSlot] {
+        documentedSlots.filter { $0.access == .softwareReadOnly }
     }
 }
 
@@ -136,6 +198,14 @@ public enum DeviceProfiles {
         USBLightingZoneDescriptor(id: "scroll_wheel", label: "Scroll Wheel", ledIDs: [0x01]),
     ]
 
+    public static let basiliskV3XBluetoothDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 6, friendlyName: "Hypershift / Sniper", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "This button uses a separate device path, so Open Snek cannot reassign it yet."
+        ),
+    ]
+
     public static let basiliskV335KUSBButtonSlots: [ButtonSlotDescriptor] = [
         ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
         ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
@@ -147,6 +217,24 @@ public enum DeviceProfiles {
         ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
         ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
         ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Button", defaultKind: .default),
+    ]
+
+    public static let basiliskV335KUSBDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 14, friendlyName: "Scroll Mode Toggle", defaultKind: .default),
+            access: .protocolReadOnly,
+            note: "Open Snek can see this button, but the mouse does not let apps remap it yet."
+        ),
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "This button is handled separately by the mouse, so Open Snek cannot reassign it yet."
+        ),
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "This button is handled separately by the mouse, so Open Snek cannot reassign it yet."
+        ),
     ]
 
     public static let basiliskV335KUSBLightingZones: [USBLightingZoneDescriptor] = [
@@ -178,7 +266,8 @@ public enum DeviceProfiles {
         supportedProducts: [0x00CB],
         buttonLayout: ButtonSlotLayout(
             visibleSlots: basiliskV335KUSBButtonSlots,
-            writableSlots: [1, 2, 3, 4, 5, 9, 10, 52, 53, 96]
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 52, 53, 96],
+            documentedSlots: basiliskV335KUSBDocumentedReadOnlySlots
         ),
         supportsAdvancedLightingEffects: true,
         supportedLightingEffects: basiliskV335KUSBLightingEffects,
@@ -194,7 +283,8 @@ public enum DeviceProfiles {
         supportedProducts: [0x00BA],
         buttonLayout: ButtonSlotLayout(
             visibleSlots: basiliskV3XButtonSlots,
-            writableSlots: [1, 2, 3, 4, 5, 9, 10, 96]
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 96],
+            documentedSlots: basiliskV3XBluetoothDocumentedReadOnlySlots
         ),
         supportsAdvancedLightingEffects: false,
         supportedLightingEffects: [.staticColor],

@@ -5,13 +5,16 @@ import OpenSnekCore
 struct Pill: View {
     let text: String
     let color: Color
+    var fontSize: CGFloat = 11
+    var horizontalPadding: CGFloat = 10
+    var verticalPadding: CGFloat = 5
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .font(.system(size: fontSize, weight: .bold, design: .rounded))
             .foregroundStyle(Color.black.opacity(0.78))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
             .background(color, in: Capsule())
     }
 }
