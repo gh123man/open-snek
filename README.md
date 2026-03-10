@@ -10,17 +10,17 @@
 
 ![Screenshot](/docs/media/screenshot.png)
 
-`Open Snek` is a native macOS app for configuring supported Razer mice over USB or Bluetooth.
+`Open Snek` is a macOS app for configuring supported Razer mice over USB or Bluetooth.
 
-If your mouse has little or no official Razer support on macOS, this is the point of the project: direct device configuration, a real Mac app, and no need to keep a Windows machine around just to change DPI, lighting, or button mappings.
+It exists because some Razer devices have little or no usable configuration support on macOS.
 
-## Why Use Open Snek
+## What It Does
 
-- Native macOS app, built specifically for Mac workflows
-- No Razer Synapse dependency
-- No Windows VM, no dual boot, no background cloud account flow
-- Supports both USB and Bluetooth for supported devices
-- Open source, inspectable protocol work, and reproducible builds
+- Changes DPI, stage count, and active stage
+- Adjusts supported lighting settings
+- Remaps supported buttons
+- Works over USB and Bluetooth where the device protocol allows it
+- Avoids the need for Synapse or a separate Windows machine
 
 ## Download and Install
 
