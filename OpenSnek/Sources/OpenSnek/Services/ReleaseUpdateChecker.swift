@@ -1,7 +1,26 @@
 import Foundation
 
 struct ReleaseVersion: Comparable, Equatable {
+    enum PreReleaseIdentifier: Comparable, Equatable {
+        case numeric(Int)
+        case textual(String)
+
+        static func < (lhs: PreReleaseIdentifier, rhs: PreReleaseIdentifier) -> Bool {
+            switch (lhs, rhs) {
+            case let (.numeric(left), .numeric(right)):
+                return left < right
+            case let (.textual(left), .textual(right)):
+                return left.localizedStandardCompare(right) == .orderedAscending
+            case (.numeric, .textual):
+                return true
+            case (.textual, .numeric):
+                return false
+            }
+        }
+    }
+
     let components: [Int]
+    let preRelease: [PreReleaseIdentifier]
 
     static func parse(_ rawValue: String) -> ReleaseVersion? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12,7 +31,8 @@ struct ReleaseVersion: Comparable, Equatable {
             with: "",
             options: .regularExpression
         )
-        let core = withoutPrefix.split(separator: "-", maxSplits: 1).first.map(String.init) ?? withoutPrefix
+        let coreAndSuffix = withoutPrefix.split(separator: "-", maxSplits: 1).map(String.init)
+        guard let core = coreAndSuffix.first, !core.isEmpty else { return nil }
         let parts = core.split(separator: ".")
         guard !parts.isEmpty else { return nil }
 
@@ -22,7 +42,23 @@ struct ReleaseVersion: Comparable, Equatable {
             guard let value = Int(part) else { return nil }
             parsed.append(value)
         }
-        return ReleaseVersion(components: parsed)
+
+        let preRelease: [PreReleaseIdentifier]
+        if coreAndSuffix.count > 1 {
+            let suffix = coreAndSuffix[1]
+            let identifiers = suffix.split(separator: ".")
+            guard !identifiers.isEmpty else { return nil }
+            preRelease = identifiers.map { identifier in
+                if let numeric = Int(identifier) {
+                    return .numeric(numeric)
+                }
+                return .textual(String(identifier))
+            }
+        } else {
+            preRelease = []
+        }
+
+        return ReleaseVersion(components: parsed, preRelease: preRelease)
     }
 
     static func < (lhs: ReleaseVersion, rhs: ReleaseVersion) -> Bool {
@@ -34,6 +70,28 @@ struct ReleaseVersion: Comparable, Equatable {
                 return left < right
             }
         }
+
+        if lhs.preRelease.isEmpty && rhs.preRelease.isEmpty {
+            return false
+        }
+        if lhs.preRelease.isEmpty {
+            return false
+        }
+        if rhs.preRelease.isEmpty {
+            return true
+        }
+
+        let preReleaseCount = max(lhs.preRelease.count, rhs.preRelease.count)
+        for index in 0..<preReleaseCount {
+            if index >= lhs.preRelease.count { return true }
+            if index >= rhs.preRelease.count { return false }
+            let left = lhs.preRelease[index]
+            let right = rhs.preRelease[index]
+            if left != right {
+                return left < right
+            }
+        }
+
         return false
     }
 
