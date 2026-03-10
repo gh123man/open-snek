@@ -51,6 +51,7 @@ struct ContentView: View {
                 DeviceDetailView(appState: appState, selected: selected, state: state)
             } else {
                 emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
         }
         .overlay(alignment: .topLeading) {
@@ -267,7 +268,7 @@ private struct EmptyDeviceState: View {
                 }
             }
         }
-        .frame(maxWidth: 560, alignment: .leading)
+        .frame(maxWidth: 440, alignment: .leading)
         .padding(24)
         .background(
             RoundedRectangle(cornerRadius: 22)
@@ -284,11 +285,10 @@ private struct SupportedDeviceRowView: View {
     let row: SupportedDeviceRow
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(row.name)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 8) {
                 ForEach(row.transports, id: \.self) { transport in
@@ -298,17 +298,9 @@ private struct SupportedDeviceRowView: View {
                     )
                 }
             }
+            .frame(alignment: .leading)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-        )
+        .padding(.vertical, 2)
     }
 }
 
