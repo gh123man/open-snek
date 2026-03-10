@@ -18,8 +18,12 @@ All notable changes to this project are documented in this file.
 - Shared device-profile registry for the validated Basilisk V3 X HyperSpeed family (`0x00B9` USB / `0x00BA` BLE) with explicit button-layout metadata.
 - Unit tests for shared device-profile resolution/persistence keys and extracted apply coordination.
 - GitHub Release DMG automation: tag-driven macOS workflow, Xcode archive/export release script, notarization/stapling path, and release credential setup docs.
+- Pull-request CI workflow that runs the Swift package test suite on macOS.
+- Root contribution guide covering new-device onboarding, capture interpretation, and validation expectations.
 
 ### Fixed
+- Release DMGs now preserve the macOS asset catalog and app icon in exported `Open Snek.app` bundles.
+- Release packaging now produces a styled drag-to-Applications DMG instead of a plain file-drop image.
 - USB apply flows no longer fail immediately on transient post-write telemetry drops; readback now retries with short backoff and falls back to projected cached state when writes succeeded but immediate readback is temporarily unavailable.
 - USB state reads now probe live DPI first and fail fast on non-responsive HID interfaces instead of running full telemetry sweeps on dead handles, removing long timeout storms that caused delayed/intermittent stage switching.
 - USB transaction candidate handling now sticks to the last known-good transaction ID for normal traffic, reducing repeated per-command transaction scanning that amplified timeout latency on unstable sessions.
@@ -28,6 +32,9 @@ All notable changes to this project are documented in this file.
 - Fast DPI refresh now preserves non-DPI USB telemetry fields (including low-battery threshold and scroll controls), fixing card flicker caused by transient nil resets during high-frequency stage polling.
 - USB button remapping on Basilisk V3 X HyperSpeed USB (`0x00B9`) now uses validated class `0x02` button-function commands (`0x0C` write / `0x8C` read) with correct 7-byte function-block encoding; remap writes/readback now succeed in hardware tests.
 - USB startup hydration now reads button assignments from device readback (`0x02:0x8C`) before cache fallback, so launch/reconnect reflects real on-device button mappings instead of stale local `UserDefaults` values.
+
+### Changed
+- The macOS app now checks GitHub Releases on launch and shows a sidebar `New Version Available` button when a newer published release exists.
 
 ## [2026-03-08]
 

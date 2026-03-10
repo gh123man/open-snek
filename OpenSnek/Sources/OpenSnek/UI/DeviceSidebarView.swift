@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import OpenSnekCore
 
@@ -74,7 +75,50 @@ struct DeviceSidebarView: View {
                     }
                     .padding(.vertical, 2)
                 }
+                .frame(maxHeight: .infinity)
+
+                if let availableUpdate = appState.availableUpdate {
+                    Button {
+                        NSWorkspace.shared.open(availableUpdate.releaseURL)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Color(hex: 0xA8FF70))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("New Version Available")
+                                    .font(.system(size: 11, weight: .black, design: .rounded))
+                                    .foregroundStyle(.white)
+
+                                Text("Open GitHub release v\(availableUpdate.latestVersion)")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.70))
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(.white.opacity(0.72))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.07))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color(hex: 0xA8FF70).opacity(0.30), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open GitHub Releases")
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(10)
         }
     }

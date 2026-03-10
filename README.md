@@ -51,6 +51,7 @@ swift test --package-path OpenSnek
 ## More
 
 - App build, run, probe, and validation details: [OpenSnek/README.md](OpenSnek/README.md)
+- Device support and reverse-engineering workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
 - DMG release and notarization setup: [docs/release/DMG_RELEASE.md](docs/release/DMG_RELEASE.md)
 - Protocol documentation: [docs/protocol/PROTOCOL.md](docs/protocol/PROTOCOL.md)
 - Supported Python tooling: [tools/python/README.md](tools/python/README.md)

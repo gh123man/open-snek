@@ -74,8 +74,8 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnek
-    resources:
-      - path: App/Resources/Assets.xcassets
+      - path: App/Resources
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.opensnek.OpenSnek

@@ -2,6 +2,12 @@
 
 Pure Swift macOS frontend for `open-snek`.
 
+Device onboarding and capture interpretation live in:
+
+```text
+../CONTRIBUTING.md
+```
+
 ## Targets
 
 - `OpenSnekCore`: shared domain models, device profiles, button/layout helpers, persistence keys

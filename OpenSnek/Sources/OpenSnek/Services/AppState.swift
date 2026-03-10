@@ -15,6 +15,7 @@ final class AppState {
     var devices: [MouseDevice] = []
     var selectedDeviceID: String?
     var state: MouseState?
+    var availableUpdate: ReleaseAvailability?
 
     var isLoading = false
     var isApplying = false
@@ -46,6 +47,7 @@ final class AppState {
     private let client = BridgeClient()
     private let applyCoordinator = ApplyCoordinator()
     private let preferenceStore = DevicePreferenceStore()
+    private let releaseUpdateChecker = ReleaseUpdateChecker()
     private var isHydrating = false
     private var dpiApplyTask: Task<Void, Never>?
     private var pollApplyTask: Task<Void, Never>?
@@ -73,6 +75,7 @@ final class AppState {
     private var keyboardDraftApplyTaskBySlot: [Int: Task<Void, Never>] = [:]
     private var isPollingDevices = false
     private var refreshFailureCountByDeviceID: [String: Int] = [:]
+    private var hasCheckedForUpdates = false
 
     var selectedDevice: MouseDevice? {
         guard let selectedDeviceID else { return nil }
@@ -137,6 +140,22 @@ final class AppState {
 
         await refreshState()
         AppLog.event("AppState", "refreshDevices end elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
+    }
+
+    func checkForUpdates(force: Bool = false) async {
+        guard force || !hasCheckedForUpdates else { return }
+        hasCheckedForUpdates = true
+
+        guard let currentVersion = ReleaseUpdateChecker.currentAppVersion() else { return }
+
+        do {
+            availableUpdate = try await releaseUpdateChecker.checkForUpdate(currentVersion: currentVersion)
+            if let availableUpdate {
+                AppLog.event("AppState", "update available current=\(currentVersion) latest=\(availableUpdate.latestVersion)")
+            }
+        } catch {
+            AppLog.debug("AppState", "checkForUpdates failed: \(error.localizedDescription)")
+        }
     }
 
     func pollDevicePresence() async {

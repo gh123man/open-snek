@@ -15,7 +15,11 @@ struct ContentView: View {
             detail
         }
         .navigationSplitViewStyle(.automatic)
-        .task { await appState.refreshDevices() }
+        .task {
+            async let deviceRefresh: Void = appState.refreshDevices()
+            async let updateCheck: Void = appState.checkForUpdates()
+            _ = await (deviceRefresh, updateCheck)
+        }
         .onChange(of: appState.selectedDeviceID) { _, _ in
             Task { await appState.refreshState() }
         }

@@ -184,6 +184,8 @@ require_cmd codesign
 require_cmd spctl
 require_cmd xcodegen
 require_cmd ditto
+require_cmd npx
+require_cmd swift
 
 if [[ "$SKIP_SIGN" == true && "$SKIP_NOTARIZE" == false ]]; then
   echo "--skip-sign requires --skip-notarize" >&2
@@ -248,24 +250,31 @@ fi
 echo "[open-snek] Archiving OpenSnek $VERSION ($BUILD_NUMBER)"
 xcodebuild archive "${ARCHIVE_ARGS[@]}" | tee "$LOG_DIR/archive.log"
 
-EXPORT_ARGS=(
-  -exportArchive
-  -archivePath "$ARCHIVE_PATH"
-  -exportPath "$EXPORT_DIR"
-  -exportOptionsPlist "$EXPORT_OPTIONS_TMP"
-)
-
 if [[ "$SKIP_SIGN" == true ]]; then
-  EXPORT_ARGS+=(CODE_SIGNING_ALLOWED=NO)
-fi
+  ARCHIVE_APP_PATH="$(find_exported_app "$ARCHIVE_PATH/Products/Applications")"
+  if [[ -z "$ARCHIVE_APP_PATH" ]]; then
+    echo "Archived app not found in $ARCHIVE_PATH/Products/Applications" >&2
+    exit 1
+  fi
+  APP_PATH="$EXPORT_DIR/$(basename "$ARCHIVE_APP_PATH")"
+  echo "[open-snek] Collecting unsigned app bundle from archive products"
+  ditto "$ARCHIVE_APP_PATH" "$APP_PATH"
+else
+  EXPORT_ARGS=(
+    -exportArchive
+    -archivePath "$ARCHIVE_PATH"
+    -exportPath "$EXPORT_DIR"
+    -exportOptionsPlist "$EXPORT_OPTIONS_TMP"
+  )
 
-echo "[open-snek] Exporting archive"
-xcodebuild "${EXPORT_ARGS[@]}" | tee "$LOG_DIR/export.log"
+  echo "[open-snek] Exporting archive"
+  xcodebuild "${EXPORT_ARGS[@]}" | tee "$LOG_DIR/export.log"
 
-APP_PATH="$(find_exported_app "$EXPORT_DIR")"
-if [[ -z "$APP_PATH" ]]; then
-  echo "Exported app not found in $EXPORT_DIR" >&2
-  exit 1
+  APP_PATH="$(find_exported_app "$EXPORT_DIR")"
+  if [[ -z "$APP_PATH" ]]; then
+    echo "Exported app not found in $EXPORT_DIR" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$SKIP_SIGN" == false ]]; then
@@ -281,15 +290,46 @@ if [[ "$SKIP_NOTARIZE" == false ]]; then
 fi
 
 cp -R "$APP_PATH" "$STAGE_DIR/$APP_NAME"
-ln -s /Applications "$STAGE_DIR/Applications"
+APP_ICON_SOURCE="$PACKAGE_DIR/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
+DMG_BACKGROUND="$OUTPUT_DIR/dmg-background.png"
+DMG_BACKGROUND_RETINA="$OUTPUT_DIR/dmg-background@2x.png"
+APPDMG_CONFIG="$OUTPUT_DIR/appdmg.json"
+VOLUME_ICON="$APP_PATH/Contents/Resources/AppIcon.icns"
 
-echo "[open-snek] Creating DMG $DMG_NAME"
-hdiutil create \
-  -volname "$VOLUME_NAME" \
-  -srcfolder "$STAGE_DIR" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH" | tee "$LOG_DIR/dmg-create.log"
+echo "[open-snek] Rendering DMG background"
+swift "$SCRIPT_DIR/render_dmg_background.swift" \
+  --output "$DMG_BACKGROUND" \
+  --width 780 \
+  --height 460 \
+  --icon "$APP_ICON_SOURCE"
+
+swift "$SCRIPT_DIR/render_dmg_background.swift" \
+  --output "$DMG_BACKGROUND_RETINA" \
+  --width 780 \
+  --height 460 \
+  --scale 2 \
+  --icon "$APP_ICON_SOURCE"
+
+cat > "$APPDMG_CONFIG" <<EOF
+{
+  "title": "$VOLUME_NAME",
+  "icon": "$VOLUME_ICON",
+  "background": "$DMG_BACKGROUND",
+  "icon-size": 128,
+  "format": "UDZO",
+  "window": {
+    "position": { "x": 160, "y": 120 },
+    "size": { "width": 780, "height": 520 }
+  },
+  "contents": [
+    { "x": 220, "y": 222, "type": "file", "path": "$STAGE_DIR/$APP_NAME" },
+    { "x": 560, "y": 222, "type": "link", "path": "/Applications" }
+  ]
+}
+EOF
+
+echo "[open-snek] Building styled DMG $DMG_NAME"
+npx --yes appdmg@0.6.6 "$APPDMG_CONFIG" "$DMG_PATH" | tee "$LOG_DIR/dmg-create.log"
 
 if [[ "$SKIP_SIGN" == false ]]; then
   echo "[open-snek] Signing DMG with $SIGN_IDENTITY"

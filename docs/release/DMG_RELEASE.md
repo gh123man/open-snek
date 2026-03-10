@@ -1,6 +1,6 @@
 # DMG Release Setup
 
-`OpenSnek` ships as a notarized GitHub Release DMG.
+`OpenSnek` ships as a notarized GitHub Release DMG with a Finder install window (`Open Snek.app` plus `/Applications` drag target).
 
 ## One-time Apple setup
 
@@ -60,6 +60,16 @@ Dry run without notarization:
   --skip-notarize
 ```
 
+Unsigned packaging-only dry run:
+
+```bash
+./OpenSnek/scripts/build_release_dmg.sh \
+  --version 0.1.0 \
+  --build-number 1 \
+  --skip-sign \
+  --skip-notarize
+```
+
 Output:
 
 ```text
@@ -88,7 +98,7 @@ The workflow will:
 1. import the Developer ID certificate into a temporary keychain
 2. archive/export the app with Xcode
 3. notarize and staple the `.app`
-4. create, sign, notarize, and staple the DMG
+4. create a styled drag-install DMG, then sign, notarize, and staple it
 5. upload `OpenSnek-<version>.dmg` to the matching GitHub Release
 
 ## Validation
