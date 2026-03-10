@@ -2,7 +2,7 @@
 
 Pure Swift macOS frontend for `open-snek`.
 
-Current official builds target macOS 26.
+Official builds use the latest Xcode/macOS SDK. Minimum supported macOS version: macOS 14.
 
 Device onboarding and capture interpretation live in:
 

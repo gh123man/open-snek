@@ -2,7 +2,7 @@ name: OpenSnek
 options:
   minimumXcodeGenVersion: 2.44.1
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "14.0"
 configs:
   Debug: debug
   Release: release
@@ -15,7 +15,7 @@ targets:
   OpenSnekCore:
     type: framework
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnekCore
     settings:
@@ -27,7 +27,7 @@ targets:
   OpenSnekProtocols:
     type: framework
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnekProtocols
     dependencies:
@@ -41,7 +41,7 @@ targets:
   OpenSnekHardware:
     type: framework
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnekHardware
     dependencies:
@@ -56,7 +56,7 @@ targets:
   OpenSnekAppSupport:
     type: framework
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnekAppSupport
     dependencies:
@@ -71,7 +71,7 @@ targets:
   OpenSnek:
     type: application
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnek
       - path: App/Resources
@@ -98,7 +98,7 @@ targets:
   OpenSnekProbe:
     type: tool
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Sources/OpenSnekProbe
     settings:
@@ -117,7 +117,7 @@ targets:
   OpenSnekTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Tests/OpenSnekTests
     dependencies:
