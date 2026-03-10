@@ -92,6 +92,52 @@ public enum ButtonBindingSupport {
         }
     }
 
+    public static func usbMouseButtonID(for kind: ButtonBindingKind) -> UInt8? {
+        switch kind {
+        case .leftClick: return 0x01
+        case .rightClick: return 0x02
+        case .middleClick: return 0x03
+        case .mouseBack: return 0x04
+        case .mouseForward: return 0x05
+        case .scrollUp: return 0x09
+        case .scrollDown: return 0x0A
+        default: return nil
+        }
+    }
+
+    public static func buildUSBFunctionBlock(
+        slot: Int,
+        kind: ButtonBindingKind,
+        hidKey: Int,
+        turboEnabled: Bool,
+        turboRate: Int
+    ) -> [UInt8] {
+        let clampedKey = UInt8(max(0, min(255, hidKey)))
+        let turbo = UInt16(max(1, min(255, turboRate)))
+        let turboHi = UInt8((turbo >> 8) & 0xFF)
+        let turboLo = UInt8(turbo & 0xFF)
+
+        switch kind {
+        case .default:
+            return defaultUSBFunctionBlock(for: slot) ?? [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        case .clearLayer:
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        case .keyboardSimple:
+            if turboEnabled {
+                return [0x0D, 0x04, 0x00, clampedKey, turboHi, turboLo, 0x00]
+            }
+            return [0x02, 0x02, 0x00, clampedKey, 0x00, 0x00, 0x00]
+        default:
+            if let buttonID = usbMouseButtonID(for: kind) {
+                if turboEnabled {
+                    return [0x0E, 0x03, buttonID, turboHi, turboLo, 0x00, 0x00]
+                }
+                return [0x01, 0x01, buttonID, 0x00, 0x00, 0x00, 0x00]
+            }
+            return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        }
+    }
+
     public static func defaultUSBFunctionBlock(for slot: Int) -> [UInt8]? {
         switch slot {
         case 1: return [0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00]
@@ -104,5 +150,15 @@ public enum ButtonBindingSupport {
         case 96: return [0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00]
         default: return nil
         }
+    }
+
+    public static func describeUSBFunctionBlock(_ block: [UInt8]) -> String {
+        let hex = block.map { String(format: "%02x", $0) }.joined()
+        guard block.count == 7 else { return "block=\(hex)" }
+        let classID = block[0]
+        let length = Int(min(5, block[1]))
+        let data = Array(block[2..<(2 + length)])
+        let dataHex = data.map { String(format: "%02x", $0) }.joined()
+        return "block=\(hex) class=0x\(String(format: "%02x", classID)) len=\(length) data=\(dataHex)"
     }
 }
