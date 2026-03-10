@@ -1,8 +1,8 @@
-# open-snek
-
 <p align="center">
   <img src="OpenSnek/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png" alt="open-snek app icon" width="200">
 </p>
+
+<h1 align="center">open-snek</h1>
 
 `OpenSnek` is a native macOS app for configuring supported Razer mice without Synapse.
 
