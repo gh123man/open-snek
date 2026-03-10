@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [2026-03-09]
 
 ### Changed
+- Official app builds, the Xcode project, SwiftPM package, and GitHub macOS CI/release jobs now target macOS 26 so the shipped app can adopt the latest system UI instead of being locked to the older macOS 14 deployment target.
 - Reorganized the repo around the macOS app: protocol/reference docs now live under `docs/`, supported Python tooling now lives under `tools/python/`, and the root entry point is now a zero-arg `./run.sh`.
 - Split the Swift package into shared targets: `OpenSnekCore`, `OpenSnekProtocols`, `OpenSnekHardware`, and `OpenSnekAppSupport`, with the app and probe consuming those shared layers incrementally instead of keeping all architecture in the app target.
 - Moved shared Swift domain models, device-profile metadata, button/turbo helpers, persistence key generation, BLE vendor framing, and USB HID report helpers out of `OpenSnek` local sources and into shared library targets.

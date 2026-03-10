@@ -27,6 +27,8 @@ Open Snek is an open source native macOS app for configuring supported Razer mic
 3. Drag `Open Snek.app` into `Applications`.
 4. Launch `Open Snek`.
 
+Current official builds target macOS 26.
+
 If macOS asks for permissions:
 
 - For USB control, grant `Input Monitoring` to `Open Snek` in `System Settings > Privacy & Security`.

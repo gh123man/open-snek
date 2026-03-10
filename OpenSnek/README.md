@@ -2,6 +2,8 @@
 
 Pure Swift macOS frontend for `open-snek`.
 
+Current official builds target macOS 26.
+
 Device onboarding and capture interpretation live in:
 
 ```text
