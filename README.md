@@ -39,8 +39,19 @@ If macOS asks for permissions:
 - Razer Basilisk V3 X HyperSpeed
   - USB PID `0x00B9`
   - Bluetooth PID `0x00BA` (VID `0x068E`)
+- Razer Basilisk V3 35K
+  - USB PID `0x00CB`
 
-This is the only supported device today because it has essentially no useful official Razer configuration support on macOS, and it was the original target for the project.
+Support is transport-specific. A mouse may be supported over USB, Bluetooth, or both, depending on what has been captured, tested, and validated in the app.
+
+Current validated support:
+
+| Device | USB | Bluetooth | Notes |
+|---|---|---|---|
+| Basilisk V3 X HyperSpeed | Yes | Yes | Full core support, with transport-specific limits on some button remaps and lighting features |
+| Basilisk V3 35K | Yes | No | USB support includes DPI, polling rate, lighting zones, and validated button remap coverage |
+
+Unsupported Razer mice still get a best-effort experience when possible. Open Snek will probe for controls that already match known behavior, show a light warning that the device is not fully supported, and avoid exposing UI for features that have not been mapped safely yet.
 
 Support for more devices is welcome. New device support can land either through outside contributors or as more hardware becomes available for capture, testing, and validation.
 

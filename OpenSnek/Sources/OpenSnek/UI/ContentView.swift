@@ -47,8 +47,13 @@ struct ContentView: View {
             )
             .ignoresSafeArea()
 
-            if let selected = appState.selectedDevice, let state = appState.state {
-                DeviceDetailView(appState: appState, selected: selected, state: state)
+            if let selected = appState.selectedDevice {
+                if let state = appState.state,
+                   state.device.id == nil || state.device.id == selected.id {
+                    DeviceDetailView(appState: appState, selected: selected, state: state)
+                } else {
+                    GenericDeviceDetailView(appState: appState, selected: selected)
+                }
             } else {
                 emptyState
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

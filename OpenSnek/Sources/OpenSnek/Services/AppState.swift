@@ -85,6 +85,11 @@ final class AppState {
         return devices.first(where: { $0.id == selectedDeviceID })
     }
 
+    var selectedDeviceProfile: DeviceProfile? {
+        guard let selectedDevice else { return nil }
+        return resolvedProfile(for: selectedDevice)
+    }
+
     var visibleButtonSlots: [ButtonSlotDescriptor] {
         selectedDevice?.button_layout?.visibleSlots ?? buttonSlots
     }
@@ -168,6 +173,38 @@ final class AppState {
 
     func buttonSlotNotice(_ slot: Int) -> String? {
         selectedDevice?.button_layout?.notice(for: slot)
+    }
+
+    func diagnosticsDump(for device: MouseDevice, state explicitState: MouseState? = nil) -> String {
+        let resolvedProfile = resolvedProfile(for: device)
+        let liveState = explicitState ?? stateCacheByDeviceID[device.id] ?? (device.id == selectedDeviceID ? state : nil)
+        var appContextLines: [String] = [
+            "App version: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown")",
+            "Build: \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown")",
+            "Selected device ID: \(selectedDeviceID ?? "none")",
+            "Refreshing state: \(isRefreshingState ? "Yes" : "No")",
+            "Applying changes: \(isApplying ? "Yes" : "No")",
+            "Pending local edits: \(hasPendingLocalEdits ? "Yes" : "No")",
+            "Current status badge: \(currentDeviceStatusIndicator.label)",
+            "Last updated: \(lastUpdated.map(Self.diagnosticsTimestamp) ?? "Unknown")",
+            "Warning: \(warningMessage ?? "None")",
+            "Error: \(errorMessage ?? "None")",
+        ]
+
+        if device.id == selectedDeviceID {
+            appContextLines.append("Editable lighting effect: \(editableLightingEffect.label)")
+            appContextLines.append("Editable lighting zone: \(editableUSBLightingZoneID)")
+            appContextLines.append("Editable button profile: \(editableUSBButtonProfile)")
+            appContextLines.append("Editable color: \(Self.diagnosticsRGB(editableColor))")
+            appContextLines.append("Editable secondary color: \(Self.diagnosticsRGB(editableSecondaryColor))")
+        }
+
+        return DeviceDiagnosticsFormatter.format(
+            device: device,
+            state: liveState,
+            profile: resolvedProfile,
+            appContextLines: appContextLines
+        )
     }
 
     func refreshDevices() async {
@@ -305,6 +342,14 @@ final class AppState {
             device.vendor_id,
             device.product_id,
             device.transport.rawValue
+        )
+    }
+
+    private func resolvedProfile(for device: MouseDevice) -> DeviceProfile? {
+        DeviceProfiles.resolve(
+            vendorID: device.vendor_id,
+            productID: device.product_id,
+            transport: device.transport
         )
     }
 
@@ -1342,6 +1387,16 @@ final class AppState {
 
     static func turboPressesPerSecondToRaw(_ pressesPerSecond: Int) -> Int {
         ButtonBindingSupport.turboPressesPerSecondToRaw(pressesPerSecond)
+    }
+
+    private static func diagnosticsTimestamp(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    private static func diagnosticsRGB(_ color: RGBColor) -> String {
+        String(format: "#%02X%02X%02X", color.r, color.g, color.b)
     }
 }
 

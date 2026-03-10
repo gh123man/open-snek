@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import OpenSnekCore
 
@@ -38,6 +39,7 @@ struct DeviceDetailView: View {
                                 .layoutValue(key: DetailCardMaxWidthLayoutKey.self, value: section == .buttonRemap ? detailContentMaxWidth : detailCardMaxWidth)
                         }
                     }
+                    DiagnosticsFooter(appState: appState, device: selected, state: state)
                 }
                 .frame(width: contentWidth, alignment: .leading)
                 .padding(.horizontal, horizontalPadding)
@@ -278,6 +280,132 @@ struct DeviceOverviewBar: View {
     }
 }
 
+struct GenericDeviceDetailView: View {
+    @Bindable var appState: AppState
+    let selected: MouseDevice
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                GenericDeviceOverviewBar(appState: appState, selected: selected)
+
+                if resolvedProfile == nil {
+                    Card(title: "Limited Support") {
+                        Text(primaryMessage)
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(secondaryMessage)
+                            .hintTextStyle()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            diagnosticRow(label: "Vendor ID", value: String(format: "0x%04X", selected.vendor_id))
+                            diagnosticRow(label: "Product ID", value: String(format: "0x%04X", selected.product_id))
+                            diagnosticRow(label: "Location ID", value: String(format: "0x%08X", selected.location_id))
+                            diagnosticRow(label: "Transport", value: selected.transport.connectionLabel)
+                            diagnosticRow(label: "Resolved profile", value: "None")
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+
+                DiagnosticsFooter(appState: appState, device: selected, state: nil)
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WindowDragBlocker())
+    }
+
+    private var resolvedProfile: DeviceProfile? {
+        DeviceProfiles.resolve(
+            vendorID: selected.vendor_id,
+            productID: selected.product_id,
+            transport: selected.transport
+        )
+    }
+
+    private var primaryMessage: String {
+        "This mouse is not fully supported yet."
+    }
+
+    private var secondaryMessage: String {
+        "Open Snek will show the controls it can verify safely. Use Diagnostics in bug reports so unsupported devices are easier to map."
+    }
+
+    @ViewBuilder
+    private func diagnosticRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.68))
+                .frame(width: 110, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.82))
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct GenericDeviceOverviewBar: View {
+    @Bindable var appState: AppState
+    let selected: MouseDevice
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(selected.product_name)
+                        .font(.system(size: 32, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                    if let serial = selected.serial {
+                        Text("Serial \(serial)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                Pill(
+                    text: selected.connectionLabel,
+                    color: selected.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A)
+                )
+                DeviceStatusBadge(indicator: appState.currentDeviceStatusIndicator)
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(height: 1)
+        }
+    }
+}
+
+struct DiagnosticsFooter: View {
+    @Bindable var appState: AppState
+    let device: MouseDevice
+    let state: MouseState?
+
+    var body: some View {
+        HStack {
+            Spacer()
+            DeviceDiagnosticsButton(appState: appState, device: device, state: state)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 2)
+    }
+}
+
 struct DeviceStatusBadge: View {
     let indicator: DeviceStatusIndicator
 
@@ -302,6 +430,92 @@ struct DeviceStatusBadge: View {
                         .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 )
         )
+    }
+}
+
+struct DeviceDiagnosticsButton: View {
+    @Bindable var appState: AppState
+    let device: MouseDevice
+    let state: MouseState?
+    @State private var showsDiagnostics = false
+
+    var body: some View {
+        Button {
+            showsDiagnostics = true
+        } label: {
+            Label("Diagnostics", systemImage: "doc.text.magnifyingglass")
+                .font(.system(size: 11, weight: .black, design: .rounded))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(.white.opacity(0.2))
+        .sheet(isPresented: $showsDiagnostics) {
+            DeviceDiagnosticsSheet(appState: appState, device: device, state: state)
+        }
+    }
+}
+
+struct DeviceDiagnosticsSheet: View {
+    @Bindable var appState: AppState
+    let device: MouseDevice
+    let state: MouseState?
+    @Environment(\.dismiss) private var dismiss
+
+    private var diagnosticsText: String {
+        appState.diagnosticsDump(for: device, state: state)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Device Diagnostics")
+                        .font(.system(size: 21, weight: .black, design: .rounded))
+                    Text(device.product_name)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Copy") {
+                    copyDiagnostics()
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Done") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Text("Use this dump in bug reports when a device is unsupported, partially supported, or behaving unexpectedly.")
+                .hintTextStyle()
+
+            ScrollView {
+                Text(diagnosticsText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.black.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
+            )
+        }
+        .padding(18)
+        .frame(minWidth: 760, minHeight: 540, alignment: .topLeading)
+    }
+
+    private func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnosticsText, forType: .string)
     }
 }
 

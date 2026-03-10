@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 - USB device-profile support for Razer Basilisk V3 35K (`0x00CB`) in the macOS app and shared Swift support layers, including its own button layout metadata and three-zone USB lighting IDs.
 - `OpenSnekProbe usb-raw`, a generic USB HID feature-report inspector for new-device bring-up and protocol verification.
 - Shared button-slot access metadata now distinguishes editable, protocol-read-only, and software-read-only controls so future device bring-up can document non-remappable buttons explicitly.
+- A per-device Diagnostics sheet in the macOS app, including generic selected-device views, with a copyable text dump of device identity, support profile, topology, capabilities, live state, and current app warnings for bug reports.
 
 ### Fixed
 - USB lighting apply/readback on Basilisk V3 35K now targets all three validated matrix LED zones (`0x01` scroll wheel, `0x04` logo, and `0x0A` underglow) instead of only the wheel zone.
