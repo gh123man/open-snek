@@ -5,7 +5,6 @@ import OpenSnekCore
 struct ContentView: View {
     @Bindable var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
-    @State private var didAutoOpenInputMonitoringSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -36,12 +35,6 @@ struct ContentView: View {
             if phase == .active {
                 Task { await appState.refreshDevices() }
             }
-        }
-        .onChange(of: appState.errorMessage) { _, newValue in
-            guard isInputMonitoringError(newValue) else { return }
-            guard !didAutoOpenInputMonitoringSettings else { return }
-            didAutoOpenInputMonitoringSettings = true
-            openInputMonitoringSettings()
         }
     }
 
