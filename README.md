@@ -10,13 +10,11 @@
 
 ![Screenshot](/docs/media/screenshot.png)
 
-`Open Snek` is a macOS app for configuring supported Razer mice over USB or Bluetooth.
+Open Snek is an open source native macOS app for configuring supported Razer mice over USB or Bluetooth.
 
-It exists because some Razer devices have little or no usable configuration support on macOS.
+## Features
 
-## What It Does
-
-- Changes DPI, stage count, and active stage
+- Change DPI, stage count, and active stage
 - Adjusts supported lighting settings
 - Remaps supported buttons
 - Works over USB and Bluetooth where the device protocol allows it
