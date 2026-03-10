@@ -155,7 +155,14 @@ find_exported_app() {
 notarize_path() {
   local target_path="$1"
   local log_path="$2"
-  xcrun notarytool submit "$target_path" \
+  local submission_path="$target_path"
+  if [[ -d "$target_path" && "$target_path" == *.app ]]; then
+    submission_path="${log_path%.json}.zip"
+    rm -f "$submission_path"
+    ditto -c -k --sequesterRsrc --keepParent "$target_path" "$submission_path"
+  fi
+
+  xcrun notarytool submit "$submission_path" \
     --key "$NOTARY_KEY_PATH" \
     --key-id "$NOTARY_KEY_ID" \
     --issuer "$NOTARY_ISSUER_ID" \
@@ -176,6 +183,7 @@ require_cmd hdiutil
 require_cmd codesign
 require_cmd spctl
 require_cmd xcodegen
+require_cmd ditto
 
 if [[ "$SKIP_SIGN" == true && "$SKIP_NOTARIZE" == false ]]; then
   echo "--skip-sign requires --skip-notarize" >&2
