@@ -51,7 +51,7 @@ Current validated support:
 | Device | USB | Bluetooth | Notes |
 |---|---|---|---|
 | Basilisk V3 X HyperSpeed | Yes | Yes | Full core support, with transport-specific limits on some button remaps and lighting features |
-| Basilisk V3 35K | Yes | No | USB support includes DPI, polling rate, lighting zones, and validated button remap coverage |
+| Basilisk V3 35K | Yes | N/A | USB support includes DPI, polling rate, lighting zones, and validated button remap coverage |
 
 Unsupported Razer mice still get a best-effort experience when possible. Open Snek will probe for controls that already match known behavior, show a light warning that the device is not fully supported, and avoid exposing UI for features that have not been mapped safely yet.
 
