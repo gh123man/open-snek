@@ -86,7 +86,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OpenSnek-release-${{ github.ref_name }}
-          path: OpenSnek/.release
+          path: |
+            OpenSnek/.release/artifacts
+            OpenSnek/.release/logs
           if-no-files-found: error
           include-hidden-files: true
 
