@@ -4,9 +4,35 @@
 
 <h1 align="center">Open Snek</h1>
 
-`OpenSnek` is a native macOS app for configuring supported Razer mice without Synapse over USB or Bluetooth.
+<p align="center">
+  Configure supported Razer mice on macOS without Synapse, Windows, or vendor lock-in.
+</p>
 
 ![Screenshot](/docs/media/screenshot.png)
+
+`OpenSnek` is a native macOS app for configuring supported Razer mice over USB or Bluetooth.
+
+If your mouse has little or no official Razer support on macOS, this is the point of the project: direct device configuration, a real Mac app, and no need to keep a Windows machine around just to change DPI, lighting, or button mappings.
+
+## Why Use Open Snek
+
+- Native macOS app, built specifically for Mac workflows
+- No Razer Synapse dependency
+- No Windows VM, no dual boot, no background cloud account flow
+- Supports both USB and Bluetooth for supported devices
+- Open source, inspectable protocol work, and reproducible builds
+
+## Download and Install
+
+1. Download the latest DMG from [GitHub Releases](https://github.com/gh123man/open-snek/releases).
+2. Open the DMG.
+3. Drag `Open Snek.app` into `Applications`.
+4. Launch `Open Snek`.
+
+If macOS asks for permissions:
+
+- For USB control, grant `Input Monitoring` to `Open Snek` in `System Settings > Privacy & Security`.
+- For Bluetooth control, allow Bluetooth access when prompted.
 
 ## Supported Device
 
@@ -14,7 +40,7 @@
   - USB PID `0x00B9`
   - Bluetooth PID `0x00BA` (VID `0x068E`)
 
-## Quick Start
+## Build From Source
 
 From the repo root:
 
@@ -48,7 +74,7 @@ swift test --package-path OpenSnek
 ./OpenSnek/scripts/generate_xcodeproj.sh --open
 ```
 
-## More
+## Project Docs
 
 - App build, run, probe, and validation details: [OpenSnek/README.md](OpenSnek/README.md)
 - Device support and reverse-engineering workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
