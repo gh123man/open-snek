@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file.
 - Root contribution guide covering new-device onboarding, capture interpretation, and validation expectations.
 
 ### Fixed
+- Fixed a USB DPI-stage parsing regression introduced during the transport-layer split: stage-table reads were decoded one byte off, which corrupted stage values, broke on-mouse stage cycling, and could make the app collapse USB devices into the wrong stage count or single-stage mode.
 - Release DMGs now preserve the macOS asset catalog and app icon in exported `Open Snek.app` bundles.
 - Release packaging now produces a styled drag-to-Applications DMG instead of a plain file-drop image.
 - USB apply flows no longer fail immediately on transient post-write telemetry drops; readback now retries with short backoff and falls back to projected cached state when writes succeeded but immediate readback is temporarily unavailable.

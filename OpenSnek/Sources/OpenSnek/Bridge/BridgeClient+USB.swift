@@ -212,43 +212,11 @@ extension BridgeClient {
 
     func getDPIStageSnapshot(_ session: USBHIDControlSession, _ device: MouseDevice) throws -> USBDpiStageSnapshot? {
         guard let r = try perform(session, device, classID: 0x04, cmdID: 0x86, size: 0x26, allowTxnRescan: true),
-              r[0] == 0x02
+              let snapshot = parseUSBDpiStageSnapshotResponse(r)
         else {
             return nil
         }
-
-        let count = max(1, min(5, Int(r[9])))
-        var values: [Int] = []
-        var stageIDs: [UInt8] = []
-        for i in 0..<count {
-            let off = 10 + (i * 7)
-            guard off + 4 < r.count else { break }
-            let stageID = r[off]
-            let dpi = (Int(r[off + 1]) << 8) | Int(r[off + 2])
-            stageIDs.append(stageID)
-            values.append(max(100, min(30_000, dpi)))
-        }
-
-        if values.isEmpty {
-            return nil
-        }
-
-        while values.count < count {
-            values.append(values.last ?? 800)
-            stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
-        }
-        while values.count < 5 {
-            values.append(values.last ?? 800)
-            stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
-        }
-
-        let activeRaw = Int(r[8])
-        let active = usbResolveStageIndex(activeRaw: activeRaw, stageIDs: Array(stageIDs.prefix(count)), count: count)
-        return (
-            active: active,
-            values: Array(values.prefix(count)),
-            stageIDs: Array(stageIDs.prefix(count))
-        )
+        return snapshot
     }
 
     func usbResolveStageIndex(activeRaw: Int, stageIDs: [UInt8], count: Int) -> Int {
@@ -299,6 +267,47 @@ extension BridgeClient {
 
         guard let r = try perform(session, device, classID: 0x04, cmdID: 0x06, size: 0x26, args: args) else { return false }
         return r[0] == 0x02
+    }
+
+    func parseUSBDpiStageSnapshotResponse(_ response: [UInt8]) -> USBDpiStageSnapshot? {
+        guard response.count >= 12, response[0] == 0x02 else { return nil }
+
+        // USB response layout for 0x04:0x86:
+        //   response[8]  = storage
+        //   response[9]  = active stage ID token
+        //   response[10] = stage count
+        //   response[11...] = stage rows (7 bytes each)
+        let activeRaw = Int(response[9])
+        let count = max(1, min(5, Int(response[10])))
+        var values: [Int] = []
+        var stageIDs: [UInt8] = []
+
+        for index in 0..<count {
+            let offset = 11 + (index * 7)
+            guard offset + 6 < response.count else { break }
+            let stageID = response[offset]
+            let dpi = (Int(response[offset + 1]) << 8) | Int(response[offset + 2])
+            stageIDs.append(stageID)
+            values.append(max(100, min(30_000, dpi)))
+        }
+
+        guard !values.isEmpty else { return nil }
+
+        while values.count < count {
+            values.append(values.last ?? 800)
+            stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
+        }
+
+        let active = usbResolveStageIndex(
+            activeRaw: activeRaw,
+            stageIDs: Array(stageIDs.prefix(count)),
+            count: count
+        )
+        return (
+            active: active,
+            values: Array(values.prefix(count)),
+            stageIDs: Array(stageIDs.prefix(count))
+        )
     }
 
     func getPollRate(_ session: USBHIDControlSession, _ device: MouseDevice) throws -> Int? {
