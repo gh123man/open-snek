@@ -13,7 +13,7 @@ struct OpenSnekApp: App {
         }
 
         Settings {
-            SettingsView()
+            SettingsView(appState: appState)
         }
     }
 }

@@ -207,6 +207,34 @@ final class AppState {
         )
     }
 
+    func githubIssueDiagnosticsPayload() -> String {
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
+        let deviceEntries = devices.map { device in
+            let resolvedProfile = resolvedProfile(for: device)
+            let summary = "\(device.product_name) (\(device.transport.connectionLabel), " +
+                "\(String(format: "0x%04X", device.vendor_id)):\(String(format: "0x%04X", device.product_id)), " +
+                "profile \(resolvedProfile?.id.rawValue ?? "generic"))"
+            let stateForDevice = device.id == selectedDeviceID ? state : stateCacheByDeviceID[device.id]
+            return IssueReportDeviceEntry(
+                title: "\(device.product_name) [\(device.transport.connectionLabel)]",
+                summary: summary,
+                diagnostics: diagnosticsDump(for: device, state: stateForDevice)
+            )
+        }
+
+        return IssueReportFormatter.format(
+            appVersion: appVersion,
+            build: build,
+            logLevel: AppLog.currentLevel.label,
+            logPath: AppLog.path,
+            selectedDevice: selectedDevice.map { "\($0.product_name) [\($0.transport.connectionLabel)]" },
+            warning: warningMessage,
+            error: errorMessage,
+            devices: deviceEntries
+        )
+    }
+
     func refreshDevices() async {
         let start = Date()
         AppLog.event("AppState", "refreshDevices start")

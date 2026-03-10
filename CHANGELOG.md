@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - `OpenSnekProbe usb-raw`, a generic USB HID feature-report inspector for new-device bring-up and protocol verification.
 - Shared button-slot access metadata now distinguishes editable, protocol-read-only, and software-read-only controls so future device bring-up can document non-remappable buttons explicitly.
 - A per-device Diagnostics sheet in the macOS app, including generic selected-device views, with a copyable text dump of device identity, support profile, topology, capabilities, live state, and current app warnings for bug reports.
+- A GitHub-ready diagnostics payload flow in Settings, plus a bug-report issue template that tells users how to generate and paste that payload.
 
 ### Fixed
 - USB lighting apply/readback on Basilisk V3 35K now targets all three validated matrix LED zones (`0x01` scroll wheel, `0x04` logo, and `0x0A` underglow) instead of only the wheel zone.
