@@ -271,6 +271,12 @@ private final class SnapshotTestRemoteBackend: DeviceBackend {
     func listDevices() async throws -> [MouseDevice] { [] }
     func readState(device _: MouseDevice) async throws -> MouseState { throw SnapshotBackendError.unimplemented }
     func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? { nil }
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool { false }
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
     func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState { throw SnapshotBackendError.unimplemented }
     func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { nil }
     func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? { nil }

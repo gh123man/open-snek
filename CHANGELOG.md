@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file.
 ## [2026-03-12]
 
 ### Fixed
+- On the validated Basilisk V3 Pro USB path (`0x00AB`), Open Snek now listens for the mouse's passive DPI input report and applies those updates to cached state immediately, removing the old 200 ms fast-poll lag for on-device DPI changes while keeping the slower full USB state poll for other controls.
+- The bridge now keeps its HID discovery manager alive while the app is running, which lets the Basilisk V3 Pro USB passive DPI listener continue receiving live input reports after device discovery instead of going silent once enumeration finished.
+- USB fast DPI polling now stays enabled until that passive Basilisk V3 Pro input report is actually observed at runtime, preventing a regression to the slower full-state poll when macOS registers the listener but does not deliver live HID events.
+- When the background service is driving the UI, interactive USB fast DPI polling now falls back to the service's selected device if a remote-client presence ping arrives without an explicit selected-device ID, preventing another regression to the slower 2-second full-state refresh.
 - Reduced idle background-service CPU usage by stopping redundant 200 ms runtime wakeups and avoiding unnecessary remote-client-presence state churn that kept the menu bar UI relayout path active even when the service was idle.
 - When the background service is already running, clicking the Dock icon or otherwise reopening the app now hands off to a real windowed app instance instead of leaving the accessory-only service process active with no visible UI.
 - Choosing `Quit` from the menu bar service now closes both the compact service and any open full app window instances, instead of only terminating the service process.
@@ -24,6 +28,7 @@ All notable changes to this project are documented in this file.
 - The full app now adopts an already-running menu bar service as its hardware backend even if local service preferences are stale, preventing dual-process USB/HID contention when the compact widget and main window are open at the same time.
 
 ### Changed
+- `OpenSnekProbe` now includes `usb-input-listen` and `usb-input-values` so USB HID bring-up can capture raw input-report and HID-value callback traffic across every exposed Razer USB interface, which made it possible to confirm that the attached Basilisk V3 Pro still produces zero macOS HID callbacks during live DPI-cycle probing on this host.
 - The menu bar widget now includes a device picker when multiple supported mice are connected, and the service tracks active selections per UI so only the devices currently in use get the faster interactive DPI polling path.
 - The menu bar device picker now follows the last device with meaningful DPI/config activity in the service process, so the compact UI shifts to whichever mouse was just touched without forcing the full app to change selection.
 

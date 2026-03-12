@@ -10,6 +10,7 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.supportedLightingEffects, [.off, .staticColor, .spectrum, .wave, .reactive, .pulseRandom, .pulseSingle, .pulseDual])
         XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01])
         XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel"])
+        XCTAssertNil(profile?.usbPassiveDPIInput)
         XCTAssertEqual(profile?.onboardProfileCount, 1)
     }
 
@@ -27,6 +28,7 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.supportedLightingEffects, [.off, .staticColor, .spectrum, .wave])
         XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01, 0x04, 0x0A])
         XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel", "logo", "underglow"])
+        XCTAssertNil(profile?.usbPassiveDPIInput)
         XCTAssertEqual(profile?.onboardProfileCount, 5)
     }
 
@@ -43,6 +45,10 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.supportedLightingEffects, [.off, .staticColor, .spectrum, .wave])
         XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01, 0x04, 0x0A])
         XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel", "logo", "underglow"])
+        XCTAssertEqual(profile?.usbPassiveDPIInput?.usagePage, 0x01)
+        XCTAssertEqual(profile?.usbPassiveDPIInput?.usage, 0x06)
+        XCTAssertEqual(profile?.usbPassiveDPIInput?.reportID, 0x05)
+        XCTAssertEqual(profile?.usbPassiveDPIInput?.subtype, 0x02)
         XCTAssertEqual(profile?.onboardProfileCount, 3)
     }
 
@@ -54,6 +60,7 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.buttonLayout.access(for: 6), .softwareReadOnly)
         XCTAssertEqual(profile?.buttonLayout.softwareReadOnlySlots.map(\.slot), [6])
         XCTAssertEqual(profile?.supportsAdvancedLightingEffects, false)
+        XCTAssertNil(profile?.usbPassiveDPIInput)
         XCTAssertEqual(profile?.onboardProfileCount, 1)
     }
 

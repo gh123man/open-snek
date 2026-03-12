@@ -42,6 +42,63 @@ enum OpenSnekProbe {
         case "usb-info":
             let usb = try USBProbeClient(productID: try parseOptionalUSBPID(Array(args.dropFirst())))
             print("usb \(usb.describe())")
+        case "usb-input-listen":
+            let parsed = try parseUSBInputListenArgs(Array(args.dropFirst()))
+            let probe = try USBInputReportProbe(productID: parsed.productID)
+            print("usb-input-listen candidates=\(probe.candidateCount) duration=\(String(format: "%.1f", parsed.durationSeconds))s")
+            for line in probe.describeCandidates() {
+                print(line)
+            }
+            let reportCount = try await probe.capture(
+                duration: parsed.durationSeconds,
+                maxReports: parsed.maxReports
+            ) { event in
+                let hex = event.report.map { String(format: "%02x", $0) }.joined(separator: " ")
+                let passiveNote: String
+                if let passive = event.passiveDPI {
+                    passiveNote = " passiveDpi=\(passive.dpiX)x\(passive.dpiY)"
+                } else {
+                    passiveNote = ""
+                }
+                print(
+                    String(
+                        format: "[+%.3fs] candidate[%d] usage=%@ input=%d feature=%d report[%d]=%@%@",
+                        event.elapsedSeconds,
+                        event.candidateIndex,
+                        event.usageLabel,
+                        event.maxInputReportSize,
+                        event.maxFeatureReportSize,
+                        event.report.count,
+                        hex,
+                        passiveNote
+                    )
+                )
+            }
+            print("usb-input-listen complete reports=\(reportCount)")
+        case "usb-input-values":
+            let parsed = try parseUSBInputListenArgs(Array(args.dropFirst()))
+            let probe = try USBInputValueProbe(productID: parsed.productID)
+            print("usb-input-values candidates=\(probe.candidateCount) duration=\(String(format: "%.1f", parsed.durationSeconds))s")
+            for line in probe.describeCandidates() {
+                print(line)
+            }
+            let eventCount = try await probe.capture(
+                duration: parsed.durationSeconds,
+                maxEvents: parsed.maxReports
+            ) { event in
+                print(
+                    String(
+                        format: "[+%.3fs] candidate[%d] deviceUsage=%@ element=%@ reportID=%d value=%d",
+                        event.elapsedSeconds,
+                        event.candidateIndex,
+                        event.deviceUsageLabel,
+                        event.elementUsageLabel,
+                        event.reportID,
+                        event.integerValue
+                    )
+                )
+            }
+            print("usb-input-values complete events=\(eventCount)")
         case "usb-button-read":
             let parsed = try parseUSBButtonReadArgs(Array(args.dropFirst()))
             let usb = try USBProbeClient(productID: parsed.productID)
@@ -126,6 +183,8 @@ enum OpenSnekProbe {
           OpenSnekProbe dpi-set --values 1600,6400 [--active 1] [--verify-retries 6] [--verify-delay-ms 120]
           OpenSnekProbe dpi-cycle --sequence 800,6400;1600,6400 --loops 10 [--active 1] [--sleep-ms 120]
           OpenSnekProbe usb-info [--pid 0x00ab]
+          OpenSnekProbe usb-input-listen [--pid 0x00ab] [--duration 15] [--max-reports 0]
+          OpenSnekProbe usb-input-values [--pid 0x00ab] [--duration 15] [--max-reports 0]
           OpenSnekProbe usb-button-read --slot 4 [--profile default|direct|both] [--pid 0x00ab]
           OpenSnekProbe usb-button-set --slot 4 --kind right_click [--profile both] [--hid-key 4] [--turbo on|off] [--turbo-rate 142] [--clutch-dpi 400] [--pid 0x00ab]
           OpenSnekProbe usb-button-set-raw --slot 4 --hex 01010200000000 [--profile default|direct|both] [--pid 0x00ab]
@@ -212,6 +271,14 @@ enum OpenSnekProbe {
         }
         let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01, 0x00])
         return (slot, functionBlock, profiles, try parseOptionalUSBPID(args))
+    }
+
+    private static func parseUSBInputListenArgs(_ args: [String]) throws -> (durationSeconds: TimeInterval, maxReports: Int?, productID: Int?) {
+        let flags = parseFlags(args)
+        let durationSeconds = max(0.5, Double(flags["--duration"] ?? "15") ?? 15.0)
+        let maxReportsRaw = max(0, Int(flags["--max-reports"] ?? "0") ?? 0)
+        let maxReports = maxReportsRaw > 0 ? maxReportsRaw : nil
+        return (durationSeconds, maxReports, try parseOptionalUSBPID(args))
     }
 
     private static func parseUSBRawArgs(_ args: [String]) throws -> (classID: UInt8, cmdID: UInt8, size: UInt8, args: [UInt8], noTxnRescan: Bool, responseAttempts: Int, responseDelayUs: useconds_t, productID: Int?) {

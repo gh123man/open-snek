@@ -117,6 +117,31 @@ public struct USBLightingZoneDescriptor: Identifiable, Hashable, Codable, Sendab
     }
 }
 
+public struct USBPassiveDPIInputDescriptor: Hashable, Codable, Sendable {
+    public let usagePage: Int
+    public let usage: Int
+    public let reportID: UInt8
+    public let subtype: UInt8
+    public let minInputReportSize: Int
+    public let maxFeatureReportSize: Int?
+
+    public init(
+        usagePage: Int,
+        usage: Int,
+        reportID: UInt8,
+        subtype: UInt8,
+        minInputReportSize: Int,
+        maxFeatureReportSize: Int? = nil
+    ) {
+        self.usagePage = usagePage
+        self.usage = usage
+        self.reportID = reportID
+        self.subtype = subtype
+        self.minInputReportSize = max(1, minInputReportSize)
+        self.maxFeatureReportSize = maxFeatureReportSize
+    }
+}
+
 public struct ButtonBindingDraft: Hashable, Codable, Sendable {
     public var kind: ButtonBindingKind
     public var hidKey: Int
@@ -143,6 +168,7 @@ public struct DeviceProfile: Hashable, Sendable {
     public let supportedLightingEffects: [LightingEffectKind]
     public let usbLightingLEDIDs: [UInt8]
     public let usbLightingZones: [USBLightingZoneDescriptor]
+    public let usbPassiveDPIInput: USBPassiveDPIInputDescriptor?
     public let onboardProfileCount: Int
 
     public init(
@@ -155,6 +181,7 @@ public struct DeviceProfile: Hashable, Sendable {
         supportedLightingEffects: [LightingEffectKind] = LightingEffectKind.allCases,
         usbLightingLEDIDs: [UInt8] = [],
         usbLightingZones: [USBLightingZoneDescriptor] = [],
+        usbPassiveDPIInput: USBPassiveDPIInputDescriptor? = nil,
         onboardProfileCount: Int = 1
     ) {
         self.id = id
@@ -166,6 +193,7 @@ public struct DeviceProfile: Hashable, Sendable {
         self.supportedLightingEffects = supportedLightingEffects
         self.usbLightingLEDIDs = usbLightingLEDIDs
         self.usbLightingZones = usbLightingZones
+        self.usbPassiveDPIInput = usbPassiveDPIInput
         self.onboardProfileCount = max(1, onboardProfileCount)
     }
 
@@ -313,6 +341,13 @@ public enum DeviceProfiles {
         supportedLightingEffects: basiliskV335KUSBLightingEffects,
         usbLightingLEDIDs: [0x01, 0x04, 0x0A],
         usbLightingZones: basiliskV335KUSBLightingZones,
+        usbPassiveDPIInput: USBPassiveDPIInputDescriptor(
+            usagePage: 0x01,
+            usage: 0x06,
+            reportID: 0x05,
+            subtype: 0x02,
+            minInputReportSize: 5
+        ),
         onboardProfileCount: 3
     )
 

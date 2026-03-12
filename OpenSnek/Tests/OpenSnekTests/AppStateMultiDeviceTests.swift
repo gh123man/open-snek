@@ -121,6 +121,52 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertTrue(expiredDeviceIDs.isEmpty)
     }
 
+    func testRemotePresenceWithoutSelectedDeviceFallsBackToServiceSelectionForFastPolling() async {
+        let suiteName = "AppStateMultiDeviceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let appState = await MainActor.run {
+            AppState(launchRole: .service, serviceCoordinator: coordinator, autoStart: false)
+        }
+        let alphaDevice = makeTestDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .usb,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let now = Date(timeIntervalSince1970: 1_773_400_050)
+
+        await MainActor.run {
+            appState.devices = [alphaDevice, betaDevice]
+            appState.selectedDeviceID = betaDevice.id
+            appState.recordRemoteClientPresence(
+                CrossProcessClientPresence(sourceProcessID: 41, selectedDeviceID: nil),
+                now: now
+            )
+        }
+
+        let activeProfile = await MainActor.run { appState.pollingProfile(at: now) }
+        let activeDeviceIDs = await MainActor.run { appState.activeFastPollingDeviceIDs(at: now) }
+
+        XCTAssertEqual(activeProfile, .serviceInteractive)
+        XCTAssertEqual(activeDeviceIDs, [betaDevice.id])
+    }
+
     func testServiceFastPollingUnionIncludesLocalAndRemoteSelections() async {
         let suiteName = "AppStateMultiDeviceTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -339,6 +385,16 @@ private actor MultiDeviceStubBackend: DeviceBackend {
 
     func readDpiStagesFast(device: MouseDevice) async throws -> DpiFastSnapshot? {
         fastByDeviceID[device.id]
+    }
+
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
+        true
+    }
+
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
     }
 
     func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState {

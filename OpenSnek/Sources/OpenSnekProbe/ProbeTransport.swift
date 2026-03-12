@@ -28,8 +28,131 @@ struct DpiSnapshot: Equatable {
     var values: [Int] { Array(slots.prefix(count)) }
 }
 
+private struct USBProbeDeviceCandidate: @unchecked Sendable {
+    let index: Int
+    let device: IOHIDDevice
+    let devicePointer: UInt
+    let deviceID: String
+    let productID: Int
+    let productName: String
+    let locationID: Int
+    let usagePage: Int
+    let usage: Int
+    let maxInputReportSize: Int
+    let maxFeatureReportSize: Int
+    let score: Int
+    let passiveDescriptor: USBPassiveDPIInputDescriptor?
+
+    var usageLabel: String {
+        String(format: "0x%02x:0x%02x", usagePage, usage)
+    }
+
+    func describe() -> String {
+        String(
+            format: "candidate[%d] %@ pid=0x%04x loc=0x%08x usage=%@ input=%d feature=%d score=%d name=%@",
+            index,
+            deviceID,
+            productID,
+            locationID,
+            usageLabel,
+            maxInputReportSize,
+            maxFeatureReportSize,
+            score,
+            productName
+        )
+    }
+}
+
+private func enumerateUSBProbeCandidates(preferredProductID: Int? = nil) throws -> (manager: IOHIDManager, candidates: [USBProbeDeviceCandidate]) {
+    let usbVID = 0x1532
+    let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: usbVID] as CFDictionary)
+    let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+    guard openResult == kIOReturnSuccess else {
+        throw ProbeError.protocolError("IOHIDManagerOpen failed (\(openResult))")
+    }
+
+    guard
+        let rawSet = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
+        !rawSet.isEmpty
+    else {
+        throw ProbeError.protocolError("No USB Razer HID device found")
+    }
+
+    var gathered: [(device: IOHIDDevice, deviceID: String, productID: Int, productName: String, locationID: Int, usagePage: Int, usage: Int, maxInputReportSize: Int, maxFeatureReportSize: Int, score: Int, passiveDescriptor: USBPassiveDPIInputDescriptor?)] = []
+    for candidate in rawSet {
+        guard
+            USBHIDSupport.intProperty(candidate, key: kIOHIDVendorIDKey as CFString) == usbVID,
+            let product = USBHIDSupport.intProperty(candidate, key: kIOHIDProductIDKey as CFString)
+        else { continue }
+        if let preferredProductID, product != preferredProductID { continue }
+
+        let transport = (USBHIDSupport.stringProperty(candidate, key: kIOHIDTransportKey as CFString) ?? "").lowercased()
+        if transport.contains("bluetooth") { continue }
+
+        let locationID = USBHIDSupport.intProperty(candidate, key: kIOHIDLocationIDKey as CFString) ?? 0
+        let deviceID = String(format: "%04x:%04x:%08x:usb", usbVID, product, locationID)
+        let usagePage = USBHIDSupport.intProperty(candidate, key: kIOHIDPrimaryUsagePageKey as CFString) ?? 0
+        let usage = USBHIDSupport.intProperty(candidate, key: kIOHIDPrimaryUsageKey as CFString) ?? 0
+        let maxInputReportSize = USBHIDSupport.intProperty(candidate, key: kIOHIDMaxInputReportSizeKey as CFString) ?? 0
+        let maxFeatureReportSize = USBHIDSupport.intProperty(candidate, key: kIOHIDMaxFeatureReportSizeKey as CFString) ?? 0
+        let score = USBHIDSupport.handlePreferenceScore(device: candidate)
+        let productName = USBHIDSupport.stringProperty(candidate, key: kIOHIDProductKey as CFString) ?? "Razer HID Device"
+        let passiveDescriptor = DeviceProfiles.resolve(vendorID: usbVID, productID: product, transport: .usb)?.usbPassiveDPIInput
+
+        gathered.append((
+            device: candidate,
+            deviceID: deviceID,
+            productID: product,
+            productName: productName,
+            locationID: locationID,
+            usagePage: usagePage,
+            usage: usage,
+            maxInputReportSize: maxInputReportSize,
+            maxFeatureReportSize: maxFeatureReportSize,
+            score: score,
+            passiveDescriptor: passiveDescriptor
+        ))
+    }
+
+    guard !gathered.isEmpty else {
+        if let preferredProductID {
+            throw ProbeError.protocolError(
+                "No non-Bluetooth USB Razer HID interface found for pid 0x\(String(format: "%04x", preferredProductID))"
+            )
+        }
+        throw ProbeError.protocolError("No non-Bluetooth USB Razer HID interface found")
+    }
+
+    let sorted = gathered.sorted { lhs, rhs in
+        if lhs.score != rhs.score { return lhs.score > rhs.score }
+        if lhs.usagePage != rhs.usagePage { return lhs.usagePage < rhs.usagePage }
+        if lhs.usage != rhs.usage { return lhs.usage < rhs.usage }
+        if lhs.maxInputReportSize != rhs.maxInputReportSize { return lhs.maxInputReportSize > rhs.maxInputReportSize }
+        return lhs.maxFeatureReportSize > rhs.maxFeatureReportSize
+    }
+
+    let candidates = sorted.enumerated().map { index, candidate in
+        USBProbeDeviceCandidate(
+            index: index,
+            device: candidate.device,
+            devicePointer: UInt(bitPattern: Unmanaged.passUnretained(candidate.device).toOpaque()),
+            deviceID: candidate.deviceID,
+            productID: candidate.productID,
+            productName: candidate.productName,
+            locationID: candidate.locationID,
+            usagePage: candidate.usagePage,
+            usage: candidate.usage,
+            maxInputReportSize: candidate.maxInputReportSize,
+            maxFeatureReportSize: candidate.maxFeatureReportSize,
+            score: candidate.score,
+            passiveDescriptor: candidate.passiveDescriptor
+        )
+    }
+    return (manager, candidates)
+}
+
 final class USBProbeClient {
-    private let usbVID = 0x1532
     private let manager: IOHIDManager
     private let session: USBHIDControlSession
     private let deviceID: String
@@ -37,52 +160,16 @@ final class USBProbeClient {
     private let profileID: DeviceProfileID?
 
     init(productID preferredProductID: Int? = nil) throws {
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: usbVID] as CFDictionary)
-        let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard openResult == kIOReturnSuccess else {
-            throw ProbeError.protocolError("IOHIDManagerOpen failed (\(openResult))")
-        }
-
-        guard
-            let rawSet = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
-            !rawSet.isEmpty
-        else {
-            throw ProbeError.protocolError("No USB Razer HID device found")
-        }
-
-        var best: (score: Int, device: IOHIDDevice, id: String, pid: Int)?
-        for candidate in rawSet {
-            guard
-                USBHIDSupport.intProperty(candidate, key: kIOHIDVendorIDKey as CFString) == usbVID,
-                let product = USBHIDSupport.intProperty(candidate, key: kIOHIDProductIDKey as CFString)
-            else { continue }
-            if let preferredProductID, product != preferredProductID { continue }
-            let transport = (USBHIDSupport.stringProperty(candidate, key: kIOHIDTransportKey as CFString) ?? "").lowercased()
-            if transport.contains("bluetooth") { continue }
-
-            let location = USBHIDSupport.intProperty(candidate, key: kIOHIDLocationIDKey as CFString) ?? 0
-            let id = String(format: "%04x:%04x:%08x:usb", usbVID, product, location)
-            let score = USBHIDSupport.handlePreferenceScore(device: candidate)
-            if best == nil || score > best!.score {
-                best = (score: score, device: candidate, id: id, pid: product)
-            }
-        }
-
-        guard let best else {
-            if let preferredProductID {
-                throw ProbeError.protocolError(
-                    "No non-Bluetooth USB Razer HID control interface found for pid 0x\(String(format: "%04x", preferredProductID))"
-                )
-            }
+        let enumeration = try enumerateUSBProbeCandidates(preferredProductID: preferredProductID)
+        guard let best = enumeration.candidates.first else {
             throw ProbeError.protocolError("No non-Bluetooth USB Razer HID control interface found")
         }
 
-        self.manager = manager
-        self.session = USBHIDControlSession(device: best.device, deviceID: best.id)
-        self.deviceID = best.id
-        self.productID = best.pid
-        self.profileID = DeviceProfiles.resolve(vendorID: usbVID, productID: best.pid, transport: .usb)?.id
+        self.manager = enumeration.manager
+        self.session = USBHIDControlSession(device: best.device, deviceID: best.deviceID)
+        self.deviceID = best.deviceID
+        self.productID = best.productID
+        self.profileID = DeviceProfiles.resolve(vendorID: 0x1532, productID: best.productID, transport: .usb)?.id
     }
 
     func describe() -> String {
@@ -181,6 +268,512 @@ final class USBProbeClient {
             responseAttempts: responseAttempts,
             responseDelayUs: responseDelayUs
         )
+    }
+}
+
+struct USBInputReportEvent: Sendable {
+    let candidateIndex: Int
+    let usagePage: Int
+    let usage: Int
+    let maxInputReportSize: Int
+    let maxFeatureReportSize: Int
+    let report: [UInt8]
+    let elapsedSeconds: Double
+    let passiveDPI: USBPassiveDPIReading?
+
+    var usageLabel: String {
+        String(format: "0x%02x:0x%02x", usagePage, usage)
+    }
+}
+
+final class USBInputReportProbe: @unchecked Sendable {
+    private final class CallbackContext {
+        let emit: @Sendable ([UInt8]) -> Void
+
+        init(emit: @escaping @Sendable ([UInt8]) -> Void) {
+            self.emit = emit
+        }
+    }
+
+    private struct Registration {
+        let device: IOHIDDevice
+        let buffer: UnsafeMutablePointer<UInt8>
+        let bufferLength: CFIndex
+        let context: UnsafeMutableRawPointer
+    }
+
+    private let manager: IOHIDManager
+    private let candidates: [USBProbeDeviceCandidate]
+    private let queue = DispatchQueue(label: "open.snek.probe.usb-input")
+    private let runLoopStateLock = NSLock()
+    private let reportCountLock = NSLock()
+    private var runLoop: CFRunLoop?
+    private var thread: Thread?
+    private var keepAlivePort: Port?
+    private var registrationsByIndex: [Int: Registration] = [:]
+    private var captureStartedAt: Date = .distantPast
+    private var reportCount = 0
+
+    var candidateCount: Int { candidates.count }
+
+    init(productID preferredProductID: Int? = nil) throws {
+        let enumeration = try enumerateUSBProbeCandidates(preferredProductID: preferredProductID)
+        self.manager = enumeration.manager
+        self.candidates = enumeration.candidates
+    }
+
+    deinit {
+        stopSynchronously()
+        IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+    }
+
+    func describeCandidates() -> [String] {
+        candidates.map { $0.describe() }
+    }
+
+    func capture(
+        duration: TimeInterval,
+        maxReports: Int? = nil,
+        onReport: @escaping @Sendable (USBInputReportEvent) -> Void
+    ) async throws -> Int {
+        try await start(onReport: onReport)
+        defer { stopSynchronously() }
+
+        let deadline = Date().addingTimeInterval(max(0.1, duration))
+        while Date() < deadline {
+            if let maxReports, currentReportCount() >= maxReports {
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        return currentReportCount()
+    }
+
+    private func start(onReport: @escaping @Sendable (USBInputReportEvent) -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                self.ensureRunLoopLocked()
+                self.performOnRunLoopLocked {
+                    self.removeAllRegistrations()
+                    self.captureStartedAt = Date()
+                    self.resetReportCount()
+
+                    for candidate in self.candidates {
+                        _ = self.addRegistration(candidate: candidate, onReport: onReport)
+                    }
+
+                    if self.registrationsByIndex.isEmpty {
+                        continuation.resume(throwing: ProbeError.protocolError("Failed to register any USB input-report callbacks"))
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
+    private func ensureRunLoopLocked() {
+        runLoopStateLock.lock()
+        if runLoop != nil {
+            runLoopStateLock.unlock()
+            return
+        }
+        runLoopStateLock.unlock()
+
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [weak self] in
+            guard let self else {
+                ready.signal()
+                return
+            }
+
+            let keepAlivePort = Port()
+            RunLoop.current.add(keepAlivePort, forMode: .default)
+            let currentRunLoop = CFRunLoopGetCurrent()
+
+            self.runLoopStateLock.lock()
+            self.keepAlivePort = keepAlivePort
+            self.runLoop = currentRunLoop
+            self.runLoopStateLock.unlock()
+            ready.signal()
+
+            while !Thread.current.isCancelled {
+                let _: Void = autoreleasepool {
+                    CFRunLoopRunInMode(CFRunLoopMode.defaultMode, 1.0, false)
+                }
+            }
+        }
+        thread.name = "open.snek.probe.usb-input"
+        runLoopStateLock.lock()
+        self.thread = thread
+        runLoopStateLock.unlock()
+        thread.start()
+        ready.wait()
+    }
+
+    private func performOnRunLoopLocked(_ block: @escaping () -> Void) {
+        guard let runLoop else {
+            block()
+            return
+        }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue, block)
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    private func addRegistration(
+        candidate: USBProbeDeviceCandidate,
+        onReport: @escaping @Sendable (USBInputReportEvent) -> Void
+    ) -> Bool {
+        let openResult = IOHIDDeviceOpen(candidate.device, IOOptionBits(kIOHIDOptionsTypeNone))
+        guard openResult == kIOReturnSuccess else { return false }
+
+        let reportLength = max(1, candidate.maxInputReportSize)
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: reportLength)
+        buffer.initialize(repeating: 0, count: reportLength)
+
+        let captureStartedAt = self.captureStartedAt
+        let contextBox = CallbackContext { [weak self] report in
+            guard let self else { return }
+            let observedAt = Date()
+            let passiveDPI = candidate.passiveDescriptor.flatMap {
+                USBPassiveDPIParser.parse(report: report, descriptor: $0)
+            }
+            self.incrementReportCount()
+            onReport(
+                USBInputReportEvent(
+                    candidateIndex: candidate.index,
+                    usagePage: candidate.usagePage,
+                    usage: candidate.usage,
+                    maxInputReportSize: candidate.maxInputReportSize,
+                    maxFeatureReportSize: candidate.maxFeatureReportSize,
+                    report: report,
+                    elapsedSeconds: observedAt.timeIntervalSince(captureStartedAt),
+                    passiveDPI: passiveDPI
+                )
+            )
+        }
+        let context = UnsafeMutableRawPointer(Unmanaged.passRetained(contextBox).toOpaque())
+
+        IOHIDDeviceScheduleWithRunLoop(candidate.device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDDeviceRegisterInputReportCallback(
+            candidate.device,
+            buffer,
+            CFIndex(reportLength),
+            Self.inputReportCallback,
+            context
+        )
+
+        registrationsByIndex[candidate.index] = Registration(
+            device: candidate.device,
+            buffer: buffer,
+            bufferLength: CFIndex(reportLength),
+            context: context
+        )
+        return true
+    }
+
+    private func removeAllRegistrations() {
+        for index in Array(registrationsByIndex.keys) {
+            removeRegistration(index: index)
+        }
+    }
+
+    private func removeRegistration(index: Int) {
+        guard let registration = registrationsByIndex.removeValue(forKey: index) else { return }
+        IOHIDDeviceUnscheduleFromRunLoop(
+            registration.device,
+            CFRunLoopGetCurrent(),
+            CFRunLoopMode.defaultMode.rawValue
+        )
+        IOHIDDeviceClose(registration.device, IOOptionBits(kIOHIDOptionsTypeNone))
+        registration.buffer.deinitialize(count: Int(registration.bufferLength))
+        registration.buffer.deallocate()
+        Unmanaged<CallbackContext>.fromOpaque(registration.context).release()
+    }
+
+    private func stopSynchronously() {
+        let stopped = DispatchSemaphore(value: 0)
+        queue.async {
+            guard self.runLoop != nil || !self.registrationsByIndex.isEmpty else {
+                stopped.signal()
+                return
+            }
+            self.performOnRunLoopLocked {
+                self.removeAllRegistrations()
+                self.runLoopStateLock.lock()
+                let runLoop = self.runLoop
+                let thread = self.thread
+                self.keepAlivePort = nil
+                self.runLoop = nil
+                self.thread = nil
+                self.runLoopStateLock.unlock()
+                thread?.cancel()
+                if let runLoop {
+                    CFRunLoopStop(runLoop)
+                    CFRunLoopWakeUp(runLoop)
+                }
+                stopped.signal()
+            }
+        }
+        stopped.wait()
+    }
+
+    private func resetReportCount() {
+        reportCountLock.lock()
+        reportCount = 0
+        reportCountLock.unlock()
+    }
+
+    private func incrementReportCount() {
+        reportCountLock.lock()
+        reportCount += 1
+        reportCountLock.unlock()
+    }
+
+    private func currentReportCount() -> Int {
+        reportCountLock.lock()
+        let count = reportCount
+        reportCountLock.unlock()
+        return count
+    }
+
+    private static let inputReportCallback: IOHIDReportCallback = { context, result, _, reportType, _, report, reportLength in
+        guard result == kIOReturnSuccess, reportType == kIOHIDReportTypeInput, let context else { return }
+        let callbackContext = Unmanaged<CallbackContext>.fromOpaque(context).takeUnretainedValue()
+        let bytes = Array(UnsafeBufferPointer(start: report, count: max(0, reportLength)))
+        callbackContext.emit(bytes)
+    }
+}
+
+struct USBInputValueEvent: Sendable {
+    let candidateIndex: Int
+    let deviceUsagePage: Int
+    let deviceUsage: Int
+    let elementUsagePage: Int
+    let elementUsage: Int
+    let reportID: Int
+    let integerValue: Int
+    let elapsedSeconds: Double
+
+    var deviceUsageLabel: String {
+        String(format: "0x%02x:0x%02x", deviceUsagePage, deviceUsage)
+    }
+
+    var elementUsageLabel: String {
+        String(format: "0x%04x:0x%04x", elementUsagePage, elementUsage)
+    }
+}
+
+final class USBInputValueProbe: @unchecked Sendable {
+    private final class CallbackContext {
+        let emit: @Sendable (IOHIDValue, UInt?) -> Void
+
+        init(emit: @escaping @Sendable (IOHIDValue, UInt?) -> Void) {
+            self.emit = emit
+        }
+    }
+
+    private let manager: IOHIDManager
+    private let candidates: [USBProbeDeviceCandidate]
+    private let candidateByPointer: [UInt: USBProbeDeviceCandidate]
+    private let queue = DispatchQueue(label: "open.snek.probe.usb-value")
+    private let runLoopStateLock = NSLock()
+    private let eventCountLock = NSLock()
+    private var runLoop: CFRunLoop?
+    private var thread: Thread?
+    private var keepAlivePort: Port?
+    private var callbackContext: UnsafeMutableRawPointer?
+    private var captureStartedAt: Date = .distantPast
+    private var eventCount = 0
+
+    var candidateCount: Int { candidates.count }
+
+    init(productID preferredProductID: Int? = nil) throws {
+        let enumeration = try enumerateUSBProbeCandidates(preferredProductID: preferredProductID)
+        self.manager = enumeration.manager
+        self.candidates = enumeration.candidates
+        self.candidateByPointer = Dictionary(uniqueKeysWithValues: enumeration.candidates.map { ($0.devicePointer, $0) })
+    }
+
+    deinit {
+        stopSynchronously()
+        IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+    }
+
+    func describeCandidates() -> [String] {
+        candidates.map { $0.describe() }
+    }
+
+    func capture(
+        duration: TimeInterval,
+        maxEvents: Int? = nil,
+        onValue: @escaping @Sendable (USBInputValueEvent) -> Void
+    ) async throws -> Int {
+        try await start(onValue: onValue)
+        defer { stopSynchronously() }
+
+        let deadline = Date().addingTimeInterval(max(0.1, duration))
+        while Date() < deadline {
+            if let maxEvents, currentEventCount() >= maxEvents {
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        return currentEventCount()
+    }
+
+    private func start(onValue: @escaping @Sendable (USBInputValueEvent) -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                self.ensureRunLoopLocked()
+                self.performOnRunLoopLocked {
+                    self.stopManagerCallbackOnRunLoop()
+                    self.captureStartedAt = Date()
+                    self.resetEventCount()
+
+                    let captureStartedAt = self.captureStartedAt
+                    let candidateByPointer = self.candidateByPointer
+                    let contextBox = CallbackContext { [weak self] value, senderPointer in
+                        guard let self,
+                              let senderPointer,
+                              let candidate = candidateByPointer[senderPointer] else { return }
+                        let element = IOHIDValueGetElement(value)
+                        let observedAt = Date()
+                        self.incrementEventCount()
+                        onValue(
+                            USBInputValueEvent(
+                                candidateIndex: candidate.index,
+                                deviceUsagePage: candidate.usagePage,
+                                deviceUsage: candidate.usage,
+                                elementUsagePage: Int(IOHIDElementGetUsagePage(element)),
+                                elementUsage: Int(IOHIDElementGetUsage(element)),
+                                reportID: Int(IOHIDElementGetReportID(element)),
+                                integerValue: IOHIDValueGetIntegerValue(value),
+                                elapsedSeconds: observedAt.timeIntervalSince(captureStartedAt)
+                            )
+                        )
+                    }
+                    let context = UnsafeMutableRawPointer(Unmanaged.passRetained(contextBox).toOpaque())
+                    self.callbackContext = context
+
+                    IOHIDManagerScheduleWithRunLoop(self.manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+                    IOHIDManagerRegisterInputValueCallback(self.manager, Self.inputValueCallback, context)
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    private func ensureRunLoopLocked() {
+        runLoopStateLock.lock()
+        if runLoop != nil {
+            runLoopStateLock.unlock()
+            return
+        }
+        runLoopStateLock.unlock()
+
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [weak self] in
+            guard let self else {
+                ready.signal()
+                return
+            }
+
+            let keepAlivePort = Port()
+            RunLoop.current.add(keepAlivePort, forMode: .default)
+            let currentRunLoop = CFRunLoopGetCurrent()
+
+            self.runLoopStateLock.lock()
+            self.keepAlivePort = keepAlivePort
+            self.runLoop = currentRunLoop
+            self.runLoopStateLock.unlock()
+            ready.signal()
+
+            while !Thread.current.isCancelled {
+                let _: Void = autoreleasepool {
+                    CFRunLoopRunInMode(CFRunLoopMode.defaultMode, 1.0, false)
+                }
+            }
+        }
+        thread.name = "open.snek.probe.usb-value"
+        runLoopStateLock.lock()
+        self.thread = thread
+        runLoopStateLock.unlock()
+        thread.start()
+        ready.wait()
+    }
+
+    private func performOnRunLoopLocked(_ block: @escaping () -> Void) {
+        guard let runLoop else {
+            block()
+            return
+        }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue, block)
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    private func stopSynchronously() {
+        let stopped = DispatchSemaphore(value: 0)
+        queue.async {
+            guard self.runLoop != nil || self.callbackContext != nil else {
+                stopped.signal()
+                return
+            }
+            self.performOnRunLoopLocked {
+                self.stopManagerCallbackOnRunLoop()
+                self.runLoopStateLock.lock()
+                let runLoop = self.runLoop
+                let thread = self.thread
+                self.keepAlivePort = nil
+                self.runLoop = nil
+                self.thread = nil
+                self.runLoopStateLock.unlock()
+                thread?.cancel()
+                if let runLoop {
+                    CFRunLoopStop(runLoop)
+                    CFRunLoopWakeUp(runLoop)
+                }
+                stopped.signal()
+            }
+        }
+        stopped.wait()
+    }
+
+    private func stopManagerCallbackOnRunLoop() {
+        IOHIDManagerRegisterInputValueCallback(manager, nil, nil)
+        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        if let callbackContext {
+            Unmanaged<CallbackContext>.fromOpaque(callbackContext).release()
+            self.callbackContext = nil
+        }
+    }
+
+    private func resetEventCount() {
+        eventCountLock.lock()
+        eventCount = 0
+        eventCountLock.unlock()
+    }
+
+    private func incrementEventCount() {
+        eventCountLock.lock()
+        eventCount += 1
+        eventCountLock.unlock()
+    }
+
+    private func currentEventCount() -> Int {
+        eventCountLock.lock()
+        let count = eventCount
+        eventCountLock.unlock()
+        return count
+    }
+
+    private static let inputValueCallback: IOHIDValueCallback = { context, _, sender, value in
+        guard let context else { return }
+        let callbackContext = Unmanaged<CallbackContext>.fromOpaque(context).takeUnretainedValue()
+        let senderPointer = sender.map { UInt(bitPattern: $0) }
+        callbackContext.emit(value, senderPointer)
     }
 }
 

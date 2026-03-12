@@ -1,0 +1,266 @@
+@preconcurrency import Foundation
+import IOKit.hid
+import OpenSnekCore
+
+public struct USBPassiveDPIReading: Hashable, Codable, Sendable {
+    public let dpiX: Int
+    public let dpiY: Int
+
+    public init(dpiX: Int, dpiY: Int) {
+        self.dpiX = dpiX
+        self.dpiY = dpiY
+    }
+}
+
+public struct USBPassiveDPIEvent: Hashable, Sendable {
+    public let deviceID: String
+    public let dpiX: Int
+    public let dpiY: Int
+    public let observedAt: Date
+
+    public init(deviceID: String, dpiX: Int, dpiY: Int, observedAt: Date) {
+        self.deviceID = deviceID
+        self.dpiX = dpiX
+        self.dpiY = dpiY
+        self.observedAt = observedAt
+    }
+}
+
+public enum USBPassiveDPIParser {
+    public static func parse(
+        report: [UInt8],
+        descriptor: USBPassiveDPIInputDescriptor
+    ) -> USBPassiveDPIReading? {
+        guard report.count >= descriptor.minInputReportSize else { return nil }
+
+        let payloadStart: Int
+        if report.first == descriptor.reportID {
+            guard report.count >= 6, report[1] == descriptor.subtype else { return nil }
+            payloadStart = 1
+        } else {
+            guard report.count >= 5, report[0] == descriptor.subtype else { return nil }
+            payloadStart = 0
+        }
+
+        let dpiX = (Int(report[payloadStart + 1]) << 8) | Int(report[payloadStart + 2])
+        let dpiY = (Int(report[payloadStart + 3]) << 8) | Int(report[payloadStart + 4])
+        guard (100...30_000).contains(dpiX), (100...30_000).contains(dpiY) else { return nil }
+        return USBPassiveDPIReading(dpiX: dpiX, dpiY: dpiY)
+    }
+}
+
+public final class USBPassiveDPIEventMonitor: @unchecked Sendable {
+    public struct WatchTarget: @unchecked Sendable {
+        public let deviceID: String
+        public let device: IOHIDDevice
+        public let descriptor: USBPassiveDPIInputDescriptor
+
+        public init(deviceID: String, device: IOHIDDevice, descriptor: USBPassiveDPIInputDescriptor) {
+            self.deviceID = deviceID
+            self.device = device
+            self.descriptor = descriptor
+        }
+    }
+
+    private final class CallbackContext {
+        let deviceID: String
+        let descriptor: USBPassiveDPIInputDescriptor
+        let emit: @Sendable (USBPassiveDPIEvent) -> Void
+
+        init(deviceID: String, descriptor: USBPassiveDPIInputDescriptor, emit: @escaping @Sendable (USBPassiveDPIEvent) -> Void) {
+            self.deviceID = deviceID
+            self.descriptor = descriptor
+            self.emit = emit
+        }
+    }
+
+    private struct RegistrationKey: Hashable {
+        let deviceID: String
+        let devicePointer: UInt
+    }
+
+    private struct Registration {
+        let deviceID: String
+        let device: IOHIDDevice
+        let devicePointer: UInt
+        let descriptor: USBPassiveDPIInputDescriptor
+        let buffer: UnsafeMutablePointer<UInt8>
+        let bufferLength: CFIndex
+        let context: UnsafeMutableRawPointer
+    }
+
+    public var onEvent: (@Sendable (USBPassiveDPIEvent) -> Void)?
+
+    private let queue = DispatchQueue(label: "open.snek.usb.passive-dpi")
+    private let runLoopStateLock = NSLock()
+    private var runLoop: CFRunLoop?
+    private var thread: Thread?
+    private var keepAlivePort: Port?
+    private var registrationsByKey: [RegistrationKey: Registration] = [:]
+
+    public init() {}
+
+    public func replaceTargets(_ targets: [WatchTarget]) async -> Set<String> {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                self.ensureRunLoopLocked()
+                self.performOnRunLoopLocked {
+                    let active = self.replaceTargetsOnRunLoop(targets)
+                    continuation.resume(returning: active)
+                }
+            }
+        }
+    }
+
+    private func ensureRunLoopLocked() {
+        runLoopStateLock.lock()
+        if runLoop != nil {
+            runLoopStateLock.unlock()
+            return
+        }
+        runLoopStateLock.unlock()
+
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [weak self] in
+            guard let self else {
+                ready.signal()
+                return
+            }
+
+            let keepAlivePort = Port()
+            RunLoop.current.add(keepAlivePort, forMode: .default)
+            let currentRunLoop = CFRunLoopGetCurrent()
+
+            self.runLoopStateLock.lock()
+            self.keepAlivePort = keepAlivePort
+            self.runLoop = currentRunLoop
+            self.runLoopStateLock.unlock()
+            ready.signal()
+
+            while !Thread.current.isCancelled {
+                let _: Void = autoreleasepool {
+                    CFRunLoopRunInMode(CFRunLoopMode.defaultMode, 1.0, false)
+                }
+            }
+        }
+        thread.name = "open.snek.usb.passive-dpi"
+        runLoopStateLock.lock()
+        self.thread = thread
+        runLoopStateLock.unlock()
+        thread.start()
+        ready.wait()
+    }
+
+    private func performOnRunLoopLocked(_ block: @escaping () -> Void) {
+        guard let runLoop else {
+            block()
+            return
+        }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue, block)
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    private func replaceTargetsOnRunLoop(_ targets: [WatchTarget]) -> Set<String> {
+        var desiredByKey: [RegistrationKey: WatchTarget] = [:]
+        for target in targets {
+            let key = RegistrationKey(
+                deviceID: target.deviceID,
+                devicePointer: Self.devicePointer(for: target.device)
+            )
+            desiredByKey[key] = target
+        }
+
+        let obsoleteKeys = Set(registrationsByKey.keys).subtracting(desiredByKey.keys)
+        for key in obsoleteKeys {
+            removeRegistration(key: key)
+        }
+
+        var activeDeviceIDs: Set<String> = []
+        for (key, target) in desiredByKey {
+            if let existing = registrationsByKey[key],
+               existing.descriptor == target.descriptor {
+                activeDeviceIDs.insert(target.deviceID)
+                continue
+            }
+
+            removeRegistration(key: key)
+            if addRegistration(target: target, key: key) {
+                activeDeviceIDs.insert(target.deviceID)
+            }
+        }
+
+        return activeDeviceIDs
+    }
+
+    private func addRegistration(target: WatchTarget, key: RegistrationKey) -> Bool {
+        let openResult = IOHIDDeviceOpen(target.device, IOOptionBits(kIOHIDOptionsTypeNone))
+        guard openResult == kIOReturnSuccess else { return false }
+
+        let reportLength = max(
+            target.descriptor.minInputReportSize,
+            USBHIDSupport.intProperty(target.device, key: kIOHIDMaxInputReportSizeKey as CFString) ?? target.descriptor.minInputReportSize
+        )
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: reportLength)
+        buffer.initialize(repeating: 0, count: reportLength)
+
+        let contextBox = CallbackContext(
+            deviceID: target.deviceID,
+            descriptor: target.descriptor
+        ) { [weak self] event in
+            self?.onEvent?(event)
+        }
+        let context = UnsafeMutableRawPointer(Unmanaged.passRetained(contextBox).toOpaque())
+
+        IOHIDDeviceScheduleWithRunLoop(target.device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDDeviceRegisterInputReportCallback(
+            target.device,
+            buffer,
+            CFIndex(reportLength),
+            Self.inputReportCallback,
+            context
+        )
+
+        registrationsByKey[key] = Registration(
+            deviceID: target.deviceID,
+            device: target.device,
+            devicePointer: Self.devicePointer(for: target.device),
+            descriptor: target.descriptor,
+            buffer: buffer,
+            bufferLength: CFIndex(reportLength),
+            context: context
+        )
+        return true
+    }
+
+    private func removeRegistration(key: RegistrationKey) {
+        guard let registration = registrationsByKey.removeValue(forKey: key) else { return }
+        IOHIDDeviceUnscheduleFromRunLoop(
+            registration.device,
+            CFRunLoopGetCurrent(),
+            CFRunLoopMode.defaultMode.rawValue
+        )
+        IOHIDDeviceClose(registration.device, IOOptionBits(kIOHIDOptionsTypeNone))
+        registration.buffer.deinitialize(count: Int(registration.bufferLength))
+        registration.buffer.deallocate()
+        Unmanaged<CallbackContext>.fromOpaque(registration.context).release()
+    }
+
+    private static let inputReportCallback: IOHIDReportCallback = { context, result, _, reportType, _, report, reportLength in
+        guard result == kIOReturnSuccess, reportType == kIOHIDReportTypeInput, let context else { return }
+        let callbackContext = Unmanaged<CallbackContext>.fromOpaque(context).takeUnretainedValue()
+        let bytes = Array(UnsafeBufferPointer(start: report, count: max(0, reportLength)))
+        guard let reading = USBPassiveDPIParser.parse(report: bytes, descriptor: callbackContext.descriptor) else { return }
+        callbackContext.emit(
+            USBPassiveDPIEvent(
+                deviceID: callbackContext.deviceID,
+                dpiX: reading.dpiX,
+                dpiY: reading.dpiY,
+                observedAt: Date()
+            )
+        )
+    }
+
+    private static func devicePointer(for device: IOHIDDevice) -> UInt {
+        UInt(bitPattern: Unmanaged.passUnretained(device).toOpaque())
+    }
+}

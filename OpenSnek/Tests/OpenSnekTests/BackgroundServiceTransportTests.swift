@@ -114,6 +114,16 @@ private actor StubServiceBackend: DeviceBackend {
         return DpiFastSnapshot(active: active, values: values)
     }
 
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
+        true
+    }
+
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
     func apply(device _: MouseDevice, patch: DevicePatch) async throws -> MouseState {
         let nextValues = patch.dpiStages ?? state.dpi_stages.values
         let nextActive = patch.activeStage ?? state.dpi_stages.active_stage

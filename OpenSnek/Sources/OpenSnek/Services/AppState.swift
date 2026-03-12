@@ -175,8 +175,8 @@ final class AppState {
     private var lastFastDpiPollAt: Date = .distantPast
     private var transientStatusUntil: Date?
     private var isBackendReady = false
-    private var serviceSnapshotObserver: NSObjectProtocol?
     private var clientPresenceObserver: NSObjectProtocol?
+    private var backendStateUpdatesTask: Task<Void, Never>?
     private var remoteClientPresenceByProcessID: [Int32: RemoteClientPresenceState] = [:]
     private var lastRemoteClientPresencePingAt: Date = .distantPast
 
@@ -193,6 +193,9 @@ final class AppState {
         self.backend = backend ?? LocalBridgeBackend.shared
         self.isBackendReady = launchRole.isService || backend != nil || !serviceCoordinator.backgroundServiceEnabled
         installCrossProcessObservers()
+        Task { [weak self] in
+            await self?.restartBackendStateUpdates()
+        }
         if launchRole.isService, autoStart {
             Task { [weak self] in
                 await self?.start()
@@ -428,10 +431,20 @@ final class AppState {
             ordered.append(deviceID)
         }
 
-        for deviceID in activeRemoteSelectedDeviceIDs(at: now) {
+        let remoteSelectedDeviceIDs = activeRemoteSelectedDeviceIDs(at: now)
+        for deviceID in remoteSelectedDeviceIDs {
             guard liveIDs.contains(deviceID) else { continue }
             guard seen.insert(deviceID).inserted else { continue }
             ordered.append(deviceID)
+        }
+
+        if launchRole.isService,
+           hasActiveRemoteClients(at: now),
+           remoteSelectedDeviceIDs.isEmpty,
+           let selectedDeviceID,
+           liveIDs.contains(selectedDeviceID),
+           seen.insert(selectedDeviceID).inserted {
+            ordered.append(selectedDeviceID)
         }
 
         return ordered
@@ -470,13 +483,6 @@ final class AppState {
     }
 
     private func installCrossProcessObservers() {
-        guard serviceSnapshotObserver == nil else { return }
-        serviceSnapshotObserver = CrossProcessStateSync.observeSnapshots { [weak self] snapshot in
-            Task { [weak self] in
-                await self?.handleServiceSnapshot(snapshot)
-            }
-        }
-
         guard clientPresenceObserver == nil else { return }
         clientPresenceObserver = CrossProcessStateSync.observeClientPresence { [weak self] presence in
             Task { [weak self] in
@@ -485,9 +491,26 @@ final class AppState {
         }
     }
 
-    private func handleServiceSnapshot(_ snapshot: SharedServiceSnapshot) async {
-        guard usesRemoteServiceUpdates, isBackendReady else { return }
-        applyRemoteServiceSnapshot(snapshot)
+    private func restartBackendStateUpdates() async {
+        backendStateUpdatesTask?.cancel()
+        let stream = await backend.stateUpdates()
+        backendStateUpdatesTask = Task { [weak self] in
+            guard let self else { return }
+            for await update in stream {
+                await self.handleBackendStateUpdate(update)
+            }
+        }
+    }
+
+    private func handleBackendStateUpdate(_ update: BackendStateUpdate) async {
+        guard isBackendReady else { return }
+        switch update {
+        case .snapshot(let snapshot):
+            guard usesRemoteServiceUpdates else { return }
+            applyRemoteServiceSnapshot(snapshot)
+        case .deviceState(let deviceID, let updatedState, let updatedAt):
+            applyBackendDeviceStateUpdate(deviceID: deviceID, state: updatedState, updatedAt: updatedAt)
+        }
     }
 
     private func handleRemoteClientPresence(_ presence: CrossProcessClientPresence) async {
@@ -546,6 +569,37 @@ final class AppState {
         }
     }
 
+    private func applyBackendDeviceStateUpdate(deviceID: String, state updatedState: MouseState, updatedAt: Date) {
+        guard let sourceDevice = devices.first(where: { $0.id == deviceID }),
+              let presentationDevice = presentationDevice(for: sourceDevice) else {
+            return
+        }
+
+        let presentationDeviceID = presentationDevice.id
+        let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[deviceID]
+        let merged = updatedState.merged(with: previous)
+        let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: merged)
+
+        cacheState(merged, sourceDeviceID: deviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
+        refreshFailureCountByDeviceID[deviceID] = 0
+        refreshFailureCountByDeviceID[presentationDeviceID] = 0
+
+        if shouldFocusOnActivity {
+            focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
+        }
+
+        if selectedDeviceID == presentationDeviceID {
+            if state != merged {
+                state = merged
+            }
+            if shouldHydrateEditable {
+                hydrateEditable(from: merged)
+            }
+            errorMessage = nil
+            setTelemetryWarning(telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
+        }
+    }
+
     func start() async {
         guard !didStartRuntime else { return }
         didStartRuntime = true
@@ -601,12 +655,14 @@ final class AppState {
         if enabled {
             do {
                 backend = try await serviceCoordinator.connectOrLaunchService()
+                await restartBackendStateUpdates()
                 isBackendReady = true
                 serviceStatusMessage = "Menu bar service connected"
                 transientStatusUntil = Date().addingTimeInterval(3.0)
                 errorMessage = nil
             } catch {
                 backend = LocalBridgeBackend.shared
+                await restartBackendStateUpdates()
                 isBackendReady = true
                 backgroundServiceEnabled = false
                 serviceCoordinator.setBackgroundServiceEnabled(false)
@@ -614,6 +670,7 @@ final class AppState {
             }
         } else {
             backend = LocalBridgeBackend.shared
+            await restartBackendStateUpdates()
             isBackendReady = true
             if launchRole.isService {
                 serviceCoordinator.stopCurrentServiceHostIfNeeded()
@@ -683,6 +740,7 @@ final class AppState {
     private func configureBackendForCurrentPreferences() async {
         do {
             backend = try await serviceCoordinator.makeBackendForCurrentMode()
+            await restartBackendStateUpdates()
             isBackendReady = true
             if backgroundServiceEnabled {
                 serviceStatusMessage = "Menu bar service connected"
@@ -690,6 +748,7 @@ final class AppState {
             }
         } catch {
             backend = LocalBridgeBackend.shared
+            await restartBackendStateUpdates()
             isBackendReady = true
             errorMessage = "Background service unavailable: \(error.localizedDescription)"
         }
@@ -1675,6 +1734,7 @@ final class AppState {
         guard !refreshingFastDpiDeviceIDs.contains(device.id) else { return }
         guard !refreshingStateDeviceIDs.contains(device.id) else { return }
         guard !hasPendingLocalEditsAffecting(device) else { return }
+        guard await backend.shouldUseFastDPIPolling(device: device) else { return }
 
         if device.transport == .usb,
            let lastUSBFastDpiAt = lastUSBFastDpiAtByDeviceID[device.id],
@@ -1738,6 +1798,11 @@ final class AppState {
                     hydrateEditable(from: updated)
                 }
             }
+            AppLog.debug(
+                "AppState",
+                "refreshDpiFast ok device=\(presentationDeviceID) active=\(active) " +
+                "values=\(fast.values.map(String.init).joined(separator: ","))"
+            )
         } catch {
             // Ignore fast-poll transient failures to keep UI stable.
         }
