@@ -639,6 +639,11 @@ final class AppState {
             if shouldHydrateEditable {
                 hydrateEditable(from: cached)
             }
+        } else if let state, stateSummaryMatchesDevice(state, device: device) {
+            warningMessage = telemetryWarning(for: state, device: device)
+            if shouldHydrateEditable {
+                hydrateEditable(from: state)
+            }
         } else {
             state = nil
             lastUpdated = nil
@@ -666,6 +671,43 @@ final class AppState {
             device.product_id,
             device.transport.rawValue
         )
+    }
+
+    private func stateSummaryMatchesDevice(_ state: MouseState, device: MouseDevice) -> Bool {
+        let deviceSerial = device.serial?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let stateSerial = state.device.serial?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if let deviceSerial, !deviceSerial.isEmpty,
+           let stateSerial, !stateSerial.isEmpty {
+            return deviceSerial == stateSerial
+        }
+
+        return state.device.transport == device.transport &&
+            state.device.product_name == device.product_name
+    }
+
+    private func selectedPresentationDevice(for device: MouseDevice) -> MouseDevice? {
+        guard let selectedDevice else { return nil }
+        if selectedDevice.id == device.id {
+            return selectedDevice
+        }
+        return deviceIdentityKey(selectedDevice) == deviceIdentityKey(device) ? selectedDevice : nil
+    }
+
+    private func cacheState(_ state: MouseState, sourceDeviceID: String, presentationDeviceID: String, updatedAt: Date = Date()) {
+        stateCacheByDeviceID[sourceDeviceID] = state
+        lastUpdatedByDeviceID[sourceDeviceID] = updatedAt
+
+        if presentationDeviceID != sourceDeviceID {
+            stateCacheByDeviceID[presentationDeviceID] = state
+            lastUpdatedByDeviceID[presentationDeviceID] = updatedAt
+        }
+
+        lastUpdated = updatedAt
     }
 
     private func resolvedProfile(for device: MouseDevice) -> DeviceProfile? {
@@ -715,28 +757,33 @@ final class AppState {
                 AppLog.debug("AppState", "refreshState stale-drop rev=\(refreshRevision) current=\(applyCoordinator.stateRevision)")
                 return
             }
-            guard selectedDeviceID == refreshDeviceID else {
-                AppLog.debug("AppState", "refreshState drop switched-device result device=\(refreshDeviceID) selected=\(selectedDeviceID ?? "nil")")
+            guard let presentationDevice = selectedPresentationDevice(for: selectedDevice) else {
+                AppLog.debug(
+                    "AppState",
+                    "refreshState drop switched-device result device=\(refreshDeviceID) selected=\(selectedDeviceID ?? "nil")"
+                )
                 return
             }
-            let merged = fetched.merged(with: stateCacheByDeviceID[selectedDevice.id])
-            stateCacheByDeviceID[selectedDevice.id] = merged
-            refreshFailureCountByDeviceID[selectedDevice.id] = 0
-            lastUpdatedByDeviceID[selectedDevice.id] = Date()
+            let presentationDeviceID = presentationDevice.id
+            let merged = fetched.merged(
+                with: stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
+            )
+            refreshFailureCountByDeviceID[presentationDeviceID] = 0
+            let updatedAt = Date()
+            cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
             if state != merged {
                 state = merged
             }
-            lastUpdated = lastUpdatedByDeviceID[selectedDevice.id]
             if shouldHydrateEditable {
                 hydrateEditable(from: merged)
-                await hydrateLightingStateIfNeeded(device: selectedDevice)
-                await hydrateButtonBindingsIfNeeded(device: selectedDevice)
+                await hydrateLightingStateIfNeeded(device: presentationDevice)
+                await hydrateButtonBindingsIfNeeded(device: presentationDevice)
             }
             errorMessage = nil
-            setTelemetryWarning(telemetryWarning(for: merged, device: selectedDevice), device: selectedDevice)
+            setTelemetryWarning(telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
             AppLog.debug(
                 "AppState",
-                "refreshState ok device=\(selectedDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
+                "refreshState ok device=\(presentationDeviceID) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
                 "values=\(merged.dpi_stages.values?.map(String.init).joined(separator: ",") ?? "nil") " +
                 "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s"
             )
@@ -1246,7 +1293,7 @@ final class AppState {
 
         do {
             guard let fast = try await backend.readDpiStagesFast(device: selectedDevice) else { return }
-            guard selectedDeviceID == selectedDevice.id else { return }
+            guard let presentationDevice = selectedPresentationDevice(for: selectedDevice) else { return }
             if selectedDevice.transport == .usb {
                 lastUSBFastDpiAt = Date()
             }
@@ -1254,7 +1301,8 @@ final class AppState {
                 AppLog.debug("AppState", "refreshDpiFast stale-drop rev=\(fastRevision) current=\(applyCoordinator.stateRevision)")
                 return
             }
-            let previous = stateCacheByDeviceID[selectedDevice.id] ?? state
+            let presentationDeviceID = presentationDevice.id
+            let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[selectedDevice.id] ?? state
             guard let previous else { return }
 
             let active = max(0, min(fast.values.count - 1, fast.active))
@@ -1277,12 +1325,10 @@ final class AppState {
                 capabilities: previous.capabilities
             )
 
-            stateCacheByDeviceID[selectedDevice.id] = updated
-            lastUpdatedByDeviceID[selectedDevice.id] = Date()
+            cacheState(updated, sourceDeviceID: selectedDevice.id, presentationDeviceID: presentationDeviceID)
             if state != updated {
                 state = updated
             }
-            lastUpdated = lastUpdatedByDeviceID[selectedDevice.id]
             if shouldHydrateEditable {
                 hydrateEditable(from: updated)
             }
@@ -1328,15 +1374,16 @@ final class AppState {
         let applyDeviceID = selectedDevice.id
         do {
             let next = try await backend.apply(device: selectedDevice, patch: patch)
-            guard selectedDeviceID == applyDeviceID else {
+            guard let presentationDevice = selectedPresentationDevice(for: selectedDevice) else {
                 let merged = next.merged(with: stateCacheByDeviceID[applyDeviceID])
                 stateCacheByDeviceID[applyDeviceID] = merged
                 lastUpdatedByDeviceID[applyDeviceID] = Date()
                 AppLog.debug("AppState", "apply result cached for non-selected device device=\(applyDeviceID)")
                 return
             }
-            let merged = next.merged(with: stateCacheByDeviceID[applyDeviceID])
-            stateCacheByDeviceID[applyDeviceID] = merged
+            let presentationDeviceID = presentationDevice.id
+            let merged = next.merged(with: stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[applyDeviceID])
+            cacheState(merged, sourceDeviceID: applyDeviceID, presentationDeviceID: presentationDeviceID)
             if state != merged {
                 state = merged
             }
@@ -1348,8 +1395,6 @@ final class AppState {
                 suppressFastDpiUntil = Date().addingTimeInterval(0.9)
                 compactInteractionUntil = Date().addingTimeInterval(3.0)
             }
-            lastUpdatedByDeviceID[applyDeviceID] = Date()
-            lastUpdated = lastUpdatedByDeviceID[applyDeviceID]
             if shouldHydrateEditableState {
                 lastLocalEditAt = nil
                 hydrateEditable(from: merged)
@@ -1360,27 +1405,27 @@ final class AppState {
                 )
             }
             if patch.ledRGB != nil {
-                persistLightingColor(editableColor, device: selectedDevice)
-                hydratedLightingStateByDeviceID.insert(selectedDevice.id)
+                persistLightingColor(editableColor, device: presentationDevice)
+                hydratedLightingStateByDeviceID.insert(presentationDevice.id)
             }
             if let lightingEffect = patch.lightingEffect {
-                persistLightingEffect(lightingEffect, device: selectedDevice)
+                persistLightingEffect(lightingEffect, device: presentationDevice)
                 persistLightingColor(
                     RGBColor(
                         r: lightingEffect.primary.r,
                         g: lightingEffect.primary.g,
                         b: lightingEffect.primary.b
                     ),
-                    device: selectedDevice
+                    device: presentationDevice
                 )
-                hydratedLightingStateByDeviceID.insert(selectedDevice.id)
+                hydratedLightingStateByDeviceID.insert(presentationDevice.id)
             }
             if let buttonBinding = patch.buttonBinding {
-                persistButtonBinding(buttonBinding, device: selectedDevice, profile: buttonBinding.persistentProfile)
-                hydratedButtonBindingsKey = buttonBindingsHydrationKey(device: selectedDevice)
+                persistButtonBinding(buttonBinding, device: presentationDevice, profile: buttonBinding.persistentProfile)
+                hydratedButtonBindingsKey = buttonBindingsHydrationKey(device: presentationDevice)
             }
             errorMessage = nil
-            setTelemetryWarning(telemetryWarning(for: merged, device: selectedDevice), device: selectedDevice)
+            setTelemetryWarning(telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
             if patch.dpiStages != nil || patch.activeStage != nil {
                 let activeStage = (merged.dpi_stages.active_stage ?? 0) + 1
                 let activeValue = merged.dpi_stages.values?[max(0, min((merged.dpi_stages.values?.count ?? 1) - 1, activeStage - 1))]
@@ -1391,7 +1436,7 @@ final class AppState {
             }
             AppLog.event(
                 "AppState",
-                "apply ok device=\(selectedDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
+                "apply ok device=\(presentationDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
                 "values=\(merged.dpi_stages.values?.map(String.init).joined(separator: ",") ?? "nil") " +
                 "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s"
             )
