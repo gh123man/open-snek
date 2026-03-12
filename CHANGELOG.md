@@ -22,6 +22,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - The menu bar widget now includes a device picker when multiple supported mice are connected, and the service tracks active selections per UI so only the devices currently in use get the faster interactive DPI polling path.
+- The menu bar device picker now follows the last device with meaningful DPI/config activity in the service process, so the compact UI shifts to whichever mouse was just touched without forcing the full app to change selection.
 
 ## [2026-03-11]
 

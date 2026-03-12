@@ -855,6 +855,32 @@ final class AppState {
         warningMessage = newValue
     }
 
+    private func focusServiceSelectionOnActivity(deviceID: String) {
+        guard launchRole.isService else { return }
+        guard selectedDeviceID != deviceID else { return }
+        guard devices.contains(where: { $0.id == deviceID }) else { return }
+        selectedDeviceID = deviceID
+        syncSelectedDevicePresentation(deviceID: deviceID)
+    }
+
+    private func shouldFocusServiceSelectionOnActivity(previous: MouseState?, next: MouseState) -> Bool {
+        guard launchRole.isService else { return false }
+        guard let previous else { return false }
+
+        return previous.dpi != next.dpi ||
+            previous.dpi_stages != next.dpi_stages ||
+            previous.poll_rate != next.poll_rate ||
+            previous.sleep_timeout != next.sleep_timeout ||
+            previous.device_mode != next.device_mode ||
+            previous.low_battery_threshold_raw != next.low_battery_threshold_raw ||
+            previous.scroll_mode != next.scroll_mode ||
+            previous.scroll_acceleration != next.scroll_acceleration ||
+            previous.scroll_smart_reel != next.scroll_smart_reel ||
+            previous.active_onboard_profile != next.active_onboard_profile ||
+            previous.onboard_profile_count != next.onboard_profile_count ||
+            previous.led_value != next.led_value
+    }
+
     private func deviceIdentityKey(_ device: MouseDevice) -> String {
         if let serial = device.serial?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1032,13 +1058,18 @@ final class AppState {
             }
 
             let presentationDeviceID = presentationDevice.id
+            let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
             let merged = fetched.merged(
-                with: stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
+                with: previous
             )
+            let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: merged)
             let updatedAt = Date()
             cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
             refreshFailureCountByDeviceID[refreshDeviceID] = 0
             refreshFailureCountByDeviceID[presentationDeviceID] = 0
+            if shouldFocusOnActivity {
+                focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
+            }
 
             if selectedDeviceID == presentationDeviceID {
                 if state != merged {
@@ -1605,7 +1636,11 @@ final class AppState {
                 capabilities: previous.capabilities
             )
 
+            let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: updated)
             cacheState(updated, sourceDeviceID: device.id, presentationDeviceID: presentationDeviceID, updatedAt: readAt)
+            if shouldFocusOnActivity {
+                focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
+            }
             if selectedDeviceID == presentationDeviceID {
                 if state != updated {
                     state = updated
@@ -1678,6 +1713,7 @@ final class AppState {
             let presentationDeviceID = presentationDevice.id
             let merged = next.merged(with: stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[applyDeviceID])
             cacheState(merged, sourceDeviceID: applyDeviceID, presentationDeviceID: presentationDeviceID)
+            focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
             if selectedDeviceID == presentationDeviceID, state != merged {
                 state = merged
             }

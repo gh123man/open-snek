@@ -167,18 +167,160 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(profile, .serviceInteractive)
         XCTAssertEqual(activeDeviceIDs, [betaDevice.id, alphaDevice.id])
     }
+
+    func testServiceSelectionFollowsDeviceWithMeaningfulRefreshChange() async {
+        let alphaDevice = makeTestDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .usb,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let backend = MultiDeviceStubBackend(
+            devices: [alphaDevice, betaDevice],
+            stateByDeviceID: [
+                alphaDevice.id: makeTestState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800
+                ),
+                betaDevice.id: makeTestState(
+                    device: betaDevice,
+                    connection: "usb",
+                    batteryPercent: 77,
+                    dpiValues: [1000, 2000, 3000],
+                    activeStage: 0,
+                    dpiValue: 1000
+                ),
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .service, backend: backend, autoStart: false)
+        }
+
+        await appState.refreshDevices()
+
+        await MainActor.run {
+            appState.selectDevice(alphaDevice.id)
+        }
+        await backend.setState(
+            makeTestState(
+                device: betaDevice,
+                connection: "usb",
+                batteryPercent: 77,
+                dpiValues: [1800, 3600, 5400],
+                activeStage: 1,
+                dpiValue: 3600
+            ),
+            for: betaDevice.id
+        )
+
+        await appState.refreshDevices()
+
+        let selectedDeviceID = await MainActor.run { appState.selectedDeviceID }
+        let selectedDpi = await MainActor.run { appState.state?.dpi?.x }
+        let activeStage = await MainActor.run { appState.editableActiveStage }
+
+        XCTAssertEqual(selectedDeviceID, betaDevice.id)
+        XCTAssertEqual(selectedDpi, 3600)
+        XCTAssertEqual(activeStage, 2)
+    }
+
+    func testServiceSelectionFollowsDeviceWithFastDpiActivity() async {
+        let alphaDevice = makeTestDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .usb,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let backend = MultiDeviceStubBackend(
+            devices: [alphaDevice, betaDevice],
+            stateByDeviceID: [
+                alphaDevice.id: makeTestState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800
+                ),
+                betaDevice.id: makeTestState(
+                    device: betaDevice,
+                    connection: "usb",
+                    batteryPercent: 77,
+                    dpiValues: [1000, 2000, 3000],
+                    activeStage: 0,
+                    dpiValue: 1000
+                ),
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .service, backend: backend, autoStart: false)
+        }
+
+        await appState.refreshDevices()
+
+        await MainActor.run {
+            appState.selectDevice(betaDevice.id)
+            appState.setCompactMenuPresented(true)
+            appState.recordRemoteClientPresence(
+                CrossProcessClientPresence(sourceProcessID: 99, selectedDeviceID: alphaDevice.id),
+                now: Date()
+            )
+        }
+        await backend.setFastSnapshot(DpiFastSnapshot(active: 2, values: [800, 1600, 5200]), for: alphaDevice.id)
+
+        await appState.refreshDpiFast()
+
+        let selectedDeviceID = await MainActor.run { appState.selectedDeviceID }
+        let selectedDpi = await MainActor.run { appState.state?.dpi?.x }
+        let activeStage = await MainActor.run { appState.editableActiveStage }
+
+        XCTAssertEqual(selectedDeviceID, alphaDevice.id)
+        XCTAssertEqual(selectedDpi, 5200)
+        XCTAssertEqual(activeStage, 3)
+    }
 }
 
 private actor MultiDeviceStubBackend: DeviceBackend {
     nonisolated var usesRemoteServiceTransport: Bool { false }
 
     private let devices: [MouseDevice]
-    private let stateByDeviceID: [String: MouseState]
+    private var stateByDeviceID: [String: MouseState]
+    private var fastByDeviceID: [String: DpiFastSnapshot]
     private var readOrder: [String] = []
 
     init(devices: [MouseDevice], stateByDeviceID: [String: MouseState]) {
         self.devices = devices
         self.stateByDeviceID = stateByDeviceID
+        self.fastByDeviceID = stateByDeviceID.reduce(into: [:]) { partialResult, entry in
+            if let active = entry.value.dpi_stages.active_stage,
+               let values = entry.value.dpi_stages.values {
+                partialResult[entry.key] = DpiFastSnapshot(active: active, values: values)
+            }
+        }
     }
 
     func listDevices() async throws -> [MouseDevice] {
@@ -195,8 +337,8 @@ private actor MultiDeviceStubBackend: DeviceBackend {
         return state
     }
 
-    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
-        nil
+    func readDpiStagesFast(device: MouseDevice) async throws -> DpiFastSnapshot? {
+        fastByDeviceID[device.id]
     }
 
     func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState {
@@ -219,6 +361,18 @@ private actor MultiDeviceStubBackend: DeviceBackend {
 
     func readCount() -> Int {
         readOrder.count
+    }
+
+    func setState(_ state: MouseState, for deviceID: String) {
+        stateByDeviceID[deviceID] = state
+        if let active = state.dpi_stages.active_stage,
+           let values = state.dpi_stages.values {
+            fastByDeviceID[deviceID] = DpiFastSnapshot(active: active, values: values)
+        }
+    }
+
+    func setFastSnapshot(_ snapshot: DpiFastSnapshot, for deviceID: String) {
+        fastByDeviceID[deviceID] = snapshot
     }
 }
 
