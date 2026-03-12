@@ -48,14 +48,14 @@ final class USBButtonHydrationTests: XCTestCase {
         XCTAssertEqual(draft?.turboEnabled, false)
     }
 
-    func testBasiliskV335KDefaultClutchBlockMapsToDefaultKind() {
+    func testBasiliskV335KDefaultDPIButtonBlockMapsToDefaultKind() {
         let block: [UInt8] = [0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00, 0x00]
         let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
             slot: 96,
             functionBlock: block,
             profileID: .basiliskV335K
         )
-        XCTAssertEqual(draft?.kind, .dpiCycle)
+        XCTAssertEqual(draft?.kind, .default)
     }
 
     func testBasiliskV335KDefaultDPIButtonBlockIsPreservedForRestore() {

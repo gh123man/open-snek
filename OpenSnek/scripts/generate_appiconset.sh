@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/App/Resources/Assets.xcassets/AppIcon.appiconset"
+SOURCE_PNG="$PROJECT_DIR/Branding/AppIcon-master.png"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -11,12 +12,16 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_DIR="${2:-}"
       shift 2
       ;;
+    --source)
+      SOURCE_PNG="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       cat <<'USAGE'
 Generate Open Snek macOS AppIcon.appiconset PNGs.
 
 Usage:
-  generate_appiconset.sh [--output /path/to/AppIcon.appiconset]
+  generate_appiconset.sh [--source /path/to/master.png] [--output /path/to/AppIcon.appiconset]
 USAGE
       exit 0
       ;;
@@ -32,64 +37,28 @@ if ! command -v sips >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ ! -f "$SOURCE_PNG" ]]; then
+  echo "Icon source not found: $SOURCE_PNG" >&2
+  exit 1
+fi
+
+SOURCE_INFO="$(sips -g pixelWidth -g pixelHeight "$SOURCE_PNG" 2>/dev/null)"
+SOURCE_WIDTH="$(printf '%s\n' "$SOURCE_INFO" | awk '/pixelWidth:/{print $2}')"
+SOURCE_HEIGHT="$(printf '%s\n' "$SOURCE_INFO" | awk '/pixelHeight:/{print $2}')"
+if [[ -z "$SOURCE_WIDTH" || -z "$SOURCE_HEIGHT" ]]; then
+  echo "Unable to inspect icon source: $SOURCE_PNG" >&2
+  exit 1
+fi
+if [[ "$SOURCE_WIDTH" != "$SOURCE_HEIGHT" ]]; then
+  echo "Icon source must be square: $SOURCE_PNG (${SOURCE_WIDTH}x${SOURCE_HEIGHT})" >&2
+  exit 1
+fi
+
 mkdir -p "$OUTPUT_DIR"
 BASE_ICON="$(mktemp /tmp/opensnek-icon-XXXXXX.png)"
+trap 'rm -f "$BASE_ICON"' EXIT
 
-swift - "$BASE_ICON" <<'SWIFT'
-import Foundation
-import CoreGraphics
-import ImageIO
-import UniformTypeIdentifiers
-
-let out = URL(fileURLWithPath: CommandLine.arguments[1])
-let width = 1024
-let height = 1024
-let colorSpace = CGColorSpaceCreateDeviceRGB()
-guard let ctx = CGContext(
-    data: nil,
-    width: width,
-    height: height,
-    bitsPerComponent: 8,
-    bytesPerRow: width * 4,
-    space: colorSpace,
-    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-) else { fatalError("Unable to create bitmap context") }
-
-let colors = [
-    CGColor(red: 0.04, green: 0.14, blue: 0.30, alpha: 1),
-    CGColor(red: 0.00, green: 0.55, blue: 0.45, alpha: 1),
-    CGColor(red: 0.93, green: 0.78, blue: 0.10, alpha: 1)
-] as CFArray
-let locations: [CGFloat] = [0.0, 0.55, 1.0]
-let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: locations)!
-ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 1024, y: 1024), options: [])
-
-ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.22))
-let inset: CGFloat = 74
-let tileRect = CGRect(x: inset, y: inset, width: 1024 - (inset * 2), height: 1024 - (inset * 2))
-ctx.addPath(CGPath(roundedRect: tileRect, cornerWidth: 210, cornerHeight: 210, transform: nil))
-ctx.fillPath()
-
-ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.62))
-ctx.setLineWidth(52)
-ctx.setLineCap(.round)
-ctx.move(to: CGPoint(x: 730, y: 812))
-ctx.addCurve(to: CGPoint(x: 330, y: 660), control1: CGPoint(x: 560, y: 824), control2: CGPoint(x: 394, y: 780))
-ctx.addCurve(to: CGPoint(x: 628, y: 458), control1: CGPoint(x: 272, y: 560), control2: CGPoint(x: 566, y: 560))
-ctx.addCurve(to: CGPoint(x: 368, y: 244), control1: CGPoint(x: 688, y: 370), control2: CGPoint(x: 444, y: 332))
-ctx.strokePath()
-
-ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.92))
-ctx.addEllipse(in: CGRect(x: 690, y: 780, width: 64, height: 64))
-ctx.fillPath()
-
-guard let image = ctx.makeImage() else { fatalError("Unable to create image") }
-guard let dest = CGImageDestinationCreateWithURL(out as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-    fatalError("Unable to create image destination")
-}
-CGImageDestinationAddImage(dest, image, nil)
-guard CGImageDestinationFinalize(dest) else { fatalError("Unable to finalize image destination") }
-SWIFT
+sips -s format png -z 1024 1024 "$SOURCE_PNG" --out "$BASE_ICON" >/dev/null
 
 sips -s format png -z 16 16 "$BASE_ICON" --out "$OUTPUT_DIR/icon_16x16.png" >/dev/null
 sips -s format png -z 32 32 "$BASE_ICON" --out "$OUTPUT_DIR/icon_16x16@2x.png" >/dev/null
@@ -102,5 +71,4 @@ sips -s format png -z 512 512 "$BASE_ICON" --out "$OUTPUT_DIR/icon_256x256@2x.pn
 sips -s format png -z 512 512 "$BASE_ICON" --out "$OUTPUT_DIR/icon_512x512.png" >/dev/null
 sips -s format png -z 1024 1024 "$BASE_ICON" --out "$OUTPUT_DIR/icon_512x512@2x.png" >/dev/null
 
-rm -f "$BASE_ICON"
 echo "Generated AppIcon set in: $OUTPUT_DIR"

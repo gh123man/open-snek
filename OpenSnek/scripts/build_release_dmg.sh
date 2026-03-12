@@ -290,7 +290,7 @@ if [[ "$SKIP_NOTARIZE" == false ]]; then
 fi
 
 cp -R "$APP_PATH" "$STAGE_DIR/$APP_NAME"
-APP_ICON_SOURCE="$PACKAGE_DIR/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
+APP_ICON_SOURCE="$PACKAGE_DIR/Branding/AppIcon-master.png"
 DMG_BACKGROUND="$OUTPUT_DIR/dmg-background.png"
 DMG_BACKGROUND_RETINA="$OUTPUT_DIR/dmg-background@2x.png"
 APPDMG_CONFIG="$OUTPUT_DIR/appdmg.json"

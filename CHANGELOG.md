@@ -16,6 +16,10 @@ All notable changes to this project are documented in this file.
 - Extended Basilisk USB button hydration now treats Basilisk V3 Pro `0x02:0x8C` reads like the other 35K-style offset layout while keeping unsupported V3 Pro slots out of the shipped visible/writable profile.
 - Restoring the Basilisk V3 35K top DPI button now preserves its observed default USB payload (`04 02 0F 7B 00 00 00`) instead of falling back to the generic DPI-cycle block.
 
+### Changed
+- Standardized app-icon generation around `OpenSnek/Branding/AppIcon-master.png` so the checked-in asset catalog, local `.app` bundle builds, and DMG artwork all use the same source image.
+- Reduced the exported icon's optical size slightly to give the Dock icon more breathing room on macOS versions where the previous full-bleed artwork read as oversized.
+
 ## [2026-03-10]
 
 ### Added
