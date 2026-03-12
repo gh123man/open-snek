@@ -1,18 +1,12 @@
 import AppKit
 
 enum OpenSnekBranding {
-    static let titlebarAccessoryIdentifier = NSUserInterfaceItemIdentifier("io.opensnek.OpenSnek.titlebarIcon")
-
     static var menuBarIconSide: CGFloat {
         max(14, floor(NSStatusBar.system.thickness - 6))
     }
 
     static var menuIcon: NSImage? {
         makeSizedSourceIcon(size: NSSize(width: menuBarIconSide, height: menuBarIconSide))
-    }
-
-    static var titlebarIcon: NSImage? {
-        makeSizedSourceIcon(size: NSSize(width: 14, height: 14))
     }
 
     private static func loadSourceIcon() -> NSImage? {
