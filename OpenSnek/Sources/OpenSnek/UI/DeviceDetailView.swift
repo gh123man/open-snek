@@ -928,26 +928,7 @@ struct DpiStagesCard: View {
                 let stageColor = stageAccent(for: idx, isSelected: isSelectedStage)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        if stageCount == 1 {
-                            Text("DPI")
-                                .foregroundStyle(stageColor)
-                        } else {
-                            Button {
-                                let selected = idx + 1
-                                if appState.editableActiveStage != selected {
-                                    appState.editableActiveStage = selected
-                                    appState.scheduleAutoApplyActiveStage()
-                                }
-                            } label: {
-                                Label(
-                                    "Stage \(idx + 1)",
-                                    systemImage: appState.editableActiveStage == (idx + 1) ? "checkmark.square.fill" : "square"
-                                )
-                                .labelStyle(.titleAndIcon)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(isSelectedStage ? stageColor : .white)
-                        }
+                        stageHeader(for: idx, stageCount: stageCount, stageColor: stageColor, isSelectedStage: isSelectedStage)
 
                         Spacer()
 
@@ -994,6 +975,41 @@ struct DpiStagesCard: View {
                 )
                 .shadow(color: isSelectedStage ? stageColor.opacity(0.30) : .clear, radius: 12, y: 0)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func stageHeader(for index: Int, stageCount: Int, stageColor: Color, isSelectedStage: Bool) -> some View {
+        if stageCount == 1 {
+            Text("DPI")
+                .foregroundStyle(stageColor)
+        } else {
+            Button {
+                let selected = index + 1
+                if appState.editableActiveStage != selected {
+                    appState.editableActiveStage = selected
+                    appState.scheduleAutoApplyActiveStage()
+                }
+            } label: {
+                Label(
+                    "Stage \(index + 1)",
+                    systemImage: appState.editableActiveStage == (index + 1) ? "checkmark.square.fill" : "square"
+                )
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(isSelectedStage ? stageColor.opacity(0.18) : Color.white.opacity(0.05))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(isSelectedStage ? stageColor.opacity(0.95) : Color.white.opacity(0.16), lineWidth: 1)
+                )
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isSelectedStage ? stageColor : .white)
         }
     }
 

@@ -9,6 +9,46 @@ struct DeviceStatusIndicator {
     let color: Color
 }
 
+private struct RemoteClientPresenceState {
+    let expiresAt: Date
+    let selectedDeviceID: String?
+}
+
+enum PollingProfile: Equatable {
+    case foreground
+    case serviceIdle
+    case serviceInteractive
+
+    var refreshStateInterval: TimeInterval {
+        switch self {
+        case .foreground, .serviceInteractive:
+            return 2.0
+        case .serviceIdle:
+            return 8.0
+        }
+    }
+
+    var devicePresenceInterval: TimeInterval {
+        switch self {
+        case .foreground, .serviceInteractive:
+            return 1.2
+        case .serviceIdle:
+            return 4.0
+        }
+    }
+
+    var fastDpiInterval: TimeInterval? {
+        switch self {
+        case .foreground:
+            return 0.20
+        case .serviceInteractive:
+            return 0.25
+        case .serviceIdle:
+            return nil
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -45,11 +85,16 @@ final class AppState {
     let buttonSlots = ButtonSlotDescriptor.defaults
     var editableButtonBindings: [Int: ButtonBindingDraft] = [:]
     var keyboardTextDraftBySlot: [Int: String] = [:]
+    var backgroundServiceEnabled: Bool
+    var launchAtStartupEnabled: Bool
+    var serviceStatusMessage: String?
 
-    private let client = BridgeClient()
+    private var backend: any DeviceBackend
     private let applyCoordinator = ApplyCoordinator()
     private let preferenceStore = DevicePreferenceStore()
     private let releaseUpdateChecker = ReleaseUpdateChecker()
+    private let launchRole: OpenSnekProcessRole
+    private let serviceCoordinator: BackgroundServiceCoordinator
     private var isHydrating = false
     private var dpiApplyTask: Task<Void, Never>?
     private var pollApplyTask: Task<Void, Never>?
@@ -68,11 +113,13 @@ final class AppState {
     private var applyDrainTask: Task<Void, Never>?
     private var stateCacheByDeviceID: [String: MouseState] = [:]
     private var lastUpdatedByDeviceID: [String: Date] = [:]
-    private var isRefreshingDpiFast = false
-    private var suppressFastDpiUntil: Date?
-    private var lastUSBFastDpiAt: Date?
+    private var refreshingStateDeviceIDs: Set<String> = []
+    private var refreshingFastDpiDeviceIDs: Set<String> = []
+    private var suppressFastDpiUntilByDeviceID: [String: Date] = [:]
+    private var lastUSBFastDpiAtByDeviceID: [String: Date] = [:]
     var isEditingDpiControl = false
     private var lastLocalEditAt: Date?
+    private var localEditDeviceIdentityKey: String?
     private var hydratedLightingStateByDeviceID: Set<String> = []
     private var hydratedButtonBindingsKey: String?
     private var manualUSBButtonProfileSelectionByDeviceID: Set<String> = []
@@ -80,6 +127,39 @@ final class AppState {
     private var isPollingDevices = false
     private var refreshFailureCountByDeviceID: [String: Int] = [:]
     private var hasCheckedForUpdates = false
+    private var runtimeTask: Task<Void, Never>?
+    private var didStartRuntime = false
+    private var compactMenuPresented = false
+    private var compactInteractionUntil: Date?
+    private var lastRefreshStatePollAt: Date = .distantPast
+    private var lastDevicePresencePollAt: Date = .distantPast
+    private var lastFastDpiPollAt: Date = .distantPast
+    private var transientStatusUntil: Date?
+    private var isBackendReady = false
+    private var serviceSnapshotObserver: NSObjectProtocol?
+    private var clientPresenceObserver: NSObjectProtocol?
+    private var remoteClientPresenceByProcessID: [Int32: RemoteClientPresenceState] = [:]
+    private var lastRemoteClientPresencePingAt: Date = .distantPast
+
+    init(
+        launchRole: OpenSnekProcessRole = .current,
+        backend: (any DeviceBackend)? = nil,
+        serviceCoordinator: BackgroundServiceCoordinator = .shared,
+        autoStart: Bool = true
+    ) {
+        self.launchRole = launchRole
+        self.serviceCoordinator = serviceCoordinator
+        self.backgroundServiceEnabled = serviceCoordinator.backgroundServiceEnabled
+        self.launchAtStartupEnabled = serviceCoordinator.launchAtStartupEnabled
+        self.backend = backend ?? LocalBridgeBackend.shared
+        self.isBackendReady = launchRole.isService || backend != nil || !serviceCoordinator.backgroundServiceEnabled
+        installCrossProcessObservers()
+        if launchRole.isService, autoStart {
+            Task { [weak self] in
+                await self?.start()
+            }
+        }
+    }
 
     var selectedDevice: MouseDevice? {
         guard let selectedDeviceID else { return nil }
@@ -153,11 +233,11 @@ final class AppState {
     }
 
     var currentDeviceStatusIndicator: DeviceStatusIndicator {
-        if selectedDevice == nil {
+        guard let selectedDevice else {
             return DeviceStatusIndicator(label: "Disconnected", color: Color(hex: 0xFF453A))
         }
 
-        if selectedDeviceIsStrictlyUnsupported {
+        if isStrictlyUnsupported(selectedDevice) {
             return DeviceStatusIndicator(label: "Unsupported", color: Color(hex: 0xFFD60A))
         }
 
@@ -167,16 +247,15 @@ final class AppState {
             return DeviceStatusIndicator(label: label, color: Color(hex: 0xFF453A))
         }
 
-        if let selectedDevice {
-            let failures = refreshFailureCountByDeviceID[selectedDevice.id] ?? 0
-            if failures > 0 {
-                return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
-            }
+        let failures = refreshFailureCountByDeviceID[selectedDevice.id] ?? 0
+        if failures > 0 {
+            return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
         }
 
-        if let lastUpdated {
-            let age = Date().timeIntervalSince(lastUpdated)
-            if age > 4.5 {
+        let selectedLastUpdated = lastUpdatedByDeviceID[selectedDevice.id] ?? lastUpdated
+        if let selectedLastUpdated {
+            let age = Date().timeIntervalSince(selectedLastUpdated)
+            if age > max(4.5, currentPollingProfile.refreshStateInterval * 1.7) {
                 return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
             }
             return DeviceStatusIndicator(label: "Connected", color: Color(hex: 0x30D158))
@@ -253,14 +332,366 @@ final class AppState {
         )
     }
 
+    var isServiceProcess: Bool {
+        launchRole.isService
+    }
+
+    var compactStatusMessage: String? {
+        guard let serviceStatusMessage,
+              let transientStatusUntil,
+              Date() < transientStatusUntil
+        else {
+            return nil
+        }
+        return serviceStatusMessage
+    }
+
+    var compactActiveStageIndex: Int {
+        max(0, min(max(0, editableStageCount - 1), editableActiveStage - 1))
+    }
+
+    var compactActiveStageValue: Int {
+        stageValue(compactActiveStageIndex)
+    }
+
+    var currentPollingProfile: PollingProfile {
+        pollingProfile(at: Date())
+    }
+
+    func pollingProfile(at now: Date) -> PollingProfile {
+        if !launchRole.isService {
+            return .foreground
+        }
+        if compactMenuPresented {
+            return .serviceInteractive
+        }
+        if hasActiveRemoteClients(at: now) {
+            return .serviceInteractive
+        }
+        if let compactInteractionUntil, now < compactInteractionUntil {
+            return .serviceInteractive
+        }
+        return .serviceIdle
+    }
+
+    var usesRemoteServiceUpdates: Bool {
+        !launchRole.isService && backend.usesRemoteServiceTransport
+    }
+
+    func activeFastPollingDeviceIDs(at now: Date) -> [String] {
+        let liveIDs = Set(devices.map(\.id))
+        var ordered: [String] = []
+        var seen: Set<String> = []
+
+        for deviceID in localFastPollingDeviceIDs(at: now) {
+            guard liveIDs.contains(deviceID) else { continue }
+            guard seen.insert(deviceID).inserted else { continue }
+            ordered.append(deviceID)
+        }
+
+        for deviceID in activeRemoteSelectedDeviceIDs(at: now) {
+            guard liveIDs.contains(deviceID) else { continue }
+            guard seen.insert(deviceID).inserted else { continue }
+            ordered.append(deviceID)
+        }
+
+        return ordered
+    }
+
+    private func hasActiveRemoteClients(at now: Date) -> Bool {
+        remoteClientPresenceByProcessID.values.contains { $0.expiresAt > now }
+    }
+
+    private func activeRemoteSelectedDeviceIDs(at now: Date) -> [String] {
+        remoteClientPresenceByProcessID
+            .values
+            .filter { $0.expiresAt > now }
+            .compactMap(\.selectedDeviceID)
+    }
+
+    private func localFastPollingDeviceIDs(at now: Date) -> [String] {
+        guard let selectedDeviceID else { return [] }
+        if launchRole.isService {
+            let localInteractive = compactMenuPresented ||
+                (compactInteractionUntil.map { now < $0 } ?? false)
+            return localInteractive ? [selectedDeviceID] : []
+        }
+        return usesRemoteServiceUpdates ? [] : [selectedDeviceID]
+    }
+
+    private func pruneExpiredRemoteClientPresence(now: Date) {
+        remoteClientPresenceByProcessID = remoteClientPresenceByProcessID.filter { $0.value.expiresAt > now }
+    }
+
+    private func installCrossProcessObservers() {
+        guard serviceSnapshotObserver == nil else { return }
+        serviceSnapshotObserver = CrossProcessStateSync.observeSnapshots { [weak self] snapshot in
+            Task { [weak self] in
+                await self?.handleServiceSnapshot(snapshot)
+            }
+        }
+
+        guard clientPresenceObserver == nil else { return }
+        clientPresenceObserver = CrossProcessStateSync.observeClientPresence { [weak self] presence in
+            Task { [weak self] in
+                await self?.handleRemoteClientPresence(presence)
+            }
+        }
+    }
+
+    private func handleServiceSnapshot(_ snapshot: SharedServiceSnapshot) async {
+        guard usesRemoteServiceUpdates, isBackendReady else { return }
+        applyRemoteServiceSnapshot(snapshot)
+    }
+
+    private func handleRemoteClientPresence(_ presence: CrossProcessClientPresence) async {
+        recordRemoteClientPresence(presence)
+    }
+
+    func recordRemoteClientPresence(_ presence: CrossProcessClientPresence, now: Date = Date()) {
+        guard launchRole.isService else { return }
+        guard presence.sourceProcessID > 0 else { return }
+        pruneExpiredRemoteClientPresence(now: now)
+        remoteClientPresenceByProcessID[presence.sourceProcessID] = RemoteClientPresenceState(
+            expiresAt: now.addingTimeInterval(2.5),
+            selectedDeviceID: presence.selectedDeviceID
+        )
+    }
+
+    func applyRemoteServiceSnapshot(_ snapshot: SharedServiceSnapshot) {
+        guard usesRemoteServiceUpdates else { return }
+
+        let liveIDs = Set(snapshot.devices.map(\.id))
+        stateCacheByDeviceID = stateCacheByDeviceID.filter { liveIDs.contains($0.key) }
+        lastUpdatedByDeviceID = lastUpdatedByDeviceID.filter { liveIDs.contains($0.key) }
+
+        for (deviceID, remoteState) in snapshot.stateByDeviceID {
+            stateCacheByDeviceID[deviceID] = remoteState
+            lastUpdatedByDeviceID[deviceID] = snapshot.lastUpdatedByDeviceID[deviceID] ?? Date()
+            refreshFailureCountByDeviceID[deviceID] = 0
+        }
+
+        _ = applyDeviceList(snapshot.devices, source: "subscription")
+
+        if let selectedDeviceID,
+           let selectedState = stateCacheByDeviceID[selectedDeviceID],
+           let selectedDevice = selectedDevice {
+            state = selectedState
+            lastUpdated = lastUpdatedByDeviceID[selectedDeviceID]
+            if shouldHydrateEditable {
+                hydrateEditable(from: selectedState)
+            }
+            errorMessage = nil
+            setTelemetryWarning(telemetryWarning(for: selectedState, device: selectedDevice), device: selectedDevice)
+        } else if let selectedDeviceID {
+            syncSelectedDevicePresentation(deviceID: selectedDeviceID)
+            errorMessage = nil
+        } else {
+            state = nil
+            lastUpdated = nil
+            warningMessage = nil
+            errorMessage = nil
+        }
+    }
+
+    func start() async {
+        guard !didStartRuntime else { return }
+        didStartRuntime = true
+
+        if launchRole.isService {
+            do {
+                try await serviceCoordinator.registerServiceHostIfNeeded(backend: LocalBridgeBackend.shared)
+            } catch {
+                serviceStatusMessage = "Service host failed: \(error.localizedDescription)"
+            }
+            isBackendReady = true
+        } else {
+            await configureBackendForCurrentPreferences()
+        }
+
+        if usesRemoteServiceUpdates {
+            sendRemoteClientPresence()
+        } else {
+            await refreshDevices()
+        }
+        if !launchRole.isService {
+            await checkForUpdates()
+        }
+
+        runtimeTask = Task { [weak self] in
+            while let self, !Task.isCancelled {
+                await self.pollRuntimeOnce()
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
+    func setCompactMenuPresented(_ isPresented: Bool) {
+        compactMenuPresented = isPresented
+        if isPresented {
+            compactInteractionUntil = Date().addingTimeInterval(3.0)
+        }
+    }
+
+    func setBackgroundServiceEnabled(_ enabled: Bool) async {
+        backgroundServiceEnabled = enabled
+        serviceCoordinator.setBackgroundServiceEnabled(enabled)
+        if !enabled, launchAtStartupEnabled {
+            setLaunchAtStartupEnabled(false)
+        }
+
+        if enabled {
+            do {
+                backend = try await serviceCoordinator.connectOrLaunchService()
+                isBackendReady = true
+                serviceStatusMessage = "Menu bar service connected"
+                transientStatusUntil = Date().addingTimeInterval(3.0)
+                errorMessage = nil
+            } catch {
+                backend = LocalBridgeBackend.shared
+                isBackendReady = true
+                backgroundServiceEnabled = false
+                serviceCoordinator.setBackgroundServiceEnabled(false)
+                errorMessage = "Background service unavailable: \(error.localizedDescription)"
+            }
+        } else {
+            backend = LocalBridgeBackend.shared
+            isBackendReady = true
+            if launchRole.isService {
+                serviceCoordinator.stopCurrentServiceHostIfNeeded()
+                NSApp.terminate(nil)
+                return
+            } else {
+                serviceCoordinator.stopServiceProcess()
+            }
+            serviceStatusMessage = "Menu bar service stopped"
+            transientStatusUntil = Date().addingTimeInterval(3.0)
+        }
+
+        if usesRemoteServiceUpdates {
+            sendRemoteClientPresence()
+        } else {
+            await refreshDevices()
+        }
+    }
+
+    func setLaunchAtStartupEnabled(_ enabled: Bool) {
+        do {
+            try serviceCoordinator.setLaunchAtStartupEnabled(enabled)
+            launchAtStartupEnabled = enabled
+            serviceStatusMessage = enabled
+                ? "Launch at startup enabled for next login"
+                : "Launch at startup disabled"
+            transientStatusUntil = Date().addingTimeInterval(3.0)
+        } catch {
+            errorMessage = "Launch at startup failed: \(error.localizedDescription)"
+            launchAtStartupEnabled = serviceCoordinator.launchAtStartupEnabled
+        }
+    }
+
+    func openFullAppFromService() {
+        serviceCoordinator.launchFullAppProcess()
+    }
+
+    func openSettingsFromService() {
+        serviceCoordinator.launchFullAppProcess(arguments: ["--open-settings"])
+    }
+
+    func prepareForCurrentServiceProcessTermination() {
+        serviceCoordinator.stopCurrentServiceHostIfNeeded()
+    }
+
+    func terminateServiceProcess() {
+        serviceCoordinator.terminateOtherRunningApplicationInstances()
+        prepareForCurrentServiceProcessTermination()
+        NSApp.terminate(nil)
+    }
+
+    func refreshNow() async {
+        if usesRemoteServiceUpdates {
+            sendRemoteClientPresence()
+        } else {
+            await refreshDevices()
+        }
+        compactInteractionUntil = Date().addingTimeInterval(3.0)
+    }
+
+    func sendRemoteClientPresence() {
+        guard usesRemoteServiceUpdates else { return }
+        lastRemoteClientPresencePingAt = Date()
+        CrossProcessStateSync.postClientPresence(selectedDeviceID: selectedDeviceID)
+    }
+
+    private func configureBackendForCurrentPreferences() async {
+        do {
+            backend = try await serviceCoordinator.makeBackendForCurrentMode()
+            isBackendReady = true
+            if backgroundServiceEnabled {
+                serviceStatusMessage = "Menu bar service connected"
+                transientStatusUntil = Date().addingTimeInterval(2.0)
+            }
+        } catch {
+            backend = LocalBridgeBackend.shared
+            isBackendReady = true
+            errorMessage = "Background service unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    private func pollRuntimeOnce() async {
+        let now = Date()
+        let profile = pollingProfile(at: now)
+        pruneExpiredRemoteClientPresence(now: now)
+
+        if usesRemoteServiceUpdates {
+            if now.timeIntervalSince(lastRemoteClientPresencePingAt) >= 1.0 {
+                lastRemoteClientPresencePingAt = now
+                CrossProcessStateSync.postClientPresence(selectedDeviceID: selectedDeviceID)
+            }
+            if let transientStatusUntil, now >= transientStatusUntil {
+                self.transientStatusUntil = nil
+                if compactStatusMessage == nil {
+                    serviceStatusMessage = nil
+                }
+            }
+            return
+        }
+
+        if now.timeIntervalSince(lastDevicePresencePollAt) >= profile.devicePresenceInterval {
+            lastDevicePresencePollAt = now
+            await pollDevicePresence()
+        }
+
+        if now.timeIntervalSince(lastRefreshStatePollAt) >= profile.refreshStateInterval {
+            lastRefreshStatePollAt = now
+            await refreshAllDeviceStates()
+        }
+
+        if let fastInterval = profile.fastDpiInterval,
+           now.timeIntervalSince(lastFastDpiPollAt) >= fastInterval {
+            lastFastDpiPollAt = now
+            await refreshDpiFast()
+        }
+
+        if let transientStatusUntil, now >= transientStatusUntil {
+            self.transientStatusUntil = nil
+            if compactStatusMessage == nil {
+                serviceStatusMessage = nil
+            }
+        }
+    }
+
     func refreshDevices() async {
+        guard isBackendReady else {
+            AppLog.debug("AppState", "refreshDevices deferred until backend is ready")
+            return
+        }
         let start = Date()
         AppLog.event("AppState", "refreshDevices start")
         isLoading = true
         defer { isLoading = false }
 
         do {
-            let listed = try await client.listDevices()
+            let listed = try await backend.listDevices()
             _ = applyDeviceList(listed, source: "refresh")
             errorMessage = nil
         } catch {
@@ -268,7 +699,7 @@ final class AppState {
             errorMessage = error.localizedDescription
         }
 
-        await refreshState()
+        await refreshAllDeviceStates()
         AppLog.event("AppState", "refreshDevices end elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
     }
 
@@ -294,11 +725,11 @@ final class AppState {
         defer { isPollingDevices = false }
 
         do {
-            let listed = try await client.listDevices()
+            let listed = try await backend.listDevices()
             let changed = applyDeviceList(listed, source: "poll")
             if changed {
                 errorMessage = nil
-                await refreshState()
+                await refreshAllDeviceStates()
             } else if selectedDevice != nil, state == nil {
                 await refreshState()
             }
@@ -339,6 +770,10 @@ final class AppState {
                 refreshFailureCountByDeviceID[id] = nil
                 manualUSBButtonProfileSelectionByDeviceID.remove(id)
                 lastUpdatedByDeviceID[id] = nil
+                suppressFastDpiUntilByDeviceID[id] = nil
+                lastUSBFastDpiAtByDeviceID[id] = nil
+                refreshingStateDeviceIDs.remove(id)
+                refreshingFastDpiDeviceIDs.remove(id)
             }
         }
 
@@ -368,6 +803,9 @@ final class AppState {
                 "applyDeviceList source=\(source) count=\(sorted.count) selected=\(selectedDeviceID ?? "nil")"
             )
         }
+        if usesRemoteServiceUpdates, previousSelectedID != selectedDeviceID {
+            sendRemoteClientPresence()
+        }
         return changed
     }
 
@@ -375,6 +813,9 @@ final class AppState {
         guard selectedDeviceID != deviceID else { return }
         selectedDeviceID = deviceID
         syncSelectedDevicePresentation(deviceID: deviceID)
+        if usesRemoteServiceUpdates {
+            sendRemoteClientPresence()
+        }
     }
 
     private func syncSelectedDevicePresentation(deviceID: String) {
@@ -383,15 +824,22 @@ final class AppState {
             errorMessage = nil
             warningMessage = nil
             lastUpdated = nil
+            isRefreshingState = false
             return
         }
 
+        isRefreshingState = refreshingStateDeviceIDs.contains(deviceID)
         if let cached = stateCacheByDeviceID[deviceID] {
             state = cached
             lastUpdated = lastUpdatedByDeviceID[deviceID]
             warningMessage = telemetryWarning(for: cached, device: device)
             if shouldHydrateEditable {
                 hydrateEditable(from: cached)
+            }
+        } else if let state, stateSummaryMatchesDevice(state, device: device) {
+            warningMessage = telemetryWarning(for: state, device: device)
+            if shouldHydrateEditable {
+                hydrateEditable(from: state)
             }
         } else {
             state = nil
@@ -408,6 +856,32 @@ final class AppState {
         warningMessage = newValue
     }
 
+    private func focusServiceSelectionOnActivity(deviceID: String) {
+        guard launchRole.isService else { return }
+        guard selectedDeviceID != deviceID else { return }
+        guard devices.contains(where: { $0.id == deviceID }) else { return }
+        selectedDeviceID = deviceID
+        syncSelectedDevicePresentation(deviceID: deviceID)
+    }
+
+    private func shouldFocusServiceSelectionOnActivity(previous: MouseState?, next: MouseState) -> Bool {
+        guard launchRole.isService else { return false }
+        guard let previous else { return false }
+
+        return previous.dpi != next.dpi ||
+            previous.dpi_stages != next.dpi_stages ||
+            previous.poll_rate != next.poll_rate ||
+            previous.sleep_timeout != next.sleep_timeout ||
+            previous.device_mode != next.device_mode ||
+            previous.low_battery_threshold_raw != next.low_battery_threshold_raw ||
+            previous.scroll_mode != next.scroll_mode ||
+            previous.scroll_acceleration != next.scroll_acceleration ||
+            previous.scroll_smart_reel != next.scroll_smart_reel ||
+            previous.active_onboard_profile != next.active_onboard_profile ||
+            previous.onboard_profile_count != next.onboard_profile_count ||
+            previous.led_value != next.led_value
+    }
+
     private func deviceIdentityKey(_ device: MouseDevice) -> String {
         if let serial = device.serial?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -420,6 +894,67 @@ final class AppState {
             device.product_id,
             device.transport.rawValue
         )
+    }
+
+    private func stateSummaryMatchesDevice(_ state: MouseState, device: MouseDevice) -> Bool {
+        let deviceSerial = device.serial?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let stateSerial = state.device.serial?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if let deviceSerial, !deviceSerial.isEmpty,
+           let stateSerial, !stateSerial.isEmpty {
+            return deviceSerial == stateSerial
+        }
+
+        return state.device.transport == device.transport &&
+            state.device.product_name == device.product_name
+    }
+
+    private func isStrictlyUnsupported(_ device: MouseDevice) -> Bool {
+        resolvedProfile(for: device) == nil && device.transport == .bluetooth
+    }
+
+    private func presentationDevice(for device: MouseDevice) -> MouseDevice? {
+        if let exactMatch = devices.first(where: { $0.id == device.id }) {
+            return exactMatch
+        }
+        let identityKey = deviceIdentityKey(device)
+        return devices.first(where: { deviceIdentityKey($0) == identityKey })
+    }
+
+    private func refreshableDevicesInPriorityOrder() -> [MouseDevice] {
+        guard !devices.isEmpty else { return [] }
+
+        var ordered: [MouseDevice] = []
+        var seen: Set<String> = []
+
+        if let selectedDevice, !isStrictlyUnsupported(selectedDevice), seen.insert(selectedDevice.id).inserted {
+            ordered.append(selectedDevice)
+        }
+
+        for device in devices where !isStrictlyUnsupported(device) {
+            guard seen.insert(device.id).inserted else { continue }
+            ordered.append(device)
+        }
+
+        return ordered
+    }
+
+    private func cacheState(_ state: MouseState, sourceDeviceID: String, presentationDeviceID: String, updatedAt: Date = Date()) {
+        stateCacheByDeviceID[sourceDeviceID] = state
+        lastUpdatedByDeviceID[sourceDeviceID] = updatedAt
+
+        if presentationDeviceID != sourceDeviceID {
+            stateCacheByDeviceID[presentationDeviceID] = state
+            lastUpdatedByDeviceID[presentationDeviceID] = updatedAt
+        }
+
+        if selectedDeviceID == presentationDeviceID {
+            lastUpdated = updatedAt
+        }
     }
 
     private func resolvedProfile(for device: MouseDevice) -> DeviceProfile? {
@@ -436,82 +971,152 @@ final class AppState {
             errorMessage = nil
             warningMessage = nil
             lastUpdated = nil
+            isRefreshingState = false
             return
         }
-        guard !selectedDeviceIsStrictlyUnsupported else {
+        guard !isStrictlyUnsupported(selectedDevice) else {
             state = nil
             warningMessage = nil
             errorMessage = nil
             lastUpdated = nil
+            isRefreshingState = false
             return
         }
-        guard !isRefreshingState, !isApplying, !hasPendingLocalEdits else {
-            AppLog.debug(
-                "AppState",
-                "refreshState skipped refreshing=\(isRefreshingState) applying=\(isApplying) pendingEdits=\(hasPendingLocalEdits)"
-            )
+        _ = await refreshState(for: selectedDevice)
+    }
+
+    private func refreshAllDeviceStates() async {
+        let devicesToRefresh = refreshableDevicesInPriorityOrder()
+        guard !devicesToRefresh.isEmpty else {
+            if let selectedDevice, isStrictlyUnsupported(selectedDevice) {
+                state = nil
+                warningMessage = nil
+                errorMessage = nil
+                lastUpdated = nil
+                isRefreshingState = false
+            } else if let selectedDeviceID {
+                syncSelectedDevicePresentation(deviceID: selectedDeviceID)
+            } else {
+                state = nil
+                warningMessage = nil
+                errorMessage = nil
+                lastUpdated = nil
+                isRefreshingState = false
+            }
             return
         }
 
-        if let cached = stateCacheByDeviceID[selectedDevice.id] {
+        for device in devicesToRefresh {
+            _ = await refreshState(for: device)
+        }
+
+        if let selectedDeviceID {
+            syncSelectedDevicePresentation(deviceID: selectedDeviceID)
+        }
+    }
+
+    @discardableResult
+    private func refreshState(for device: MouseDevice) async -> Bool {
+        guard !isStrictlyUnsupported(device) else { return false }
+        guard !refreshingStateDeviceIDs.contains(device.id) else { return false }
+        guard !isApplying else {
+            AppLog.debug("AppState", "refreshState skipped applying device=\(device.id)")
+            return false
+        }
+        guard !hasPendingLocalEditsAffecting(device) else {
+            AppLog.debug("AppState", "refreshState skipped pending-local-edits device=\(device.id)")
+            return false
+        }
+
+        if selectedDeviceID == device.id, let cached = stateCacheByDeviceID[device.id] {
             state = cached
         }
 
-        isRefreshingState = true
-        defer { isRefreshingState = false }
-        let refreshRevision = applyCoordinator.stateRevision
-        let refreshDeviceID = selectedDevice.id
+        refreshingStateDeviceIDs.insert(device.id)
+        if selectedDeviceID == device.id {
+            isRefreshingState = true
+        }
+        defer {
+            refreshingStateDeviceIDs.remove(device.id)
+            if selectedDeviceID == device.id {
+                isRefreshingState = false
+            }
+        }
 
+        let refreshRevision = applyCoordinator.stateRevision
+        let refreshDeviceID = device.id
         let start = Date()
+
         do {
-            let fetched = try await client.readState(device: selectedDevice)
+            let fetched = try await backend.readState(device: device)
             guard refreshRevision == applyCoordinator.stateRevision else {
                 AppLog.debug("AppState", "refreshState stale-drop rev=\(refreshRevision) current=\(applyCoordinator.stateRevision)")
-                return
+                return false
             }
-            guard selectedDeviceID == refreshDeviceID else {
-                AppLog.debug("AppState", "refreshState drop switched-device result device=\(refreshDeviceID) selected=\(selectedDeviceID ?? "nil")")
-                return
+            guard let presentationDevice = presentationDevice(for: device) else {
+                AppLog.debug("AppState", "refreshState drop missing-presentation device=\(refreshDeviceID)")
+                return false
             }
-            let merged = fetched.merged(with: stateCacheByDeviceID[selectedDevice.id])
-            stateCacheByDeviceID[selectedDevice.id] = merged
-            refreshFailureCountByDeviceID[selectedDevice.id] = 0
-            lastUpdatedByDeviceID[selectedDevice.id] = Date()
-            if state != merged {
-                state = merged
+
+            let presentationDeviceID = presentationDevice.id
+            let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
+            let merged = fetched.merged(
+                with: previous
+            )
+            let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: merged)
+            let updatedAt = Date()
+            cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
+            refreshFailureCountByDeviceID[refreshDeviceID] = 0
+            refreshFailureCountByDeviceID[presentationDeviceID] = 0
+            if shouldFocusOnActivity {
+                focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
             }
-            lastUpdated = lastUpdatedByDeviceID[selectedDevice.id]
-            if shouldHydrateEditable {
-                hydrateEditable(from: merged)
-                await hydrateLightingStateIfNeeded(device: selectedDevice)
-                await hydrateButtonBindingsIfNeeded(device: selectedDevice)
+
+            if selectedDeviceID == presentationDeviceID {
+                if state != merged {
+                    state = merged
+                }
+                if shouldHydrateEditable {
+                    hydrateEditable(from: merged)
+                    await hydrateLightingStateIfNeeded(device: presentationDevice)
+                    await hydrateButtonBindingsIfNeeded(device: presentationDevice)
+                }
+                errorMessage = nil
+                setTelemetryWarning(telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
             }
-            errorMessage = nil
-            setTelemetryWarning(telemetryWarning(for: merged, device: selectedDevice), device: selectedDevice)
+
             AppLog.debug(
                 "AppState",
-                "refreshState ok device=\(selectedDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
+                "refreshState ok device=\(presentationDeviceID) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
                 "values=\(merged.dpi_stages.values?.map(String.init).joined(separator: ",") ?? "nil") " +
                 "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s"
             )
+            return true
         } catch {
-            let failures = (refreshFailureCountByDeviceID[selectedDevice.id] ?? 0) + 1
-            refreshFailureCountByDeviceID[selectedDevice.id] = failures
-            if stateCacheByDeviceID[selectedDevice.id] == nil {
+            let presentationDeviceID = presentationDevice(for: device)?.id ?? refreshDeviceID
+            let failures = (refreshFailureCountByDeviceID[presentationDeviceID] ?? 0) + 1
+            refreshFailureCountByDeviceID[refreshDeviceID] = failures
+            refreshFailureCountByDeviceID[presentationDeviceID] = failures
+
+            guard selectedDeviceID == presentationDeviceID else {
+                AppLog.debug("AppState", "refreshState masked non-selected failure device=\(presentationDeviceID): \(error.localizedDescription)")
+                return false
+            }
+
+            if stateCacheByDeviceID[presentationDeviceID] == nil {
                 AppLog.error(
                     "AppState",
-                    "refreshState failed device=\(selectedDevice.id) transport=\(selectedDevice.transport.rawValue) no-cache: \(error.localizedDescription)"
+                    "refreshState failed device=\(presentationDeviceID) transport=\(device.transport.rawValue) no-cache: \(error.localizedDescription)"
                 )
                 errorMessage = error.localizedDescription
                 warningMessage = nil
             } else {
-                // Keep last known-good UI stable on transient polling failures.
                 AppLog.debug("AppState", "refreshState transient-failure masked: \(error.localizedDescription)")
                 if failures >= 3 {
                     if failures == 3 {
                         AppLog.warning(
                             "AppState",
-                            "device read unstable device=\(selectedDevice.id) failures=\(failures): \(error.localizedDescription)"
+                            "device read unstable device=\(presentationDeviceID) failures=\(failures): \(error.localizedDescription)"
                         )
                     }
                     errorMessage = "Device read is failing repeatedly (\(failures)x): \(error.localizedDescription)"
@@ -520,6 +1125,7 @@ final class AppState {
                 }
                 warningMessage = "Using the last known values while live telemetry settles."
             }
+            return false
         }
     }
 
@@ -543,8 +1149,7 @@ final class AppState {
 
     func scheduleAutoApplyDpi() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         dpiApplyTask?.cancel()
         dpiApplyTask = Task { [weak self] in
             do {
@@ -566,8 +1171,7 @@ final class AppState {
 
     func scheduleAutoApplyActiveStage() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         activeStageApplyTask?.cancel()
         activeStageApplyTask = Task { [weak self] in
             do {
@@ -586,8 +1190,7 @@ final class AppState {
 
     func scheduleAutoApplyPollRate() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         pollApplyTask?.cancel()
         pollApplyTask = Task { [weak self] in
             do {
@@ -606,8 +1209,7 @@ final class AppState {
 
     func scheduleAutoApplySleepTimeout() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         powerApplyTask?.cancel()
         powerApplyTask = Task { [weak self] in
             do {
@@ -627,8 +1229,7 @@ final class AppState {
 
     func scheduleAutoApplyDeviceMode() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         deviceModeApplyTask?.cancel()
         deviceModeApplyTask = Task { [weak self] in
             do {
@@ -648,8 +1249,7 @@ final class AppState {
 
     func scheduleAutoApplyLowBatteryThreshold() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         lowBatteryApplyTask?.cancel()
         lowBatteryApplyTask = Task { [weak self] in
             do {
@@ -668,8 +1268,7 @@ final class AppState {
 
     func scheduleAutoApplyScrollMode() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         scrollModeApplyTask?.cancel()
         scrollModeApplyTask = Task { [weak self] in
             do {
@@ -688,8 +1287,7 @@ final class AppState {
 
     func scheduleAutoApplyScrollAcceleration() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         scrollAccelerationApplyTask?.cancel()
         scrollAccelerationApplyTask = Task { [weak self] in
             do {
@@ -708,8 +1306,7 @@ final class AppState {
 
     func scheduleAutoApplyScrollSmartReel() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         scrollSmartReelApplyTask?.cancel()
         scrollSmartReelApplyTask = Task { [weak self] in
             do {
@@ -728,8 +1325,7 @@ final class AppState {
 
     func scheduleAutoApplyLedBrightness() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         ledApplyTask?.cancel()
         ledApplyTask = Task { [weak self] in
             do {
@@ -753,8 +1349,7 @@ final class AppState {
 
     func scheduleAutoApplyLedColor() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         colorApplyTask?.cancel()
         colorApplyTask = Task { [weak self] in
             do {
@@ -784,8 +1379,7 @@ final class AppState {
 
     func scheduleAutoApplyLightingEffect() {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         lightingEffectApplyTask?.cancel()
         lightingEffectApplyTask = Task { [weak self] in
             do {
@@ -851,8 +1445,7 @@ final class AppState {
 
     func scheduleAutoApplyButton(slot: Int) {
         guard !isHydrating else { return }
-        hasPendingLocalEdits = true
-        lastLocalEditAt = Date()
+        markLocalEditsPending()
         buttonApplyTask?.cancel()
         buttonApplyTask = Task { [weak self] in
             do {
@@ -979,38 +1572,51 @@ final class AppState {
     }
 
     func refreshDpiFast() async {
-        guard let selectedDevice else { return }
-        guard selectedDevice.transport == .bluetooth || selectedDevice.transport == .usb else { return }
-        guard !selectedDeviceIsStrictlyUnsupported else { return }
-        guard !isRefreshingDpiFast, !isRefreshingState, !isApplying else { return }
-        guard !hasPendingLocalEdits else { return }
-        if selectedDevice.transport == .usb,
-           let lastUSBFastDpiAt,
-           Date().timeIntervalSince(lastUSBFastDpiAt) < 0.55 {
+        guard !isApplying else { return }
+
+        let now = Date()
+        for deviceID in activeFastPollingDeviceIDs(at: now) {
+            guard let device = devices.first(where: { $0.id == deviceID }) else { continue }
+            await refreshDpiFast(for: device, now: now)
+        }
+    }
+
+    private func refreshDpiFast(for device: MouseDevice, now: Date) async {
+        guard device.transport == .bluetooth || device.transport == .usb else { return }
+        guard !isStrictlyUnsupported(device) else { return }
+        guard !refreshingFastDpiDeviceIDs.contains(device.id) else { return }
+        guard !refreshingStateDeviceIDs.contains(device.id) else { return }
+        guard !hasPendingLocalEditsAffecting(device) else { return }
+
+        if device.transport == .usb,
+           let lastUSBFastDpiAt = lastUSBFastDpiAtByDeviceID[device.id],
+           now.timeIntervalSince(lastUSBFastDpiAt) < 0.55 {
             return
         }
-        if let until = suppressFastDpiUntil {
-            if Date() < until { return }
-            suppressFastDpiUntil = nil
+        if let until = suppressFastDpiUntilByDeviceID[device.id] {
+            if now < until { return }
+            suppressFastDpiUntilByDeviceID[device.id] = nil
         }
 
-        isRefreshingDpiFast = true
-        defer { isRefreshingDpiFast = false }
-            let fastRevision = applyCoordinator.stateRevision
+        refreshingFastDpiDeviceIDs.insert(device.id)
+        defer { refreshingFastDpiDeviceIDs.remove(device.id) }
+        let fastRevision = applyCoordinator.stateRevision
 
         do {
-            guard let fast = try await client.readDpiStagesFast(device: selectedDevice) else { return }
-            guard selectedDeviceID == selectedDevice.id else { return }
-            if selectedDevice.transport == .usb {
-                lastUSBFastDpiAt = Date()
+            guard let fast = try await backend.readDpiStagesFast(device: device) else { return }
+            guard let presentationDevice = presentationDevice(for: device) else { return }
+            let readAt = Date()
+            if device.transport == .usb {
+                lastUSBFastDpiAtByDeviceID[device.id] = readAt
+                lastUSBFastDpiAtByDeviceID[presentationDevice.id] = readAt
             }
             guard fastRevision == applyCoordinator.stateRevision else {
                 AppLog.debug("AppState", "refreshDpiFast stale-drop rev=\(fastRevision) current=\(applyCoordinator.stateRevision)")
                 return
             }
-            let previous = stateCacheByDeviceID[selectedDevice.id] ?? state
+            let presentationDeviceID = presentationDevice.id
+            let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[device.id] ?? state
             guard let previous else { return }
-
             let active = max(0, min(fast.values.count - 1, fast.active))
             let currentDpiValue = fast.values[active]
             let updated = MouseState(
@@ -1031,24 +1637,39 @@ final class AppState {
                 capabilities: previous.capabilities
             )
 
-            stateCacheByDeviceID[selectedDevice.id] = updated
-            lastUpdatedByDeviceID[selectedDevice.id] = Date()
-            if state != updated {
-                state = updated
+            let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: updated)
+            cacheState(updated, sourceDeviceID: device.id, presentationDeviceID: presentationDeviceID, updatedAt: readAt)
+            if shouldFocusOnActivity {
+                focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
             }
-            lastUpdated = lastUpdatedByDeviceID[selectedDevice.id]
-            if shouldHydrateEditable {
-                hydrateEditable(from: updated)
+            if selectedDeviceID == presentationDeviceID {
+                if state != updated {
+                    state = updated
+                }
+                if shouldHydrateEditable {
+                    hydrateEditable(from: updated)
+                }
             }
         } catch {
             // Ignore fast-poll transient failures to keep UI stable.
         }
     }
 
-    private func enqueueApply(_ patch: DevicePatch) {
-        _ = applyCoordinator.enqueue(patch)
+    private func markLocalEditsPending() {
         hasPendingLocalEdits = true
         lastLocalEditAt = Date()
+        localEditDeviceIdentityKey = selectedDevice.map(deviceIdentityKey)
+    }
+
+    private func hasPendingLocalEditsAffecting(_ device: MouseDevice) -> Bool {
+        guard hasPendingLocalEdits else { return false }
+        guard let localEditDeviceIdentityKey else { return false }
+        return localEditDeviceIdentityKey == deviceIdentityKey(device)
+    }
+
+    private func enqueueApply(_ patch: DevicePatch) {
+        _ = applyCoordinator.enqueue(patch)
+        markLocalEditsPending()
 
         if applyDrainTask == nil {
             applyDrainTask = Task { [weak self] in
@@ -1063,6 +1684,7 @@ final class AppState {
             hasPendingLocalEdits = applyCoordinator.hasPending
         }
         hasPendingLocalEdits = false
+        localEditDeviceIdentityKey = nil
         applyDrainTask = nil
     }
 
@@ -1081,17 +1703,19 @@ final class AppState {
         let start = Date()
         let applyDeviceID = selectedDevice.id
         do {
-            let next = try await client.apply(device: selectedDevice, patch: patch)
-            guard selectedDeviceID == applyDeviceID else {
+            let next = try await backend.apply(device: selectedDevice, patch: patch)
+            guard let presentationDevice = presentationDevice(for: selectedDevice) else {
                 let merged = next.merged(with: stateCacheByDeviceID[applyDeviceID])
                 stateCacheByDeviceID[applyDeviceID] = merged
                 lastUpdatedByDeviceID[applyDeviceID] = Date()
-                AppLog.debug("AppState", "apply result cached for non-selected device device=\(applyDeviceID)")
+                AppLog.debug("AppState", "apply result cached for missing-presentation device=\(applyDeviceID)")
                 return
             }
-            let merged = next.merged(with: stateCacheByDeviceID[selectedDevice.id])
-            stateCacheByDeviceID[selectedDevice.id] = merged
-            if state != merged {
+            let presentationDeviceID = presentationDevice.id
+            let merged = next.merged(with: stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[applyDeviceID])
+            cacheState(merged, sourceDeviceID: applyDeviceID, presentationDeviceID: presentationDeviceID)
+            focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
+            if selectedDeviceID == presentationDeviceID, state != merged {
                 state = merged
             }
             let localEditsChangedDuringApply = (lastLocalEditAt ?? .distantPast) > start
@@ -1099,51 +1723,68 @@ final class AppState {
             if patch.dpiStages != nil || patch.activeStage != nil {
                 // Avoid showing transient in-flight stage states from fast polling
                 // while BLE latching settles after a write.
-                suppressFastDpiUntil = Date().addingTimeInterval(0.9)
+                let suppressedUntil = Date().addingTimeInterval(0.9)
+                suppressFastDpiUntilByDeviceID[applyDeviceID] = suppressedUntil
+                suppressFastDpiUntilByDeviceID[presentationDeviceID] = suppressedUntil
+                compactInteractionUntil = Date().addingTimeInterval(3.0)
             }
-            lastUpdatedByDeviceID[selectedDevice.id] = Date()
-            lastUpdated = lastUpdatedByDeviceID[selectedDevice.id]
-            if shouldHydrateEditableState {
+            if shouldHydrateEditableState, selectedDeviceID == presentationDeviceID {
                 lastLocalEditAt = nil
                 hydrateEditable(from: merged)
-            } else {
+            } else if selectedDeviceID == presentationDeviceID {
                 AppLog.debug(
                     "AppState",
                     "apply hydrate skipped pending=\(applyCoordinator.hasPending) localEditsDuringApply=\(localEditsChangedDuringApply)"
                 )
             }
             if patch.ledRGB != nil {
-                persistLightingColor(editableColor, device: selectedDevice)
-                hydratedLightingStateByDeviceID.insert(selectedDevice.id)
+                persistLightingColor(editableColor, device: presentationDevice)
+                hydratedLightingStateByDeviceID.insert(presentationDevice.id)
             }
             if let lightingEffect = patch.lightingEffect {
-                persistLightingEffect(lightingEffect, device: selectedDevice)
+                persistLightingEffect(lightingEffect, device: presentationDevice)
                 persistLightingColor(
                     RGBColor(
                         r: lightingEffect.primary.r,
                         g: lightingEffect.primary.g,
                         b: lightingEffect.primary.b
                     ),
-                    device: selectedDevice
+                    device: presentationDevice
                 )
-                hydratedLightingStateByDeviceID.insert(selectedDevice.id)
+                hydratedLightingStateByDeviceID.insert(presentationDevice.id)
             }
             if let buttonBinding = patch.buttonBinding {
-                persistButtonBinding(buttonBinding, device: selectedDevice, profile: buttonBinding.persistentProfile)
-                hydratedButtonBindingsKey = buttonBindingsHydrationKey(device: selectedDevice)
+                persistButtonBinding(buttonBinding, device: presentationDevice, profile: buttonBinding.persistentProfile)
+                hydratedButtonBindingsKey = buttonBindingsHydrationKey(device: presentationDevice)
             }
-            errorMessage = nil
-            setTelemetryWarning(telemetryWarning(for: merged, device: selectedDevice), device: selectedDevice)
+            if selectedDeviceID == presentationDeviceID {
+                errorMessage = nil
+                setTelemetryWarning(telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
+            }
             AppLog.event(
                 "AppState",
-                "apply ok device=\(selectedDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
+                "apply ok device=\(presentationDevice.id) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
                 "values=\(merged.dpi_stages.values?.map(String.init).joined(separator: ",") ?? "nil") " +
                 "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s"
             )
         } catch {
             AppLog.error("AppState", "apply failed device=\(selectedDevice.id): \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
-            warningMessage = nil
+            let shouldShowApplyFailure: Bool
+            if let currentSelectedDevice = self.selectedDevice {
+                shouldShowApplyFailure = deviceIdentityKey(currentSelectedDevice) == deviceIdentityKey(selectedDevice)
+            } else {
+                shouldShowApplyFailure = false
+            }
+            if shouldShowApplyFailure {
+                errorMessage = error.localizedDescription
+                warningMessage = nil
+                if patch.dpiStages != nil || patch.activeStage != nil {
+                    serviceStatusMessage = "DPI update failed"
+                    transientStatusUntil = Date().addingTimeInterval(4.0)
+                }
+            } else {
+                AppLog.debug("AppState", "apply failure masked for no-longer-selected device=\(selectedDevice.id)")
+            }
         }
     }
 
@@ -1236,7 +1877,7 @@ final class AppState {
                 "hydrated Bluetooth lighting color from persisted cache id=\(device.id) rgb=(\(persisted.r),\(persisted.g),\(persisted.b))"
             )
         } else if device.transport == .bluetooth,
-                  let rgb = try? await client.readLightingColor(device: device) {
+                  let rgb = try? await backend.readLightingColor(device: device) {
             editableColor = RGBColor(r: rgb.r, g: rgb.g, b: rgb.b)
             persistLightingColor(editableColor, device: device)
             AppLog.debug("AppState", "hydrated Bluetooth lighting color from device id=\(device.id) rgb=(\(rgb.r),\(rgb.g),\(rgb.b))")
@@ -1339,13 +1980,13 @@ final class AppState {
 
         for slot in slots {
             do {
-                let persistentBlock = try await client.debugUSBReadButtonBinding(
+                let persistentBlock = try await backend.debugUSBReadButtonBinding(
                     device: device,
                     slot: slot,
                     profile: persistentProfile
                 )
                 let directBlock = shouldReadDirect
-                    ? try await client.debugUSBReadButtonBinding(device: device, slot: slot, profile: 0x00)
+                    ? try await backend.debugUSBReadButtonBinding(device: device, slot: slot, profile: 0x00)
                     : nil
                 let block = directBlock ?? persistentBlock
                 if let block {

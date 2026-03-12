@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-12]
+
+### Fixed
+- Choosing `Quit` from the menu bar service now closes both the compact service and any open full app window instances, instead of only terminating the service process.
+- Multi-device service ownership now keeps baseline state polling per-device instead of per-selected-device, so the menu bar UI and main window can stay focused on different mice without either one going stale or falling into `Poll Delayed`.
+- Cross-process service snapshots no longer force both UIs onto the same "last changed" device; each UI now keeps its own selection while still receiving live state updates for every connected mouse.
+- Removed the transient `Stage x -> y DPI applied` status message because the live UI already reflects successful DPI changes directly.
+- The `Menu bar icon` preference now keeps an upgrade user's stored choice intact; only installs without a saved preference pick up the default-on behavior.
+- Choosing `Quit` from the menu bar service now only ends the current background session; it no longer silently turns off `Menu bar icon` or clears `Start at login`.
+- Toggling `Launch menu bar service at startup` no longer blocks the UI or starts a second service/app instance immediately; it now only updates the launch-agent registration for the next login, while the separate `Enable menu bar service` toggle continues to control the current session.
+- Restored the clear full-window title bar styling after the title bar icon removal accidentally dropped the shared window chrome configurator along with the accessory view.
+- Removed the experimental main-window title bar icon, and the menu bar service `Settings…` action now uses SwiftUI's settings scene opener so it reliably opens the app settings window again.
+- The menu bar service now reuses an already-open full app window when you choose `Show Open Snek`, bringing the existing app to the foreground instead of spawning duplicate full app instances.
+- The menu bar service now publishes a real localhost IPC endpoint instead of trying to serialize an `NSXPCListenerEndpoint` into defaults, which restores shared backend ownership when the main window and background service are open together and prevents dual-process USB contention.
+- When the background service is enabled, the full app now follows a service-published snapshot feed instead of polling the service for steady-state device/state updates, so hardware polling stays service-owned and both UIs converge from the same live snapshot stream.
+- Remote UI clients now send a lightweight active-presence heartbeat to the service so the service keeps its faster interactive polling cadence while the full window is open, instead of dropping back to idle timing.
+- The macOS app now keeps live telemetry and DPI/apply flows attached to the currently selected physical mouse even when the runtime device ID shifts during polling, avoiding `Poll Delayed` UI freezes and dropped apply/readback updates after recent multi-device safety changes.
+- The full app now adopts an already-running menu bar service as its hardware backend even if local service preferences are stale, preventing dual-process USB/HID contention when the compact widget and main window are open at the same time.
+
+### Changed
+- The menu bar widget now includes a device picker when multiple supported mice are connected, and the service tracks active selections per UI so only the devices currently in use get the faster interactive DPI polling path.
+- The menu bar device picker now follows the last device with meaningful DPI/config activity in the service process, so the compact UI shifts to whichever mouse was just touched without forcing the full app to change selection.
+
 ## [2026-03-11]
 
 ### Added
@@ -17,12 +40,17 @@ All notable changes to this project are documented in this file.
 - Restoring the Basilisk V3 35K top DPI button now preserves its observed default USB payload (`04 02 0F 7B 00 00 00`) instead of falling back to the generic DPI-cycle block.
 
 ### Changed
+- Fresh installs now default the menu bar icon to enabled, and the settings labels now read `Menu bar icon` and `Start at login` to match the intended behavior more closely.
+- The menu bar status glyph and the full app title bar now use the provided `snek-menu.png` branding at a smaller fitted size, and local `.dist` bundle builds now copy that resource into the app so the icon shows up outside Xcode builds.
 - Standardized app-icon generation around `OpenSnek/Branding/AppIcon-master.png` so the checked-in asset catalog, local `.app` bundle builds, and DMG artwork all use the same source image.
 - Reduced the exported icon's optical size slightly to give the Dock icon more breathing room on macOS versions where the previous full-bleed artwork read as oversized.
+- The menu bar widget now uses a custom status-item glyph with compact live-DPI text, clearer action labels, battery icon + percentage, and larger DPI stage hit targets in both the compact widget and the full app; the redundant manual refresh row and misleading chevron affordances were removed.
 
 ## [2026-03-10]
 
 ### Added
+- An optional menu bar background service for the macOS app, including a compact current-stage DPI widget with battery/status readout, quick refresh, and a fast path to launch the full windowed app while sharing the same backend owner.
+- Background-service settings in the macOS app for enabling the widget process and launching it automatically at startup, plus service-side logs under `~/Library/Logs/OpenSnek/`.
 - USB device-profile support for Razer Basilisk V3 35K (`0x00CB`) in the macOS app and shared Swift support layers, including its own button layout metadata and three-zone USB lighting IDs.
 - `OpenSnekProbe usb-raw`, a generic USB HID feature-report inspector for new-device bring-up and protocol verification.
 - Shared button-slot access metadata now distinguishes editable, protocol-read-only, and software-read-only controls so future device bring-up can document non-remappable buttons explicitly.
@@ -49,6 +77,7 @@ All notable changes to this project are documented in this file.
 - Python USB tooling now recognizes Basilisk V3 35K (`0x00CB`) and mirrors multi-zone USB lighting writes across all validated LED IDs.
 
 ### Changed
+- App-level polling is now runtime-owned instead of view-timer-owned, allowing the full app to keep its current cadence while the background widget drops to a slower idle cadence and only boosts polling when the menu is open or a DPI change was just applied.
 - Unsupported-button footnotes now use plain-language UI copy instead of protocol jargon, including the Basilisk V3 X HyperSpeed sniper/Hypershift note.
 - The polling-rate and scroll-control cards now align labels on the left and controls on the right to match the rest of the app.
 - The empty-state supported-devices list now uses smaller inline USB/BT pills so more devices fit cleanly in one row.

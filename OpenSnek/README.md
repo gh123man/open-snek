@@ -39,12 +39,14 @@ Device onboarding and capture interpretation live in:
   - `BridgeClient+USB`: USB HID state/apply path
   - `BridgeClient+Bluetooth`: BLE vendor state/apply path
 - `Sources/OpenSnek/Services/`
-  - `AppState`: top-level UI state model composed with extracted apply/persistence helpers
+  - `AppState`: top-level UI state model composed with extracted apply/persistence helpers, service settings, and app-level polling
   - `AppLog`: runtime file + OSLog logger
+  - background service/XPC helpers for the optional menu bar widget process
 - `Sources/OpenSnek/UI/`
-  - `ContentView`: shell + device refresh/fast-poll timers
+  - `ContentView`: full-window shell bound to the shared app runtime
   - `DeviceSidebarView`: device list and app utility actions
   - `DeviceDetailView`: hero card, DPI/poll/power cards, and button mapping table
+  - `ServiceMenuBarView`: compact current-stage DPI widget for the optional menu bar service
   - `UIPrimitives`: shared cards, pills, stat blocks, and color helpers
 - `App/`
   - `Info.plist`: app metadata/permissions for Xcode builds
@@ -58,6 +60,7 @@ Device onboarding and capture interpretation live in:
 - Refresh and fast-poll responses are revision-gated to drop stale results.
 - Invalid DPI payloads are ignored (with retry) to avoid UI snapback on transient malformed frames.
 - Device discovery now resolves profile metadata up front, including button layout and lighting-effect support per transport.
+- Open Snek can run either standalone or with an optional companion menu bar service. When the service is enabled, the widget and full app share one backend owner over a local XPC bridge.
 
 ## Build / Run
 
@@ -77,6 +80,12 @@ Direct app-package workflows:
 
 ```bash
 swift run --package-path OpenSnek OpenSnek
+```
+
+To run the compact background widget process directly during development:
+
+```bash
+swift run --package-path OpenSnek OpenSnek --service-mode
 ```
 
 For full app behavior (dock icon, proper activation/focus, keyboard text-entry reliability), run the app bundle path:
@@ -145,6 +154,13 @@ Runtime app logs:
 
 ```text
 ~/Library/Logs/OpenSnek/open-snek.log
+```
+
+Service startup logs (when launch-at-startup is enabled from Settings):
+
+```text
+~/Library/Logs/OpenSnek/service.stdout.log
+~/Library/Logs/OpenSnek/service.stderr.log
 ```
 
 ## Permissions

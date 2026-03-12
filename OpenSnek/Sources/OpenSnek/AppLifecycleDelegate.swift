@@ -1,10 +1,16 @@
 import AppKit
 
+@MainActor
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         AppLog.info("App", "launch version=\(version) build=\(build) logLevel=\(AppLog.currentLevel.shortLabel)")
+
+        if OpenSnekProcessRole.current.isService {
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
 
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -16,6 +22,9 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if OpenSnekProcessRole.current.isService {
+            return false
+        }
         if !flag {
             sender.windows.forEach { $0.makeKeyAndOrderFront(nil) }
         }
@@ -23,6 +32,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !OpenSnekProcessRole.current.isService
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        BackgroundServiceCoordinator.shared.stopCurrentServiceHostIfNeeded()
     }
 }

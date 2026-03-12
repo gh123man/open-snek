@@ -259,6 +259,16 @@ for bundle in "$BIN_DIR"/*.bundle; do
 done
 shopt -u nullglob
 
+if [[ -d "$PACKAGE_DIR/App/Resources" ]]; then
+  shopt -s nullglob
+  for resource in "$PACKAGE_DIR"/App/Resources/*; do
+    if [[ -f "$resource" ]]; then
+      cp "$resource" "$RESOURCES_DIR/"
+    fi
+  done
+  shopt -u nullglob
+fi
+
 ICON_INPUT="$ICON_SOURCE"
 if [[ -n "$ICON_INPUT" && ! -f "$ICON_INPUT" ]]; then
   echo "Icon source not found: $ICON_INPUT" >&2
