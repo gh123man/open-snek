@@ -516,7 +516,9 @@ final class AppState {
         do {
             try serviceCoordinator.setLaunchAtStartupEnabled(enabled)
             launchAtStartupEnabled = enabled
-            serviceStatusMessage = enabled ? "Launch at startup enabled" : "Launch at startup disabled"
+            serviceStatusMessage = enabled
+                ? "Launch at startup enabled for next login"
+                : "Launch at startup disabled"
             transientStatusUntil = Date().addingTimeInterval(3.0)
         } catch {
             errorMessage = "Launch at startup failed: \(error.localizedDescription)"

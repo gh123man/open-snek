@@ -251,35 +251,32 @@ final class BackgroundServiceCoordinator {
         let launchAgentsDirectory = launchAgentURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: launchAgentsDirectory, withIntermediateDirectories: true, attributes: nil)
 
-        let plist: [String: Any] = [
-            "Label": "io.opensnek.OpenSnek.service",
-            "ProgramArguments": [executableURL.path, "--service-mode", "--login-start"],
-            "RunAtLoad": true,
-            "KeepAlive": false,
-            "WorkingDirectory": Bundle.main.bundleURL.deletingLastPathComponent().path,
-            "StandardOutPath": ("~/Library/Logs/OpenSnek/service.stdout.log" as NSString).expandingTildeInPath,
-            "StandardErrorPath": ("~/Library/Logs/OpenSnek/service.stderr.log" as NSString).expandingTildeInPath,
-        ]
+        let plist = Self.launchAgentPropertyList(
+            executablePath: executableURL.path,
+            workingDirectoryPath: Bundle.main.bundleURL.deletingLastPathComponent().path
+        )
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: launchAgentURL, options: .atomic)
-        _ = try? runLaunchctl(arguments: ["bootstrap", "gui/\(getuid())", launchAgentURL.path])
-        _ = try? runLaunchctl(arguments: ["kickstart", "-k", "gui/\(getuid())/io.opensnek.OpenSnek.service"])
     }
 
     private func removeLaunchAgent() throws {
-        _ = try? runLaunchctl(arguments: ["bootout", "gui/\(getuid())/io.opensnek.OpenSnek.service"])
         if fileManager.fileExists(atPath: launchAgentURL.path) {
             try fileManager.removeItem(at: launchAgentURL)
         }
     }
 
-    @discardableResult
-    private func runLaunchctl(arguments: [String]) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = arguments
-        try process.run()
-        process.waitUntilExit()
-        return process.terminationStatus
+    static func launchAgentPropertyList(
+        executablePath: String,
+        workingDirectoryPath: String
+    ) -> [String: Any] {
+        [
+            "Label": "io.opensnek.OpenSnek.service",
+            "ProgramArguments": [executablePath, "--service-mode", "--login-start"],
+            "RunAtLoad": true,
+            "KeepAlive": false,
+            "WorkingDirectory": workingDirectoryPath,
+            "StandardOutPath": ("~/Library/Logs/OpenSnek/service.stdout.log" as NSString).expandingTildeInPath,
+            "StandardErrorPath": ("~/Library/Logs/OpenSnek/service.stderr.log" as NSString).expandingTildeInPath,
+        ]
     }
 }
