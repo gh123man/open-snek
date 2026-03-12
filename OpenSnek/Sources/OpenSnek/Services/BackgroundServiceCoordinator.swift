@@ -225,7 +225,7 @@ final class BackgroundServiceCoordinator {
         )
     }
 
-    static func preferredReusableApplication(
+    nonisolated static func preferredReusableApplication(
         in runningApplications: [RunningAppSnapshot],
         excluding currentProcessIdentifier: pid_t
     ) -> RunningAppSnapshot? {
@@ -269,7 +269,7 @@ final class BackgroundServiceCoordinator {
         }
     }
 
-    static func launchAgentPropertyList(
+    nonisolated static func launchAgentPropertyList(
         executablePath: String,
         workingDirectoryPath: String
     ) -> [String: Any] {

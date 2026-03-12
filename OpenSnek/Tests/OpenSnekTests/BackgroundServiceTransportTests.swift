@@ -19,13 +19,14 @@ final class BackgroundServiceTransportTests: XCTestCase {
         XCTAssertGreaterThan(publishedPort, 0)
         XCTAssertEqual(
             defaults.integer(forKey: BackgroundServiceCoordinator.pidDefaultsKey),
-            ProcessInfo.processInfo.processIdentifier
+            Int(ProcessInfo.processInfo.processIdentifier)
         )
 
         let coordinator = await MainActor.run {
             BackgroundServiceCoordinator(defaults: defaults)
         }
-        let serviceBackend = try XCTUnwrap(try await coordinator.connectToRunningService())
+        let connectedBackend = try await coordinator.connectToRunningService()
+        let serviceBackend = try XCTUnwrap(connectedBackend)
 
         let devices = try await serviceBackend.listDevices()
         XCTAssertEqual(devices.map(\.id), ["test-mouse"])
@@ -55,7 +56,7 @@ final class BackgroundServiceTransportTests: XCTestCase {
 }
 
 private actor StubServiceBackend: DeviceBackend {
-    var usesRemoteServiceTransport: Bool { false }
+    nonisolated var usesRemoteServiceTransport: Bool { false }
 
     private let device = MouseDevice(
         id: "test-mouse",
