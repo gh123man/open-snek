@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-11]
+
+### Added
+- USB device-profile support for Razer Basilisk V3 Pro (`0x00AB`) in the shared Swift registry and macOS app, with the observed 3-profile / 3-zone layout, validated wheel-tilt slots, and documented fixed clutch/profile controls.
+- `OpenSnekProbe` USB commands now accept `--pid 0x....` so bring-up and raw probes can target one attached Razer USB device without hopping between multiple mice.
+
+### Fixed
+- The Basilisk V3 Pro USB profile now exposes the validated clutch / DPI-clutch slot (`0x0F`) as an editable button with its observed native restore block (`06 05 05 01 90 01 90`).
+- The button-binding UI now exposes `DPI Clutch` as a V3 Pro-only USB remap option after probe validation showed the clutch payload can be assigned to other writable buttons, not just the native clutch slot.
+- `DPI Clutch` is now a configurable V3 Pro-only USB action in the app and probe CLI, with the held DPI value encoded into the clutch payload instead of being fixed at the observed 400-DPI default.
+- Basilisk V3 Pro profile-button probing now documents the observed remap path on slot `0x6A` but keeps it hidden in the shipped UI because repeated USB write/readback cycles were not yet stable enough to trust.
+- Extended Basilisk USB button hydration now treats Basilisk V3 Pro `0x02:0x8C` reads like the other 35K-style offset layout while keeping unsupported V3 Pro slots out of the shipped visible/writable profile.
+- Restoring the Basilisk V3 35K top DPI button now preserves its observed default USB payload (`04 02 0F 7B 00 00 00`) instead of falling back to the generic DPI-cycle block.
+
+### Changed
+- Standardized app-icon generation around `OpenSnek/Branding/AppIcon-master.png` so the checked-in asset catalog, local `.app` bundle builds, and DMG artwork all use the same source image.
+- Reduced the exported icon's optical size slightly to give the Dock icon more breathing room on macOS versions where the previous full-bleed artwork read as oversized.
+
 ## [2026-03-10]
 
 ### Added
@@ -14,6 +32,10 @@ All notable changes to this project are documented in this file.
 - A GitHub-ready diagnostics payload flow in Settings, plus a bug-report issue template that tells users how to generate and paste that payload.
 
 ### Fixed
+- Bluetooth fallback discovery no longer aliases every connected Razer BLE peripheral to the supported Basilisk V3 X HyperSpeed profile when HID permission is denied; unsupported BLE devices now stay generic/unsupported until an exact Bluetooth profile match is added.
+- Unsupported Razer USB devices no longer get hidden behind the generic unsupported screen; Open Snek now allows USB probing on unknown Razer mice, shows a warning that support is partial, and only exposes USB controls that responded during live capability probing. Unsupported Bluetooth devices remain gated to the explicit supported-device list.
+- Bluetooth vendor exchanges now target the selected device by peripheral name instead of whichever connected Razer BLE peripheral CoreBluetooth returns first, fixing supported-device failures when a supported and unsupported Bluetooth device are connected at the same time.
+- Device switching now swaps immediately to the selected device's cached state and ignores stale async refresh/apply results from the previously selected device, reducing DPI/control lag when multiple mice are connected.
 - USB lighting apply/readback on Basilisk V3 35K now targets all three validated matrix LED zones (`0x01` scroll wheel, `0x04` logo, and `0x0A` underglow) instead of only the wheel zone.
 - USB lighting effect encoding now matches the OpenRazer-documented matrix payloads for `off`, `spectrum`, `wave`, `reactive`, and breathing variants, fixing broken USB profile selections and removing an incorrect wave/spectrum mapping.
 - USB button readback normalization now handles the Basilisk V3 35K `0x02:0x8C` response layout, which differs from the Basilisk V3 X slot echo shape and caused clutch/default blocks to be misparsed.

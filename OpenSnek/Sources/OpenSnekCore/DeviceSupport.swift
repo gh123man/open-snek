@@ -122,12 +122,14 @@ public struct ButtonBindingDraft: Hashable, Codable, Sendable {
     public var hidKey: Int
     public var turboEnabled: Bool
     public var turboRate: Int
+    public var clutchDPI: Int?
 
-    public init(kind: ButtonBindingKind, hidKey: Int, turboEnabled: Bool, turboRate: Int) {
+    public init(kind: ButtonBindingKind, hidKey: Int, turboEnabled: Bool, turboRate: Int, clutchDPI: Int? = nil) {
         self.kind = kind
         self.hidKey = hidKey
         self.turboEnabled = turboEnabled
         self.turboRate = turboRate
+        self.clutchDPI = clutchDPI.map { max(100, min(30_000, $0)) }
     }
 }
 
@@ -219,6 +221,19 @@ public enum DeviceProfiles {
         ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Button", defaultKind: .default),
     ]
 
+    public static let basiliskV3ProUSBButtonSlots: [ButtonSlotDescriptor] = [
+        ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
+        ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
+        ButtonSlotDescriptor(slot: 3, friendlyName: "Middle Click", defaultKind: .middleClick),
+        ButtonSlotDescriptor(slot: 4, friendlyName: "Back Button", defaultKind: .mouseBack),
+        ButtonSlotDescriptor(slot: 5, friendlyName: "Forward Button", defaultKind: .mouseForward),
+        ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
+        ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
+        ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
+    ]
+
     public static let basiliskV335KUSBDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 14, friendlyName: "Scroll Mode Toggle", defaultKind: .default),
@@ -241,6 +256,14 @@ public enum DeviceProfiles {
         USBLightingZoneDescriptor(id: "scroll_wheel", label: "Scroll Wheel", ledIDs: [0x01]),
         USBLightingZoneDescriptor(id: "logo", label: "Logo", ledIDs: [0x04]),
         USBLightingZoneDescriptor(id: "underglow", label: "Underglow", ledIDs: [0x0A]),
+    ]
+
+    public static let basiliskV3ProUSBDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
+            access: .protocolReadOnly,
+            note: "Observed remap writes can land on this button, but the V3 Pro's USB ACK/readback path is not stable enough to ship in Open Snek yet."
+        ),
     ]
 
     public static let basiliskV3XUSB = DeviceProfile(
@@ -276,6 +299,23 @@ public enum DeviceProfiles {
         onboardProfileCount: 5
     )
 
+    public static let basiliskV3ProUSB = DeviceProfile(
+        id: .basiliskV3Pro,
+        productName: "Basilisk V3 Pro",
+        transport: .usb,
+        supportedProducts: [0x00AB],
+        buttonLayout: ButtonSlotLayout(
+            visibleSlots: basiliskV3ProUSBButtonSlots,
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 15, 52, 53],
+            documentedSlots: basiliskV3ProUSBDocumentedReadOnlySlots
+        ),
+        supportsAdvancedLightingEffects: true,
+        supportedLightingEffects: basiliskV335KUSBLightingEffects,
+        usbLightingLEDIDs: [0x01, 0x04, 0x0A],
+        usbLightingZones: basiliskV335KUSBLightingZones,
+        onboardProfileCount: 3
+    )
+
     public static let basiliskV3XBluetooth = DeviceProfile(
         id: .basiliskV3XHyperspeed,
         productName: "Basilisk V3 X HyperSpeed",
@@ -294,11 +334,41 @@ public enum DeviceProfiles {
 
     public static let all: [DeviceProfile] = [
         basiliskV3XUSB,
+        basiliskV3ProUSB,
         basiliskV335KUSB,
         basiliskV3XBluetooth,
     ]
 
     public static func resolve(vendorID: Int, productID: Int, transport: DeviceTransportKind) -> DeviceProfile? {
         all.first(where: { $0.matches(vendorID: vendorID, productID: productID, transport: transport) })
+    }
+
+    public static func resolveBluetoothFallback(name: String?) -> DeviceProfile? {
+        guard let normalizedName = normalizedBluetoothFallbackName(name) else { return nil }
+        return all.first { profile in
+            guard profile.transport == .bluetooth else { return false }
+            let normalizedProduct = normalizedBluetoothFallbackName(profile.productName) ?? ""
+            return normalizedName == normalizedProduct ||
+                normalizedName.contains(normalizedProduct) ||
+                normalizedProduct.contains(normalizedName)
+        }
+    }
+
+    private static func normalizedBluetoothFallbackName(_ name: String?) -> String? {
+        guard let name else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let lowered = trimmed.lowercased()
+        let withoutRazerPrefix: String
+        if lowered.hasPrefix("razer ") {
+            withoutRazerPrefix = String(trimmed.dropFirst(6))
+        } else {
+            withoutRazerPrefix = trimmed
+        }
+
+        let pieces = withoutRazerPrefix.lowercased().split { !$0.isLetter && !$0.isNumber }
+        let normalized = pieces.joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
     }
 }

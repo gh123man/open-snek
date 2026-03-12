@@ -21,6 +21,7 @@ public enum DeviceTransportKind: String, CaseIterable, Codable, Hashable, Sendab
 
 public enum DeviceProfileID: String, Codable, Hashable, Sendable {
     case basiliskV3XHyperspeed = "basilisk_v3_x_hyperspeed"
+    case basiliskV3Pro = "basilisk_v3_pro"
     case basiliskV335K = "basilisk_v3_35k"
 }
 
@@ -394,6 +395,7 @@ public struct ButtonBindingPatch: Sendable, Hashable, Codable {
     public let hidKey: Int?
     public let turboEnabled: Bool
     public let turboRate: Int?
+    public let clutchDPI: Int?
     public let persistentProfile: Int
     public let writeDirectLayer: Bool
 
@@ -403,6 +405,7 @@ public struct ButtonBindingPatch: Sendable, Hashable, Codable {
         hidKey: Int?,
         turboEnabled: Bool = false,
         turboRate: Int? = nil,
+        clutchDPI: Int? = nil,
         persistentProfile: Int = 1,
         writeDirectLayer: Bool = true
     ) {
@@ -411,6 +414,7 @@ public struct ButtonBindingPatch: Sendable, Hashable, Codable {
         self.hidKey = hidKey
         self.turboEnabled = turboEnabled
         self.turboRate = turboRate
+        self.clutchDPI = clutchDPI.map { max(100, min(30_000, $0)) }
         self.persistentProfile = max(1, min(5, persistentProfile))
         self.writeDirectLayer = writeDirectLayer
     }
@@ -489,6 +493,7 @@ public extension DevicePatch {
 public enum ButtonBindingKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case `default`
     case dpiCycle = "dpi_cycle"
+    case dpiClutch = "dpi_clutch"
     case leftClick = "left_click"
     case rightClick = "right_click"
     case middleClick = "middle_click"
@@ -505,6 +510,7 @@ public enum ButtonBindingKind: String, CaseIterable, Identifiable, Codable, Send
         switch self {
         case .default: return "Default"
         case .dpiCycle: return "DPI Cycle"
+        case .dpiClutch: return "DPI Clutch"
         case .leftClick: return "Left Click"
         case .rightClick: return "Right Click"
         case .middleClick: return "Middle Click"
@@ -521,7 +527,7 @@ public enum ButtonBindingKind: String, CaseIterable, Identifiable, Codable, Send
         switch self {
         case .leftClick, .rightClick, .middleClick, .scrollUp, .scrollDown, .mouseBack, .mouseForward, .keyboardSimple:
             return true
-        case .default, .dpiCycle, .clearLayer:
+        case .default, .dpiCycle, .dpiClutch, .clearLayer:
             return false
         }
     }

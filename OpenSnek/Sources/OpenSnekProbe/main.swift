@@ -40,11 +40,11 @@ enum OpenSnekProbe {
                 }
             }
         case "usb-info":
-            let usb = try USBProbeClient()
+            let usb = try USBProbeClient(productID: try parseOptionalUSBPID(Array(args.dropFirst())))
             print("usb \(usb.describe())")
         case "usb-button-read":
             let parsed = try parseUSBButtonReadArgs(Array(args.dropFirst()))
-            let usb = try USBProbeClient()
+            let usb = try USBProbeClient(productID: parsed.productID)
             print("usb \(usb.describe())")
             let slot = UInt8(max(0, min(255, parsed.slot)))
             for profile in parsed.profiles {
@@ -56,7 +56,7 @@ enum OpenSnekProbe {
             }
         case "usb-button-set":
             let parsed = try parseUSBButtonSetArgs(Array(args.dropFirst()))
-            let usb = try USBProbeClient()
+            let usb = try USBProbeClient(productID: parsed.productID)
             print("usb \(usb.describe())")
             let wrote = try usb.writeButtonBinding(
                 profiles: parsed.profiles,
@@ -64,7 +64,8 @@ enum OpenSnekProbe {
                 kind: parsed.kind,
                 hidKey: parsed.hidKey,
                 turboEnabled: parsed.turboEnabled,
-                turboRate: parsed.turboRate
+                turboRate: parsed.turboRate,
+                clutchDPI: parsed.clutchDPI
             )
             guard wrote else {
                 throw ProbeError.protocolError("USB button write did not return success")
@@ -77,7 +78,7 @@ enum OpenSnekProbe {
             }
         case "usb-button-set-raw":
             let parsed = try parseUSBButtonSetRawArgs(Array(args.dropFirst()))
-            let usb = try USBProbeClient()
+            let usb = try USBProbeClient(productID: parsed.productID)
             print("usb \(usb.describe())")
             let slot = UInt8(max(0, min(255, parsed.slot)))
             var wroteAny = false
@@ -96,7 +97,7 @@ enum OpenSnekProbe {
             }
         case "usb-raw":
             let parsed = try parseUSBRawArgs(Array(args.dropFirst()))
-            let usb = try USBProbeClient()
+            let usb = try USBProbeClient(productID: parsed.productID)
             print("usb \(usb.describe())")
             let response = try usb.rawCommand(
                 classID: parsed.classID,
@@ -124,14 +125,14 @@ enum OpenSnekProbe {
           OpenSnekProbe dpi-read
           OpenSnekProbe dpi-set --values 1600,6400 [--active 1] [--verify-retries 6] [--verify-delay-ms 120]
           OpenSnekProbe dpi-cycle --sequence 800,6400;1600,6400 --loops 10 [--active 1] [--sleep-ms 120]
-          OpenSnekProbe usb-info
-          OpenSnekProbe usb-button-read --slot 4 [--profile default|direct|both]
-          OpenSnekProbe usb-button-set --slot 4 --kind right_click [--profile both] [--hid-key 4] [--turbo on|off] [--turbo-rate 142]
-          OpenSnekProbe usb-button-set-raw --slot 4 --hex 01010200000000 [--profile default|direct|both]
-          OpenSnekProbe usb-raw --class 0x02 --cmd 0x8C --size 0x0A [--args 01,04,00,00,00,00,00,00,00,00]
+          OpenSnekProbe usb-info [--pid 0x00ab]
+          OpenSnekProbe usb-button-read --slot 4 [--profile default|direct|both] [--pid 0x00ab]
+          OpenSnekProbe usb-button-set --slot 4 --kind right_click [--profile both] [--hid-key 4] [--turbo on|off] [--turbo-rate 142] [--clutch-dpi 400] [--pid 0x00ab]
+          OpenSnekProbe usb-button-set-raw --slot 4 --hex 01010200000000 [--profile default|direct|both] [--pid 0x00ab]
+          OpenSnekProbe usb-raw --class 0x02 --cmd 0x8C --size 0x0A [--args 01,04,00,00,00,00,00,00,00,00] [--pid 0x00ab]
 
         USB button kinds:
-          default left_click right_click middle_click scroll_up scroll_down mouse_back mouse_forward keyboard_simple clear_layer
+          default dpi_cycle dpi_clutch left_click right_click middle_click scroll_up scroll_down mouse_back mouse_forward keyboard_simple clear_layer
         """
     }
 
@@ -162,17 +163,17 @@ enum OpenSnekProbe {
         return (sequence, loops, active, sleepMs, verifyRetries, verifyDelayMs)
     }
 
-    private static func parseUSBButtonReadArgs(_ args: [String]) throws -> (slot: Int, profiles: [UInt8], hypershift: UInt8) {
+    private static func parseUSBButtonReadArgs(_ args: [String]) throws -> (slot: Int, profiles: [UInt8], hypershift: UInt8, productID: Int?) {
         let flags = parseFlags(args)
         guard let slotRaw = flags["--slot"], let slot = Int(slotRaw) else {
             throw ProbeError.usage("Missing --slot\n\(usageText)")
         }
         let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01])
         let hypershift = UInt8(max(0, min(1, Int(flags["--hypershift"] ?? "0") ?? 0)))
-        return (slot, profiles, hypershift)
+        return (slot, profiles, hypershift, try parseOptionalUSBPID(args))
     }
 
-    private static func parseUSBButtonSetArgs(_ args: [String]) throws -> (slot: Int, kind: String, hidKey: Int, turboEnabled: Bool, turboRate: Int, profiles: [UInt8]) {
+    private static func parseUSBButtonSetArgs(_ args: [String]) throws -> (slot: Int, kind: String, hidKey: Int, turboEnabled: Bool, turboRate: Int, clutchDPI: Int?, profiles: [UInt8], productID: Int?) {
         let flags = parseFlags(args)
         guard let slotRaw = flags["--slot"], let slot = Int(slotRaw) else {
             throw ProbeError.usage("Missing --slot\n\(usageText)")
@@ -181,7 +182,7 @@ enum OpenSnekProbe {
             throw ProbeError.usage("Missing --kind\n\(usageText)")
         }
         let validKinds: Set<String> = [
-            "default", "left_click", "right_click", "middle_click",
+            "default", "dpi_cycle", "dpi_clutch", "left_click", "right_click", "middle_click",
             "scroll_up", "scroll_down", "mouse_back", "mouse_forward",
             "keyboard_simple", "clear_layer",
         ]
@@ -192,11 +193,12 @@ enum OpenSnekProbe {
         let hidKey = max(0, min(255, Int(flags["--hid-key"] ?? "4") ?? 4))
         let turboEnabled = parseBoolean(flags["--turbo"] ?? "off")
         let turboRate = max(1, min(255, Int(flags["--turbo-rate"] ?? "142") ?? 142))
+        let clutchDPI = Int(flags["--clutch-dpi"] ?? "").map { max(100, min(30_000, $0)) }
         let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01, 0x00])
-        return (slot, kindRaw, hidKey, turboEnabled, turboRate, profiles)
+        return (slot, kindRaw, hidKey, turboEnabled, turboRate, clutchDPI, profiles, try parseOptionalUSBPID(args))
     }
 
-    private static func parseUSBButtonSetRawArgs(_ args: [String]) throws -> (slot: Int, functionBlock: [UInt8], profiles: [UInt8]) {
+    private static func parseUSBButtonSetRawArgs(_ args: [String]) throws -> (slot: Int, functionBlock: [UInt8], profiles: [UInt8], productID: Int?) {
         let flags = parseFlags(args)
         guard let slotRaw = flags["--slot"], let slot = Int(slotRaw) else {
             throw ProbeError.usage("Missing --slot\n\(usageText)")
@@ -209,10 +211,10 @@ enum OpenSnekProbe {
             throw ProbeError.usage("--hex must decode to exactly 7 bytes")
         }
         let profiles = try parseUSBProfiles(flags["--profile"], defaultProfiles: [0x01, 0x00])
-        return (slot, functionBlock, profiles)
+        return (slot, functionBlock, profiles, try parseOptionalUSBPID(args))
     }
 
-    private static func parseUSBRawArgs(_ args: [String]) throws -> (classID: UInt8, cmdID: UInt8, size: UInt8, args: [UInt8], noTxnRescan: Bool, responseAttempts: Int, responseDelayUs: useconds_t) {
+    private static func parseUSBRawArgs(_ args: [String]) throws -> (classID: UInt8, cmdID: UInt8, size: UInt8, args: [UInt8], noTxnRescan: Bool, responseAttempts: Int, responseDelayUs: useconds_t, productID: Int?) {
         let flags = parseFlags(args)
         guard let classRaw = flags["--class"], let classID = parseUInt8(classRaw) else {
             throw ProbeError.usage("Missing or invalid --class\n\(usageText)")
@@ -225,7 +227,16 @@ enum OpenSnekProbe {
         let noTxnRescan = parseBoolean(flags["--no-txn-rescan"] ?? "off")
         let responseAttempts = max(1, Int(flags["--response-attempts"] ?? "12") ?? 12)
         let responseDelayUs = useconds_t(max(1_000, Int(flags["--response-delay-us"] ?? "40000") ?? 40_000))
-        return (classID, cmdID, size, parsedArgs, noTxnRescan, responseAttempts, responseDelayUs)
+        return (classID, cmdID, size, parsedArgs, noTxnRescan, responseAttempts, responseDelayUs, try parseOptionalUSBPID(args))
+    }
+
+    private static func parseOptionalUSBPID(_ args: [String]) throws -> Int? {
+        let flags = parseFlags(args)
+        guard let raw = flags["--pid"] else { return nil }
+        guard let value = parseUInt16(raw) else {
+            throw ProbeError.usage("Invalid --pid '\(raw)'")
+        }
+        return Int(value)
     }
 
     private static func parseUSBProfiles(_ raw: String?, defaultProfiles: [UInt8]) throws -> [UInt8] {
@@ -320,6 +331,15 @@ enum OpenSnekProbe {
             return UInt8(trimmed.dropFirst(2), radix: 16)
         }
         return UInt8(trimmed, radix: 10)
+    }
+
+    private static func parseUInt16(_ raw: String) -> UInt16? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.lowercased().hasPrefix("0x") {
+            return UInt16(trimmed.dropFirst(2), radix: 16)
+        }
+        return UInt16(trimmed, radix: 10)
     }
 
     private static func describeUSBFunctionBlock(_ block: [UInt8]) -> String {

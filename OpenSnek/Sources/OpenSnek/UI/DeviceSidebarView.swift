@@ -48,7 +48,7 @@ struct DeviceSidebarView: View {
 
                         ForEach(appState.devices) { device in
                             Button {
-                                appState.selectedDeviceID = device.id
+                                appState.selectDevice(device.id)
                             } label: {
                                 DeviceRow(
                                     device: device,

@@ -30,6 +30,22 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.onboardProfileCount, 5)
     }
 
+    func testResolveUSBProfileForBasiliskV3Pro() {
+        let profile = DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AB, transport: .usb)
+        XCTAssertEqual(profile?.id, .basiliskV3Pro)
+        XCTAssertEqual(profile?.buttonLayout.writableSlots, [1, 2, 3, 4, 5, 9, 10, 15, 52, 53])
+        XCTAssertEqual(profile?.buttonLayout.visibleSlots.map(\.slot), [1, 2, 3, 4, 5, 9, 10, 15, 52, 53])
+        XCTAssertEqual(profile?.buttonLayout.documentedSlots.map(\.slot), [1, 2, 3, 4, 5, 9, 10, 15, 52, 53, 106])
+        XCTAssertEqual(profile?.buttonLayout.access(for: 15), .editable)
+        XCTAssertEqual(profile?.buttonLayout.access(for: 106), .protocolReadOnly)
+        XCTAssertEqual(profile?.buttonLayout.softwareReadOnlySlots.map(\.slot), [])
+        XCTAssertEqual(profile?.supportsAdvancedLightingEffects, true)
+        XCTAssertEqual(profile?.supportedLightingEffects, [.off, .staticColor, .spectrum, .wave])
+        XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01, 0x04, 0x0A])
+        XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel", "logo", "underglow"])
+        XCTAssertEqual(profile?.onboardProfileCount, 3)
+    }
+
     func testResolveBluetoothProfileForBasiliskV3X() {
         let profile = DeviceProfiles.resolve(vendorID: 0x068E, productID: 0x00BA, transport: .bluetooth)
         XCTAssertEqual(profile?.id, .basiliskV3XHyperspeed)
@@ -39,6 +55,17 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.buttonLayout.softwareReadOnlySlots.map(\.slot), [6])
         XCTAssertEqual(profile?.supportsAdvancedLightingEffects, false)
         XCTAssertEqual(profile?.onboardProfileCount, 1)
+    }
+
+    func testResolveBluetoothFallbackProfileByName() {
+        let exact = DeviceProfiles.resolveBluetoothFallback(name: "Basilisk V3 X HyperSpeed")
+        XCTAssertEqual(exact?.id, .basiliskV3XHyperspeed)
+
+        let prefixed = DeviceProfiles.resolveBluetoothFallback(name: "Razer Basilisk V3 X HyperSpeed")
+        XCTAssertEqual(prefixed?.id, .basiliskV3XHyperspeed)
+
+        let unknown = DeviceProfiles.resolveBluetoothFallback(name: "Razer Cobra Pro")
+        XCTAssertNil(unknown)
     }
 
     func testPersistenceKeysPreferSerial() {

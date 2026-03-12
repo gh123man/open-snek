@@ -5,6 +5,33 @@ import OpenSnekHardware
 import OpenSnekProtocols
 
 extension BridgeClient {
+    func resolvedUSBStateCapabilities(
+        device: MouseDevice,
+        profile: DeviceProfile?,
+        stages: (Int, [Int])?,
+        poll: Int?,
+        sleepTimeout: Int?,
+        led: Int?
+    ) -> Capabilities {
+        if profile != nil {
+            return Capabilities(
+                dpi_stages: true,
+                poll_rate: true,
+                power_management: true,
+                button_remap: true,
+                lighting: true
+            )
+        }
+
+        return Capabilities(
+            dpi_stages: stages != nil,
+            poll_rate: poll != nil,
+            power_management: sleepTimeout != nil,
+            button_remap: false,
+            lighting: led != nil
+        )
+    }
+
     func debugUSBReadButtonBinding(
         device: MouseDevice,
         slot: Int,
@@ -109,6 +136,15 @@ extension BridgeClient {
         let scrollSmartReel = try getScrollSmartReel(session, device)
         let onboardProfile = try getOnboardProfileInfo(session, device)
         let led = try getScrollLEDBrightness(session, device)
+        let profile = usbDeviceProfile(for: device)
+        let capabilities = resolvedUSBStateCapabilities(
+            device: device,
+            profile: profile,
+            stages: stages,
+            poll: poll,
+            sleepTimeout: sleepTimeout,
+            led: led
+        )
 
         let active = stages?.0 ?? 0
         let values = stages?.1 ?? [dpi.0]
@@ -136,7 +172,7 @@ extension BridgeClient {
             active_onboard_profile: onboardProfile?.active,
             onboard_profile_count: onboardProfile?.count ?? max(1, device.onboard_profile_count),
             led_value: led,
-            capabilities: Capabilities(dpi_stages: true, poll_rate: true, power_management: true, button_remap: true, lighting: true)
+            capabilities: capabilities
         )
     }
 
@@ -526,6 +562,7 @@ extension BridgeClient {
         hidKey: Int,
         turboEnabled: Bool,
         turboRate: Int,
+        clutchDPI: Int?,
         persistentProfile: Int,
         writeDirectLayer: Bool
     ) throws -> Bool {
@@ -536,6 +573,7 @@ extension BridgeClient {
             hidKey: hidKey,
             turboEnabled: turboEnabled && bindingKind.supportsTurbo,
             turboRate: turboRate,
+            clutchDPI: clutchDPI,
             profileID: device.profile_id
         )
         let clampedSlot = UInt8(max(0, min(255, slot)))

@@ -91,7 +91,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
-DEFAULT_ICON_PNG="$PACKAGE_DIR/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
+DEFAULT_ICON_PNG="$PACKAGE_DIR/Branding/AppIcon-master.png"
 
 PRODUCT_NAME="OpenSnek"
 DISPLAY_NAME="Open Snek"
@@ -166,6 +166,16 @@ detect_preferred_sign_identity() {
   return 0
 }
 
+identity_is_available() {
+  local requested="$1"
+  [[ -n "$requested" ]] || return 1
+  [[ "$requested" == "adhoc" || "$requested" == "-" ]] && return 0
+  [[ "$requested" == "none" || "$requested" == "auto" || "$requested" == "preserve" ]] && return 1
+  command -v security >/dev/null 2>&1 || return 1
+
+  security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/"/{print $2}' | grep -Fx -- "$requested" >/dev/null 2>&1
+}
+
 detect_existing_sign_identity() {
   local app_bundle="$1"
   [[ -d "$app_bundle" ]] || return 1
@@ -191,14 +201,14 @@ resolve_sign_identity() {
 
   case "$requested" in
     preserve)
-      if [[ -n "$existing" ]]; then
+      if [[ -n "$existing" ]] && { [[ "$existing" == "adhoc" || "$existing" == "-" ]] || identity_is_available "$existing"; }; then
         printf '%s\n' "$existing"
       else
         printf '%s\n' "auto"
       fi
       ;;
     auto)
-      if [[ -n "$existing" && "$existing" != "adhoc" ]]; then
+      if [[ -n "$existing" && "$existing" != "adhoc" && "$existing" != "-" ]] && identity_is_available "$existing"; then
         printf '%s\n' "$existing"
       else
         printf '%s\n' "auto"
@@ -217,13 +227,21 @@ fi
 RESOLVED_SIGN_IDENTITY="$(resolve_sign_identity "$SIGN_IDENTITY" "$EXISTING_SIGN_IDENTITY")"
 if [[ "$SIGN_IDENTITY" == "preserve" ]]; then
   if [[ -n "$EXISTING_SIGN_IDENTITY" ]]; then
-    echo "[open-snek] Reusing existing signing identity: $EXISTING_SIGN_IDENTITY"
+    if [[ "$RESOLVED_SIGN_IDENTITY" == "$EXISTING_SIGN_IDENTITY" ]]; then
+      echo "[open-snek] Reusing existing signing identity: $EXISTING_SIGN_IDENTITY"
+    else
+      echo "[open-snek] Existing signing identity unavailable; falling back to auto signing"
+    fi
   else
     echo "[open-snek] No prior app signature found; falling back to auto signing"
   fi
 fi
 if [[ "$SIGN_IDENTITY" == "auto" && -n "$EXISTING_SIGN_IDENTITY" && "$EXISTING_SIGN_IDENTITY" != "adhoc" ]]; then
-  echo "[open-snek] Auto mode reusing existing signing identity: $EXISTING_SIGN_IDENTITY"
+  if [[ "$RESOLVED_SIGN_IDENTITY" == "$EXISTING_SIGN_IDENTITY" ]]; then
+    echo "[open-snek] Auto mode reusing existing signing identity: $EXISTING_SIGN_IDENTITY"
+  else
+    echo "[open-snek] Existing signing identity unavailable; auto mode will detect another identity or use ad-hoc signing"
+  fi
 fi
 if [[ "$SIGN_IDENTITY" == "auto" && "$EXISTING_SIGN_IDENTITY" == "adhoc" ]]; then
   echo "[open-snek] Existing app is ad-hoc signed; auto mode will try a real signing identity for stable TCC grants"

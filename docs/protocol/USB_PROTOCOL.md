@@ -182,6 +182,15 @@ TxnID:    0x1F
 
 Validated slot ids on Basilisk V3 X HyperSpeed (`0x00B9`): `0x01..0x05`, `0x09`, `0x0A`, `0x60`.
 
+Validated slot ids on Basilisk V3 Pro (`0x00AB`): `0x01..0x05`, `0x09`, `0x0A`, `0x0F`, `0x34`, `0x35`, `0x6A`.
+Observed control labels on `0x00AB`:
+- `0x0F`: sensitivity clutch / DPI clutch
+- `0x34`: wheel tilt left
+- `0x35`: wheel tilt right
+- `0x6A`: profile button
+- observed non-match: `0x60` does not read back like the Basilisk V3 35K top DPI-button block and is not currently shipped as a validated V3 Pro control
+- observed write behavior: slot `0x0F` accepts remap writes and restores cleanly to its default block; slot `0x6A` accepted remap writes during probe, but repeated write/readback cycles became unstable enough that Open Snek keeps it hidden for now
+
 Validated slot ids on Basilisk V3 35K (`0x00CB`): `0x01..0x05`, `0x09`, `0x0A`, `0x0E`, `0x0F`, `0x34`, `0x35`, `0x60`, `0x6A`.
 Observed control labels on `0x00CB`:
 - `0x0E`: scroll-mode toggle
@@ -197,17 +206,24 @@ Validated function block examples:
 - keyboard key `A` (HID `0x04`): `02 02 00 04 00 00 00`
 - disable: `00 00 00 00 00 00 00`
 - DPI cycle action: `06 01 06 00 00 00 00`
-- Basilisk V3 35K wheel-tilt defaults (`0x34`, `0x35`): `01 01 02 00 00 00 00`
+- Basilisk V3 Pro DPI clutch action: `06 05 05 01 90 01 90`
+- Basilisk V3 Pro DPI clutch action at 800 DPI: `06 05 05 03 20 03 20`
+- Basilisk V3 Pro sensitivity-clutch default (`0x0F`): `06 05 05 01 90 01 90`
+- Basilisk V3 Pro / 35K wheel-tilt defaults (`0x34`, `0x35`): `01 01 02 00 00 00 00`
 - Basilisk V3 35K sensitivity-clutch default (`0x0F`): `02 02 00 09 00 00 00`
+- Basilisk V3 Pro / 35K profile-button default (`0x6A`): `12 01 01 00 00 00 00`
 - Basilisk V3 35K observed alternate DPI-button block (`0x60`): `04 02 0F 7B 00 00 00`
-- Basilisk V3 35K profile-button default (`0x6A`): `12 01 01 00 00 00 00`
 
 Client note:
 - USB function blocks are not BLE `p0/p1/p2` payloads. Use `class,len,data[]` encoding directly.
 - Legacy non-analog write command `0x02:0x0D` is still observed in ecosystem notes but is fallback-only on this device.
-- Basilisk V3 35K (`0x00CB`) `0x02:0x8C` reads do not use one fixed payload offset for every slot. Observed 35K slots decode from `response[11..<18]`; treating `response[10...]` as the block causes false positives and mislabels on extra buttons such as `0x60` and `0x6A`.
+- Basilisk V3 Pro (`0x00AB`) and Basilisk V3 35K (`0x00CB`) `0x02:0x8C` reads do not use the simpler Basilisk V3 X payload shape. Observed extended-layout slots decode from `response[11..<18]`; treating `response[10...]` as the block causes false positives and mislabels on extra controls.
 - Always validate the echoed `profile` and `slot` bytes before decoding a `0x02:0x8C` read. This device will otherwise yield stale-looking success frames that can be mistaken for additional slots.
 - Open Snek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
+- On the observed V3 Pro clutch slot (`0x0F`), the default block is not a simple mouse/keyboard payload; preserve `06 05 05 01 90 01 90` when restoring the native clutch behavior.
+- For the observed V3 Pro clutch payload `06 05 05 <xhi> <xlo> <yhi> <ylo>`, the trailing four bytes are configurable DPI values. Open Snek currently writes one user-facing DPI scalar and mirrors it to X/Y.
+- The same V3 Pro clutch block was also written/read back successfully on slot `0x04`, so Open Snek exposes `DPI Clutch` as a V3 Pro-only remap action for other writable USB slots.
+- On the observed V3 Pro profile-button slot (`0x6A`), remap writes can land, but repeated `0x02:0x0C` / `0x02:0x8C` cycles eventually returned timeout/no-response frames during probing. Keep this slot out of shipped UI until that write/readback path is stable.
 - Treat button access as three separate categories during new-device bring-up:
   - `editable`: validated over `0x02:0x0C`
   - `protocol-read-only`: readable from `0x02:0x8C`, but no validated writable path
@@ -225,6 +241,10 @@ TxnID:    0x1F
 
 Observed on Basilisk V3 35K (`0x00CB`):
 - response payload `01 00 05` on USB, indicating active profile `1` and `5` onboard profiles
+- the corresponding low-bit write candidate (`0x00:0x07`) is not yet validated for active-profile switching
+
+Observed on Basilisk V3 Pro (`0x00AB`):
+- response payload `01 00 03` on USB, indicating active profile `1` and `3` onboard profiles
 - the corresponding low-bit write candidate (`0x00:0x07`) is not yet validated for active-profile switching
 
 ---
@@ -340,7 +360,7 @@ Args:     [0] = VARSTORE (0x01), [1] = enabled (0x00/0x01)
 
 ### Class 0x0F - Scroll LED Brightness and Effects
 
-Validated on Basilisk V3 X HyperSpeed (`0x00B9`) and Basilisk V3 35K (`0x00CB`) over USB.
+Validated on Basilisk V3 X HyperSpeed (`0x00B9`), Basilisk V3 Pro (`0x00AB`), and Basilisk V3 35K (`0x00CB`) over USB.
 
 #### Get/Set Scroll LED Brightness
 ```
@@ -358,8 +378,13 @@ Validated LED IDs on `0x00CB`:
 - `0x04`: logo
 - `0x0A`: underglow
 
+Validated LED IDs on `0x00AB`:
+- `0x01`: scroll wheel
+- `0x04`: logo
+- `0x0A`: underglow
+
 Client note:
-- For whole-device USB lighting on Basilisk V3 35K, apply brightness/effect writes to all validated LED IDs (`0x01`, `0x04`, and `0x0A`).
+- For whole-device USB lighting on Basilisk V3 Pro and Basilisk V3 35K, apply brightness/effect writes to all validated LED IDs (`0x01`, `0x04`, and `0x0A`).
 
 #### Set Scroll LED Effects
 ```
@@ -471,6 +496,18 @@ Effects:
 | Poll Rates | 125, 500, 1000 Hz |
 | Validated matrix LEDs | `0x01` scroll wheel, `0x04` logo, `0x0A` underglow |
 | Extra validated button slots | `0x0E` scroll mode (protocol-read-only), `0x0F` sensitivity clutch (software-read-only / report-4 `0x51`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x60` DPI button, `0x6A` profile button (software-read-only / report-4 `0x50`) |
+
+### Razer Basilisk V3 Pro (0x00AB)
+
+| Setting | Value |
+|---------|-------|
+| USB VID:PID | `1532:00AB` |
+| Transaction ID | `0x1F` |
+| DPI Stages | 5 |
+| Onboard Profiles | 3 |
+| Validated matrix LEDs | `0x01` scroll wheel, `0x04` logo, `0x0A` underglow |
+| Extra validated button slots | `0x0F` sensitivity clutch / DPI clutch (editable; default `06 05 05 01 90 01 90`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x6A` profile button (default `12 01 01 00 00 00 00`, remap path observed but not yet reliable enough to ship) |
+| Button-read layout note | `0x02:0x8C` extended slots decode from `response[11..<18]`, matching the 35K-style offset rather than the Basilisk V3 X shape |
 
 ### Transaction ID by Device
 

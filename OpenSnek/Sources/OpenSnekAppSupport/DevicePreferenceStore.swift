@@ -78,7 +78,8 @@ public final class DevicePreferenceStore: @unchecked Sendable {
             kind: binding.kind,
             hidKey: binding.kind == .keyboardSimple ? max(4, min(231, binding.hidKey ?? 4)) : 4,
             turboEnabled: binding.kind.supportsTurbo ? binding.turboEnabled : false,
-            turboRate: max(1, min(255, binding.turboRate ?? 0x8E))
+            turboRate: max(1, min(255, binding.turboRate ?? 0x8E)),
+            clutchDPI: binding.kind == .dpiClutch ? max(100, min(30_000, binding.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI)) : nil
         )
         savePersistedButtonBindings(device: device, bindings: persisted, profile: profile)
     }
@@ -90,7 +91,8 @@ public final class DevicePreferenceStore: @unchecked Sendable {
                 kindRaw: pair.value.kind.rawValue,
                 hidKey: pair.value.hidKey,
                 turboEnabled: pair.value.turboEnabled,
-                turboRate: pair.value.turboRate
+                turboRate: pair.value.turboRate,
+                clutchDPI: pair.value.clutchDPI
             )
         }
         guard let data = try? JSONEncoder().encode(encoded) else { return }
@@ -121,7 +123,8 @@ public final class DevicePreferenceStore: @unchecked Sendable {
                 kind: kind,
                 hidKey: max(4, min(231, pair.value.hidKey)),
                 turboEnabled: kind.supportsTurbo ? pair.value.turboEnabled : false,
-                turboRate: max(1, min(255, pair.value.turboRate))
+                turboRate: max(1, min(255, pair.value.turboRate)),
+                clutchDPI: kind == .dpiClutch ? max(100, min(30_000, pair.value.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI)) : nil
             )
         }
     }
@@ -147,6 +150,7 @@ private struct PersistedButtonBinding: Codable {
     let hidKey: Int
     let turboEnabled: Bool
     let turboRate: Int
+    let clutchDPI: Int?
 }
 
 private struct PersistedLightingEffect: Codable {

@@ -6,6 +6,8 @@ This document is the single source of truth for feature parity between the USB H
 
 Target device baseline:
 - Basilisk V3 X HyperSpeed (`USB PID 0x00B9`, `BT PID 0x00BA`)
+- Basilisk V3 Pro (`USB PID 0x00AB`)
+- Basilisk V3 35K (`USB PID 0x00CB`)
 
 Transport paths:
 - USB/2.4GHz: 90-byte HID report protocol
@@ -35,7 +37,7 @@ Legend:
 | Scroll acceleration | `02:96/16` | unknown vendor key | both scripts (HID path) | PARTIAL | BLE vendor mapping missing. OpenSnek reads/writes on USB and hides the control when unsupported. |
 | Scroll smart reel | `02:97/17` | unknown vendor key | both scripts (HID path) | PARTIAL | BLE vendor mapping missing. OpenSnek reads/writes on USB and hides the control when unsupported. |
 | Scroll LED brightness | `0F:84/04` (`VARSTORE`, `LED=0x01`) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated; BLE vendor key not mapped |
-| Scroll LED effects | `0F:02` (none/spectrum/wave/static/reactive/breath) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated on Basilisk V3 X |
+| Scroll LED effects | `0F:02` (none/spectrum/wave/static/reactive/breath) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated on Basilisk V3 X; multi-zone IDs are also validated on Basilisk V3 Pro / 35K |
 | Button remapping | class `0x02`, `0x8C/0x0C` button-function block | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB validated (`OpenSnek` + `OpenSnekProbe`) | PARTIAL | USB uses `profile,slot,hypershift` + 7-byte function block (`class,len,data[5]`); mouse + simple keyboard remaps validate on `0x00B9`, including default restore behavior and readback. BLE slot `0x06` remains rejected (`status 0x03`); macro/media catalogs still pending on both paths. |
 | Lighting/effects | class `0x0F` (OpenRazer documented) | mode (`10 03`) + scalar (`10 85`/`10 05`) + frame stream (`10 04`) | USB scroll LED effects + BLE mode/scalar/frame writes | PARTIAL | Capture review shows a shared BLE stream path for advanced effects, but OpenSnek keeps Bluetooth app controls static-only for now because the streamed profiles are software-driven and not yet good enough to ship. |
 | Profiles | partially documented in ecosystem | unknown | none | UNKNOWN | Needs capture-backed mapping |
@@ -77,6 +79,21 @@ Validated in-session over USB:
 - shipped client behavior: normalize `0x60` to a user-facing `DPI Cycle` action and allow binding `DPI Cycle` to any writable USB slot
 - client note: `0x02:0x8C` response layout is not identical to `0x00B9`; clients must validate echoed `profile`/`slot` bytes before choosing the 35K function-block offset
 - observed profile summary getter on `0x00CB`: `0x00:0x87` -> `<active,0x00,count>`; active-profile write path remains unresolved
+
+## Validated Device Profile (Basilisk V3 Pro, USB PID `0x00AB`)
+
+Validated in-session over USB:
+- working: serial, firmware, device mode read/write, poll-rate read/write, DPI/stages, battery, core USB telemetry
+- working: matrix brightness/effect writes on all validated LED IDs (`0x01` scroll wheel, `0x04` logo, `0x0A` underglow)
+- working: button remap read/write/readback on the shared writable Basilisk slots, wheel-tilt (`0x34`, `0x35`), and the sensitivity clutch / DPI clutch (`0x0F`)
+- observed V3 Pro clutch default block on `0x0F`: `06 05 05 01 90 01 90`
+- observed V3 Pro clutch DPI parameterization: writing `06 05 05 03 20 03 20` read back cleanly as an 800-DPI clutch payload on slot `0x04`
+- observed V3 Pro clutch remap portability: the same block was written/read back successfully on slot `0x04`, so Open Snek treats `DPI Clutch` as a V3 Pro USB remap action and not only as the native clutch button's default
+- observed profile-button default block on `0x6A`: `12 01 01 00 00 00 00`
+- observed profile-button remap behavior on `0x6A`: right-click writes/readback can succeed, but repeated write/readback cycles later returned timeout/no-response frames; Open Snek keeps this slot hidden until the USB ACK/readback path is reliable
+- observed non-match on `0x60`: it does not read back like the 35K top DPI-button block and is not exposed as a validated V3 Pro slot
+- client note: `0x02:0x8C` response layout on the observed extended slots matches the 35K-style offset (`response[11..<18]`) rather than the Basilisk V3 X shape
+- observed profile summary getter on `0x00AB`: `0x00:0x87` -> `<active,0x00,count=3>`; active-profile write path remains unresolved
 
 ## Validated BT Profile (Basilisk V3 X HyperSpeed BT PID `0x00BA`, macOS stack)
 

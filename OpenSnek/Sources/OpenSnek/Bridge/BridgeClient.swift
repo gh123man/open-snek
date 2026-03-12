@@ -22,7 +22,6 @@ actor BridgeClient {
 
     let usbVID = 0x1532
     let btVID = 0x068E
-    let fallbackBTPID = 0x00BA
 
     func listDevices() async throws -> [MouseDevice] {
         let start = Date()
@@ -114,25 +113,17 @@ actor BridgeClient {
         if !hasBluetoothDevice, result.isEmpty, openResult == kIOReturnNotPermitted {
             do {
                 _ = try await btExchange([], timeout: 0.8)
-                let fallbackID = String(format: "%04x:%04x:%08x:%@", btVID, fallbackBTPID, 0, DeviceTransportKind.bluetooth.rawValue)
-                let profile = DeviceProfiles.resolve(vendorID: btVID, productID: fallbackBTPID, transport: .bluetooth)
-                let fallback = MouseDevice(
-                    id: fallbackID,
-                    vendor_id: btVID,
-                    product_id: fallbackBTPID,
-                    product_name: "Razer Bluetooth Mouse",
-                    transport: .bluetooth,
-                    path_b64: "",
-                    serial: nil,
-                    firmware: nil,
-                    location_id: 0,
-                    profile_id: profile?.id,
-                    button_layout: profile?.buttonLayout,
-                    supports_advanced_lighting_effects: profile?.supportsAdvancedLightingEffects ?? false,
-                    onboard_profile_count: profile?.onboardProfileCount ?? 1
-                )
+                guard let summary = await btVendorClient.currentPeripheralSummary() else {
+                    throw BridgeError.commandFailed("Bluetooth fallback discovery resolved no peripheral identity")
+                }
+                let fallback = Self.makeBluetoothFallbackDevice(summary: summary)
                 result.append(fallback)
-                AppLog.event("Bridge", "listDevices added Bluetooth fallback device after HID permission denial")
+                AppLog.event(
+                    "Bridge",
+                    "listDevices added Bluetooth fallback device after HID permission denial " +
+                    "name=\(fallback.product_name) product=0x\(String(format: "%04x", fallback.product_id)) " +
+                    "supported=\(fallback.profile_id != nil)"
+                )
             } catch {
                 AppLog.error("Bridge", "Bluetooth fallback discovery failed: \(error.localizedDescription)")
             }
@@ -148,6 +139,34 @@ actor BridgeClient {
         }
         AppLog.event("Bridge", "listDevices count=\(sorted.count) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
         return sorted
+    }
+
+    nonisolated static func makeBluetoothFallbackDevice(
+        summary: BLEVendorTransportClient.ConnectedPeripheralSummary
+    ) -> MouseDevice {
+        let profile = DeviceProfiles.resolveBluetoothFallback(name: summary.name)
+        let productID = profile?.supportedProducts.first ?? 0
+        let productName = summary.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? summary.name!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : (profile?.productName ?? "Razer Bluetooth Device")
+        let locationID = Int(UInt32(truncatingIfNeeded: summary.identifier.uuidString.hashValue))
+        let id = String(format: "%04x:%04x:%08x:%@", 0x068E, productID, locationID, DeviceTransportKind.bluetooth.rawValue)
+
+        return MouseDevice(
+            id: id,
+            vendor_id: 0x068E,
+            product_id: productID,
+            product_name: productName,
+            transport: .bluetooth,
+            path_b64: "",
+            serial: nil,
+            firmware: nil,
+            location_id: locationID,
+            profile_id: profile?.id,
+            button_layout: profile?.buttonLayout,
+            supports_advanced_lighting_effects: profile?.supportsAdvancedLightingEffects ?? false,
+            onboard_profile_count: profile?.onboardProfileCount ?? 1
+        )
     }
 
     func readState(device: MouseDevice) async throws -> MouseState {
@@ -204,7 +223,7 @@ actor BridgeClient {
 
     func readDpiStagesFast(device: MouseDevice) async throws -> (active: Int, values: [Int])? {
         if device.transport == .bluetooth {
-            guard let parsed = try await btGetDpiStages(deviceID: device.id) else { return nil }
+            guard let parsed = try await btGetDpiStages(device: device) else { return nil }
             return (active: parsed.active, values: parsed.values)
         }
 
@@ -242,7 +261,7 @@ actor BridgeClient {
         guard device.transport == .bluetooth else { return nil }
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: .lightingFrameGet)
-        let notifies = try await btExchange([header], timeout: 0.6)
+        let notifies = try await btExchange([header], timeout: 0.6, device: device)
         guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
             AppLog.debug("Bridge", "readLightingColor no-payload device=\(device.id) notifies=\(notifies.count)")
             return nil
@@ -267,32 +286,32 @@ actor BridgeClient {
                 if let cached = btDpiSnapshotByDeviceID[device.id] {
                     current = cached
                 } else {
-                    current = try await btGetDpiStageSnapshot(deviceID: device.id)
+                    current = try await btGetDpiStageSnapshot(device: device)
                 }
                 guard let current else {
                     throw BridgeError.commandFailed("Failed to read current Bluetooth DPI stages")
                 }
                 let stages = patch.dpiStages ?? Array(current.slots.prefix(current.count))
                 let active = patch.activeStage ?? current.active
-                guard try await btSetDpiStages(deviceID: device.id, active: active, values: stages) else {
+                guard try await btSetDpiStages(device: device, active: active, values: stages) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth DPI stages")
                 }
             }
 
             if let brightness = patch.ledBrightness {
-                guard try await btSetLightingValue(value: brightness) else {
+                guard try await btSetLightingValue(device: device, value: brightness) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth lighting value")
                 }
             }
 
             if let rgb = patch.ledRGB {
-                guard try await btSetLightingRGB(r: rgb.r, g: rgb.g, b: rgb.b) else {
+                guard try await btSetLightingRGB(device: device, r: rgb.r, g: rgb.g, b: rgb.b) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth RGB")
                 }
             }
 
             if let effect = patch.lightingEffect {
-                let applied = try await btApplyLightingEffectFallback(effect: effect)
+                let applied = try await btApplyLightingEffectFallback(device: device, effect: effect)
                 if !applied {
                     AppLog.debug(
                         "Bridge",
@@ -308,6 +327,7 @@ actor BridgeClient {
                 let turboEnabled = kind.supportsTurbo && binding.turboEnabled
                 let turboRate = UInt16(max(1, min(255, binding.turboRate ?? 0x8E)))
                 guard try await btSetButtonBinding(
+                    device: device,
                     slot: slot,
                     kind: kind,
                     hidKey: hidKey,
@@ -321,6 +341,7 @@ actor BridgeClient {
             if let timeout = patch.sleepTimeout {
                 let clamped = max(60, min(900, timeout))
                 guard try await btSetScalar(
+                    device: device,
                     key: .powerTimeoutSet,
                     value: clamped,
                     size: 2,
@@ -629,6 +650,7 @@ actor BridgeClient {
                 let hidKey = binding.hidKey ?? 4
                 let turboEnabled = binding.kind.supportsTurbo && binding.turboEnabled
                 let turboRate = max(1, min(255, binding.turboRate ?? 0x8E))
+                let clutchDPI = binding.kind == .dpiClutch ? max(100, min(30_000, binding.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI)) : nil
                 guard try runUSBWrite({
                     try setButtonBindingUSB(
                         $0,
@@ -638,6 +660,7 @@ actor BridgeClient {
                         hidKey: hidKey,
                         turboEnabled: turboEnabled,
                         turboRate: turboRate,
+                        clutchDPI: clutchDPI,
                         persistentProfile: binding.persistentProfile,
                         writeDirectLayer: binding.writeDirectLayer
                     )

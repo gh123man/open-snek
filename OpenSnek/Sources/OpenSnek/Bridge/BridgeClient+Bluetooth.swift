@@ -5,14 +5,14 @@ import OpenSnekProtocols
 
 extension BridgeClient {
     func readBluetoothState(device: MouseDevice, session: USBHIDControlSession?) async throws -> MouseState {
-        let btStages = (try? await btGetDpiStages(deviceID: device.id))
+        let btStages = (try? await btGetDpiStages(device: device))
             ?? btDpiSnapshotByDeviceID[device.id].map { snapshot in
                 (active: snapshot.active, values: Array(snapshot.slots.prefix(snapshot.count)), marker: snapshot.marker)
             }
-        let batteryRaw = (try? await btGetScalar(key: .batteryRaw, size: 1)) ?? nil
-        let batteryStatus = (try? await btGetScalar(key: .batteryStatus, size: 1)) ?? nil
-        let lighting = (try? await btGetScalar(key: .lightingGet, size: 1)) ?? nil
-        let sleepTimeout = (try? await btGetScalar(key: .powerTimeoutGet, size: 2)) ?? nil
+        let batteryRaw = (try? await btGetScalar(device: device, key: .batteryRaw, size: 1)) ?? nil
+        let batteryStatus = (try? await btGetScalar(device: device, key: .batteryStatus, size: 1)) ?? nil
+        let lighting = (try? await btGetScalar(device: device, key: .lightingGet, size: 1)) ?? nil
+        let sleepTimeout = (try? await btGetScalar(device: device, key: .powerTimeoutGet, size: 2)) ?? nil
 
         let batteryPct: Int?
         if let batteryRaw {
@@ -67,21 +67,21 @@ extension BridgeClient {
     ) async throws -> MouseState {
         let btStages: (active: Int, values: [Int], marker: UInt8)?
         if includeDpi {
-            btStages = try await btGetDpiStages(deviceID: device.id)
+            btStages = try await btGetDpiStages(device: device)
         } else {
             btStages = nil
         }
 
         let lighting: Int?
         if includeLighting {
-            lighting = try await btGetScalar(key: .lightingGet, size: 1)
+            lighting = try await btGetScalar(device: device, key: .lightingGet, size: 1)
         } else {
             lighting = nil
         }
 
         let sleepTimeout: Int?
         if includePower {
-            sleepTimeout = try await btGetScalar(key: .powerTimeoutGet, size: 2)
+            sleepTimeout = try await btGetScalar(device: device, key: .powerTimeoutGet, size: 2)
         } else {
             sleepTimeout = nil
         }
@@ -129,12 +129,16 @@ extension BridgeClient {
         return btReqID
     }
 
-    func btExchange(_ writes: [Data], timeout: TimeInterval = 0.8) async throws -> [Data] {
+    func btExchange(_ writes: [Data], timeout: TimeInterval = 0.8, device: MouseDevice? = nil) async throws -> [Data] {
         let start = Date()
         await btAcquireExchangeLock()
         defer { btReleaseExchangeLock() }
 
-        let result = try await btVendorClient.run(writes: writes, timeout: timeout)
+        let result = try await btVendorClient.run(
+            writes: writes,
+            timeout: timeout,
+            preferredPeripheralName: device?.product_name
+        )
         AppLog.debug(
             "Bridge",
             "btExchange writes=\(writes.count) timeout=\(String(format: "%.2f", timeout))s " +
@@ -162,10 +166,10 @@ extension BridgeClient {
         next.resume()
     }
 
-    func btGetScalar(key: BLEVendorProtocol.Key, size: Int) async throws -> Int? {
+    func btGetScalar(device: MouseDevice, key: BLEVendorProtocol.Key, size: Int) async throws -> Int? {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: key)
-        let notifies = try await btExchange([header], timeout: 0.5)
+        let notifies = try await btExchange([header], timeout: 0.5, device: device)
         guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req), payload.count >= size else {
             return nil
         }
@@ -174,11 +178,11 @@ extension BridgeClient {
         }
     }
 
-    func btSetScalar(key: BLEVendorProtocol.Key, value: Int, size: Int, payloadLength: UInt8) async throws -> Bool {
+    func btSetScalar(device: MouseDevice, key: BLEVendorProtocol.Key, value: Int, size: Int, payloadLength: UInt8) async throws -> Bool {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildWriteHeader(req: req, payloadLength: payloadLength, key: key)
         let payload = Data((0..<size).map { idx in UInt8((value >> (8 * idx)) & 0xFF) })
-        let notifies = try await btExchange([header, payload], timeout: 0.9)
+        let notifies = try await btExchange([header, payload], timeout: 0.9, device: device)
         return btAckSuccess(notifies: notifies, req: req)
     }
 
@@ -192,11 +196,11 @@ extension BridgeClient {
         return false
     }
 
-    func btGetDpiStages(deviceID: String) async throws -> (active: Int, values: [Int], marker: UInt8)? {
+    func btGetDpiStages(device: MouseDevice) async throws -> (active: Int, values: [Int], marker: UInt8)? {
         for attempt in 0..<2 {
             let req = nextBTReq()
             let header = BLEVendorProtocol.buildReadHeader(req: req, key: .dpiStagesGet)
-            let notifies = try await btExchange([header], timeout: 0.6)
+            let notifies = try await btExchange([header], timeout: 0.6, device: device)
             guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req),
                   let parsed = BLEVendorProtocol.parseDpiStages(blob: payload) else {
                 if attempt == 0 { continue }
@@ -209,57 +213,57 @@ extension BridgeClient {
                   parsed.values.allSatisfy({ $0 >= 100 && $0 <= 30_000 }) else {
                 AppLog.debug(
                     "Bridge",
-                    "btGetDpiStages ignored invalid payload device=\(deviceID) values=\(parsed.values) active=\(parsed.active) attempt=\(attempt + 1)"
+                    "btGetDpiStages ignored invalid payload device=\(device.id) values=\(parsed.values) active=\(parsed.active) attempt=\(attempt + 1)"
                 )
                 if attempt == 0 { continue }
                 return nil
             }
 
-            if var expected = btExpectedDpiByDeviceID[deviceID] {
+            if var expected = btExpectedDpiByDeviceID[device.id] {
                 let parsedValues = Array(parsed.values.prefix(expected.values.count))
                 if parsed.active == expected.active && parsedValues == expected.values {
-                    btExpectedDpiByDeviceID[deviceID] = nil
+                    btExpectedDpiByDeviceID[device.id] = nil
                 } else if Date() < expected.expiresAt, expected.remainingMasks > 0 {
                     expected.remainingMasks -= 1
-                    btExpectedDpiByDeviceID[deviceID] = expected
+                    btExpectedDpiByDeviceID[device.id] = expected
                     AppLog.debug(
                         "Bridge",
-                        "btGetDpiStages stale-read masked device=\(deviceID) expectedActive=\(expected.active) expectedValues=\(expected.values) " +
+                        "btGetDpiStages stale-read masked device=\(device.id) expectedActive=\(expected.active) expectedValues=\(expected.values) " +
                         "actualActive=\(parsed.active) actualValues=\(parsed.values) remainingMasks=\(expected.remainingMasks)"
                     )
                     return (active: expected.active, values: expected.values, marker: parsed.marker)
                 } else {
-                    btExpectedDpiByDeviceID[deviceID] = nil
+                    btExpectedDpiByDeviceID[device.id] = nil
                 }
             }
 
             if let snap = BLEVendorProtocol.parseDpiStageSnapshot(blob: payload) {
-                btDpiSnapshotByDeviceID[deviceID] = snap
+                btDpiSnapshotByDeviceID[device.id] = snap
             }
-            AppLog.debug("Bridge", "btGetDpiStages device=\(deviceID) active=\(parsed.active) values=\(parsed.values)")
+            AppLog.debug("Bridge", "btGetDpiStages device=\(device.id) active=\(parsed.active) values=\(parsed.values)")
             return (active: parsed.active, values: parsed.values, marker: parsed.marker)
         }
         return nil
     }
 
-    func btGetDpiStageSnapshot(deviceID: String) async throws -> (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)? {
+    func btGetDpiStageSnapshot(device: MouseDevice) async throws -> (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)? {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: .dpiStagesGet)
-        let notifies = try await btExchange([header], timeout: 0.6)
+        let notifies = try await btExchange([header], timeout: 0.6, device: device)
         guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req),
               let parsed = BLEVendorProtocol.parseDpiStageSnapshot(blob: payload) else {
             return nil
         }
-        btDpiSnapshotByDeviceID[deviceID] = parsed
+        btDpiSnapshotByDeviceID[device.id] = parsed
         return parsed
     }
 
-    func btSetDpiStages(deviceID: String, active: Int, values: [Int]) async throws -> Bool {
+    func btSetDpiStages(device: MouseDevice, active: Int, values: [Int]) async throws -> Bool {
         let current: (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)?
-        if let cached = btDpiSnapshotByDeviceID[deviceID] {
+        if let cached = btDpiSnapshotByDeviceID[device.id] {
             current = cached
         } else {
-            current = try await btGetDpiStageSnapshot(deviceID: deviceID)
+            current = try await btGetDpiStageSnapshot(device: device)
         }
         let marker = current?.marker ?? 0x03
         let count = max(1, min(5, values.count))
@@ -280,20 +284,20 @@ extension BridgeClient {
         )
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildWriteHeader(req: req, payloadLength: 0x26, key: .dpiStagesSet)
-        let notifies = try await btExchange([header, payload.prefix(20), payload.suffix(from: 20)], timeout: 0.9)
+        let notifies = try await btExchange([header, payload.prefix(20), payload.suffix(from: 20)], timeout: 0.9, device: device)
         let ok = btAckSuccess(notifies: notifies, req: req)
-        AppLog.debug("Bridge", "btSetDpiStages device=\(deviceID) reqActive=\(active) reqValues=\(values) count=\(count) ok=\(ok)")
+        AppLog.debug("Bridge", "btSetDpiStages device=\(device.id) reqActive=\(active) reqValues=\(values) count=\(count) ok=\(ok)")
         if ok {
             let expectedActive = max(0, min(count - 1, active))
             let expectedValues = Array(mergedSlots.prefix(count))
-            btDpiSnapshotByDeviceID[deviceID] = (
+            btDpiSnapshotByDeviceID[device.id] = (
                 active: expectedActive,
                 count: count,
                 slots: mergedSlots,
                 stageIDs: currentStageIDs,
                 marker: marker
             )
-            btExpectedDpiByDeviceID[deviceID] = (
+            btExpectedDpiByDeviceID[device.id] = (
                 active: expectedActive,
                 values: expectedValues,
                 expiresAt: Date().addingTimeInterval(1.2),
@@ -303,11 +307,11 @@ extension BridgeClient {
         return ok
     }
 
-    func btSetLightingValue(value: Int) async throws -> Bool {
-        try await btSetScalar(key: .lightingSet, value: max(0, min(255, value)), size: 1, payloadLength: 0x01)
+    func btSetLightingValue(device: MouseDevice, value: Int) async throws -> Bool {
+        try await btSetScalar(device: device, key: .lightingSet, value: max(0, min(255, value)), size: 1, payloadLength: 0x01)
     }
 
-    func btSetLightingRGB(r: Int, g: Int, b: Int) async throws -> Bool {
+    func btSetLightingRGB(device: MouseDevice, r: Int, g: Int, b: Int) async throws -> Bool {
         let payload = Data([
             0x04, 0x00, 0x00, 0x00,
             0x00,
@@ -317,16 +321,16 @@ extension BridgeClient {
         ])
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildWriteHeader(req: req, payloadLength: 0x08, key: .lightingFrameSet)
-        let notifies = try await btExchange([header, payload], timeout: 0.9)
+        let notifies = try await btExchange([header, payload], timeout: 0.9, device: device)
         return btAckSuccess(notifies: notifies, req: req)
     }
 
-    func btApplyLightingEffectFallback(effect: LightingEffectPatch) async throws -> Bool {
+    func btApplyLightingEffectFallback(device: MouseDevice, effect: LightingEffectPatch) async throws -> Bool {
         switch effect.kind {
         case .off:
-            return try await btSetLightingValue(value: 0)
+            return try await btSetLightingValue(device: device, value: 0)
         case .staticColor:
-            return try await btSetLightingRGB(r: effect.primary.r, g: effect.primary.g, b: effect.primary.b)
+            return try await btSetLightingRGB(device: device, r: effect.primary.r, g: effect.primary.g, b: effect.primary.b)
         case .spectrum, .wave, .reactive, .pulseRandom, .pulseSingle, .pulseDual:
             return false
         }
@@ -345,6 +349,7 @@ extension BridgeClient {
     }
 
     func btSetButtonBinding(
+        device: MouseDevice,
         slot: UInt8,
         kind: ButtonBindingKind,
         hidKey: UInt8,
@@ -360,7 +365,7 @@ extension BridgeClient {
         )
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildWriteHeader(req: req, payloadLength: 0x0A, key: .buttonBind(slot: slot))
-        let notifies = try await btExchange([header, payload], timeout: 0.9)
+        let notifies = try await btExchange([header, payload], timeout: 0.9, device: device)
         return btAckSuccess(notifies: notifies, req: req)
     }
 }

@@ -3,6 +3,16 @@ import CoreBluetooth
 import OpenSnekProtocols
 
 public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
+    public struct ConnectedPeripheralSummary: Sendable {
+        public let name: String?
+        public let identifier: UUID
+
+        public init(name: String?, identifier: UUID) {
+            self.name = name
+            self.identifier = identifier
+        }
+    }
+
     private let queue = DispatchQueue(label: "open.snek.bt.vendor")
 
     private var central: CBCentralManager?
@@ -16,8 +26,13 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
     private var finishWorkItem: DispatchWorkItem?
     private var timeoutWorkItem: DispatchWorkItem?
     private var isNotifyReady = false
+    private var preferredPeripheralName: String?
 
-    public func run(writes: [Data], timeout: TimeInterval = 2.2) async throws -> [Data] {
+    public func run(
+        writes: [Data],
+        timeout: TimeInterval = 2.2,
+        preferredPeripheralName: String? = nil
+    ) async throws -> [Data] {
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Data], any Error>) in
             queue.async {
                 guard self.completion == nil else {
@@ -31,6 +46,7 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
                 self.finishWorkItem = nil
                 self.timeoutWorkItem?.cancel()
                 self.timeoutWorkItem = nil
+                self.preferredPeripheralName = preferredPeripheralName?.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 self.completion = { output in
                     continuation.resume(with: output)
@@ -47,6 +63,20 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
                 }
                 self.timeoutWorkItem = timeoutItem
                 self.queue.asyncAfter(deadline: .now() + timeout, execute: timeoutItem)
+            }
+        }
+    }
+
+    public func currentPeripheralSummary() async -> ConnectedPeripheralSummary? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                guard let peripheral = self.peripheral else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(
+                    returning: ConnectedPeripheralSummary(name: peripheral.name, identifier: peripheral.identifier)
+                )
             }
         }
     }
@@ -81,13 +111,18 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
         guard let central else { return }
         guard central.state == .poweredOn else { return }
 
-        if isNotifyReady, peripheral?.state == .connected, writeChar != nil, notifyChar != nil {
+        if isNotifyReady,
+           let peripheral,
+           peripheral.state == .connected,
+           writeChar != nil,
+           notifyChar != nil,
+           peripheralMatchesPreference(peripheral) {
             sendNextWriteIfReady()
             return
         }
 
         let peripherals = central.retrieveConnectedPeripherals(withServices: [CBUUID(nsuuid: BLEVendorProtocol.serviceUUID)])
-        guard let connected = peripherals.first else {
+        guard let connected = preferredPeripheral(from: peripherals) else {
             queue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 guard let self, self.completion != nil else { return }
                 self.ensureConnectedAndReady()
@@ -95,6 +130,11 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
             return
         }
 
+        if peripheral?.identifier != connected.identifier {
+            isNotifyReady = false
+            writeChar = nil
+            notifyChar = nil
+        }
         peripheral = connected
         connected.delegate = self
         if connected.state == .connected {
@@ -102,6 +142,32 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
         } else {
             central.connect(connected)
         }
+    }
+
+    private func preferredPeripheral(from peripherals: [CBPeripheral]) -> CBPeripheral? {
+        guard let preferredPeripheralName, !preferredPeripheralName.isEmpty else {
+            return peripherals.first
+        }
+
+        return peripherals.first(where: { peripheralMatchesPreference($0) }) ?? peripherals.first
+    }
+
+    private func peripheralMatchesPreference(_ peripheral: CBPeripheral) -> Bool {
+        guard let preferredPeripheralName, !preferredPeripheralName.isEmpty else { return true }
+        guard let actualName = normalizedName(peripheral.name) else { return false }
+        guard let preferredName = normalizedName(preferredPeripheralName) else { return true }
+        return actualName == preferredName ||
+            actualName.contains(preferredName) ||
+            preferredName.contains(actualName)
+    }
+
+    private func normalizedName(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let tokens = trimmed.lowercased().split { !$0.isLetter && !$0.isNumber }
+        let normalized = tokens.joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func finish(_ output: Result<[Data], Error>) {

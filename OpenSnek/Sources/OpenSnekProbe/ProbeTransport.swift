@@ -36,7 +36,7 @@ final class USBProbeClient {
     private let productID: Int
     private let profileID: DeviceProfileID?
 
-    init() throws {
+    init(productID preferredProductID: Int? = nil) throws {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: usbVID] as CFDictionary)
         let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -57,6 +57,7 @@ final class USBProbeClient {
                 USBHIDSupport.intProperty(candidate, key: kIOHIDVendorIDKey as CFString) == usbVID,
                 let product = USBHIDSupport.intProperty(candidate, key: kIOHIDProductIDKey as CFString)
             else { continue }
+            if let preferredProductID, product != preferredProductID { continue }
             let transport = (USBHIDSupport.stringProperty(candidate, key: kIOHIDTransportKey as CFString) ?? "").lowercased()
             if transport.contains("bluetooth") { continue }
 
@@ -69,6 +70,11 @@ final class USBProbeClient {
         }
 
         guard let best else {
+            if let preferredProductID {
+                throw ProbeError.protocolError(
+                    "No non-Bluetooth USB Razer HID control interface found for pid 0x\(String(format: "%04x", preferredProductID))"
+                )
+            }
             throw ProbeError.protocolError("No non-Bluetooth USB Razer HID control interface found")
         }
 
@@ -80,7 +86,7 @@ final class USBProbeClient {
     }
 
     func describe() -> String {
-        "\(deviceID) pid=0x\(String(productID, radix: 16))"
+        "\(deviceID) pid=0x\(String(format: "%04x", productID))"
     }
 
     func readButtonFunction(profile: UInt8, slot: UInt8, hypershift: UInt8 = 0x00) throws -> [UInt8]? {
@@ -132,7 +138,8 @@ final class USBProbeClient {
         kind: String,
         hidKey: Int,
         turboEnabled: Bool,
-        turboRate: Int
+        turboRate: Int,
+        clutchDPI: Int?
     ) throws -> Bool {
         guard let bindingKind = ButtonBindingKind(rawValue: kind) else {
             throw ProbeError.usage("Invalid --kind '\(kind)'")
@@ -143,6 +150,7 @@ final class USBProbeClient {
             hidKey: hidKey,
             turboEnabled: turboEnabled && bindingKind.supportsTurbo,
             turboRate: turboRate,
+            clutchDPI: clutchDPI,
             profileID: profileID
         )
         let clampedSlot = UInt8(max(0, min(255, slot)))
