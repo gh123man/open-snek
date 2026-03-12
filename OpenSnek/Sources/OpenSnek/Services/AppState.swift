@@ -543,13 +543,12 @@ final class AppState {
         serviceCoordinator.launchFullAppProcess(arguments: ["--open-settings"])
     }
 
-    func terminateServiceProcess() {
-        serviceCoordinator.setBackgroundServiceEnabled(false)
+    func prepareForCurrentServiceProcessTermination() {
         serviceCoordinator.stopCurrentServiceHostIfNeeded()
-        if launchAtStartupEnabled {
-            try? serviceCoordinator.setLaunchAtStartupEnabled(false)
-            launchAtStartupEnabled = false
-        }
+    }
+
+    func terminateServiceProcess() {
+        prepareForCurrentServiceProcessTermination()
         NSApp.terminate(nil)
     }
 

@@ -46,6 +46,30 @@ final class BackgroundServiceCoordinatorTests: XCTestCase {
         XCTAssertTrue(backgroundServiceEnabled)
     }
 
+    func testQuittingCurrentServiceProcessDoesNotMutateStoredPreferences() async {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(true, forKey: BackgroundServiceCoordinator.backgroundServiceEnabledDefaultsKey)
+        defaults.set(true, forKey: BackgroundServiceCoordinator.launchAtStartupDefaultsKey)
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let appState = await MainActor.run {
+            AppState(launchRole: .service, serviceCoordinator: coordinator, autoStart: false)
+        }
+
+        await MainActor.run {
+            appState.prepareForCurrentServiceProcessTermination()
+        }
+
+        let backgroundServiceEnabled = await MainActor.run { coordinator.backgroundServiceEnabled }
+        let launchAtStartupEnabled = await MainActor.run { coordinator.launchAtStartupEnabled }
+        XCTAssertTrue(backgroundServiceEnabled)
+        XCTAssertTrue(launchAtStartupEnabled)
+    }
+
     func testPreferredReusableApplicationPrefersActiveRegularApp() {
         let selected = BackgroundServiceCoordinator.preferredReusableApplication(
             in: [
