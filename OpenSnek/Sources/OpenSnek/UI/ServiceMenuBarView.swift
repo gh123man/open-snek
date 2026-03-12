@@ -220,7 +220,7 @@ struct ServiceMenuBarStatusItemLabel: View {
 
     var body: some View {
         ServiceMenuBarStatusGlyph(isConnected: appState.selectedDevice != nil)
-            .frame(width: 12, height: 12)
+            .frame(width: OpenSnekBranding.menuBarIconSide, height: OpenSnekBranding.menuBarIconSide)
             .fixedSize()
         .help(helpText)
         .accessibilityLabel(helpText)
@@ -269,6 +269,6 @@ private struct ServiceMenuBarStatusGlyph: View {
             }
         }
         .opacity(iconOpacity)
-        .frame(width: 12, height: 12)
+        .frame(width: OpenSnekBranding.menuBarIconSide, height: OpenSnekBranding.menuBarIconSide)
     }
 }

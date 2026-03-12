@@ -43,17 +43,17 @@ struct WindowChromeConfigurator: NSViewRepresentable {
         imageView.imageScaling = .scaleNone
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 13, height: 12))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
         container.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(imageView)
 
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 10),
-            imageView.heightAnchor.constraint(equalToConstant: 9),
-            container.widthAnchor.constraint(equalToConstant: 13),
-            container.heightAnchor.constraint(equalToConstant: 12),
+            imageView.widthAnchor.constraint(equalToConstant: 14),
+            imageView.heightAnchor.constraint(equalToConstant: 14),
+            container.widthAnchor.constraint(equalToConstant: 14),
+            container.heightAnchor.constraint(equalToConstant: 14),
         ])
 
         let accessory = NSTitlebarAccessoryViewController()
