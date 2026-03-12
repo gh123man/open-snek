@@ -18,29 +18,11 @@ final class BackgroundServiceCoordinatorTests: XCTestCase {
         XCTAssertFalse(launchAtStartupEnabled)
     }
 
-    func testVersionedMigrationTurnsMenuBarIconOnForPreviouslyMigratedInstall() async {
+    func testExistingExplicitFalseSettingIsPreservedOnUpgrade() async {
         let suiteName = UUID().uuidString
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         defaults.set(false, forKey: BackgroundServiceCoordinator.backgroundServiceEnabledDefaultsKey)
-        defaults.set(true, forKey: BackgroundServiceCoordinator.menuBarDefaultMigrationDefaultsKey)
-
-        let coordinator = await MainActor.run {
-            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
-        }
-
-        let backgroundServiceEnabled = await MainActor.run { coordinator.backgroundServiceEnabled }
-        XCTAssertTrue(backgroundServiceEnabled)
-        XCTAssertTrue(defaults.bool(forKey: BackgroundServiceCoordinator.menuBarDefaultMigrationV2DefaultsKey))
-    }
-
-    func testVersionedMigrationDoesNotOverrideLaterUserOptOut() async {
-        let suiteName = UUID().uuidString
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults.set(false, forKey: BackgroundServiceCoordinator.backgroundServiceEnabledDefaultsKey)
-        defaults.set(true, forKey: BackgroundServiceCoordinator.menuBarDefaultMigrationDefaultsKey)
-        defaults.set(true, forKey: BackgroundServiceCoordinator.menuBarDefaultMigrationV2DefaultsKey)
 
         let coordinator = await MainActor.run {
             BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
@@ -48,6 +30,20 @@ final class BackgroundServiceCoordinatorTests: XCTestCase {
 
         let backgroundServiceEnabled = await MainActor.run { coordinator.backgroundServiceEnabled }
         XCTAssertFalse(backgroundServiceEnabled)
+    }
+
+    func testExistingExplicitTrueSettingIsPreservedOnUpgrade() async {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(true, forKey: BackgroundServiceCoordinator.backgroundServiceEnabledDefaultsKey)
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+
+        let backgroundServiceEnabled = await MainActor.run { coordinator.backgroundServiceEnabled }
+        XCTAssertTrue(backgroundServiceEnabled)
     }
 
     func testPreferredReusableApplicationPrefersActiveRegularApp() {

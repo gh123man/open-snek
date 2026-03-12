@@ -6,8 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - Removed the transient `Stage x -> y DPI applied` status message because the live UI already reflects successful DPI changes directly.
-- Added a one-time migration so the new menu bar icon default turns on for existing installs too, instead of only applying to brand-new preference domains.
-- Added a follow-up versioned migration so installs that already passed the first default-on migration but still persisted the older `false` value are corrected too, while still preserving later manual opt-outs.
+- The `Menu bar icon` preference now keeps an upgrade user's stored choice intact; only installs without a saved preference pick up the default-on behavior.
 - Toggling `Launch menu bar service at startup` no longer blocks the UI or starts a second service/app instance immediately; it now only updates the launch-agent registration for the next login, while the separate `Enable menu bar service` toggle continues to control the current session.
 - Restored the clear full-window title bar styling after the title bar icon removal accidentally dropped the shared window chrome configurator along with the accessory view.
 - Removed the experimental main-window title bar icon, and the menu bar service `Settings…` action now uses SwiftUI's settings scene opener so it reliably opens the app settings window again.
