@@ -202,8 +202,68 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         }
         let freshLabel = await MainActor.run { appState.currentDeviceStatusIndicator.label }
 
-        XCTAssertEqual(staleLabel, "Poll Delayed")
+        XCTAssertEqual(staleLabel, "Reconnecting")
         XCTAssertEqual(freshLabel, "Connected")
+    }
+
+    func testOlderRemoteSnapshotDoesNotOverwriteNewerPerDeviceState() async {
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
+        }
+
+        let device = makeSnapshotDevice(
+            id: "bt-snapshot-stale",
+            productName: "Snapshot BT Mouse",
+            transport: .bluetooth,
+            serial: "BT-SNAPSHOT",
+            locationID: 3,
+            profile: .basiliskV3XHyperspeed
+        )
+        let newerSnapshot = SharedServiceSnapshot(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeSnapshotState(
+                    device: device,
+                    connection: "bluetooth",
+                    batteryPercent: 75,
+                    dpiValues: [800, 900, 1000, 1100, 1500],
+                    activeStage: 3,
+                    dpiValue: 1100
+                )
+            ],
+            lastUpdatedByDeviceID: [
+                device.id: Date(timeIntervalSince1970: 1_773_520_020)
+            ]
+        )
+        let olderSnapshot = SharedServiceSnapshot(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeSnapshotState(
+                    device: device,
+                    connection: "bluetooth",
+                    batteryPercent: 74,
+                    dpiValues: [800, 900, 1000, 1100, 1500],
+                    activeStage: 1,
+                    dpiValue: 900
+                )
+            ],
+            lastUpdatedByDeviceID: [
+                device.id: Date(timeIntervalSince1970: 1_773_520_010)
+            ]
+        )
+
+        await MainActor.run {
+            appState.applyRemoteServiceSnapshot(newerSnapshot)
+            appState.applyRemoteServiceSnapshot(olderSnapshot)
+        }
+
+        let selectedDpi = await MainActor.run { appState.state?.dpi?.x }
+        let selectedBattery = await MainActor.run { appState.state?.battery_percent }
+        let activeStage = await MainActor.run { appState.editableActiveStage }
+
+        XCTAssertEqual(selectedDpi, 1100)
+        XCTAssertEqual(selectedBattery, 75)
+        XCTAssertEqual(activeStage, 4)
     }
 }
 

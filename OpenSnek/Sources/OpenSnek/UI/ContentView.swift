@@ -42,11 +42,13 @@ struct ContentView: View {
             .ignoresSafeArea()
 
             if let selected = appState.selectedDevice {
-                if let state = appState.state,
-                   state.device.id == nil || state.device.id == selected.id {
+                if appState.selectedDeviceIsStrictlyUnsupported || appState.selectedDeviceIsUnsupportedUSB {
+                    GenericDeviceDetailView(appState: appState, selected: selected)
+                } else if let state = appState.state,
+                          state.device.id == nil || state.device.id == selected.id {
                     DeviceDetailView(appState: appState, selected: selected, state: state)
                 } else {
-                    GenericDeviceDetailView(appState: appState, selected: selected)
+                    DeviceUnavailableDetailView(appState: appState, selected: selected)
                 }
             } else {
                 emptyState

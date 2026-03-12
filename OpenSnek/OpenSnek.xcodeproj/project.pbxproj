@@ -55,6 +55,7 @@
 		87D375FF8B65833DD56F2BC7 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67697881015ADD1872E3CE7 /* AppState.swift */; };
 		896E802945F7D2B145E85197 /* ServiceMenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4720D6239EC684957A3496 /* ServiceMenuBarView.swift */; };
 		8C48CAC00B058083534C228C /* Abstractions.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5AFD15E4A5E43403A377E62 /* Abstractions.swift */; };
+		919460C78606DD055E4140B0 /* HIDDevicePresenceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F083FEAC20E95519AAC4B2D /* HIDDevicePresenceMonitor.swift */; };
 		91AC2FEECA82E084A294955C /* CrossProcessStateSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08740BAF51C7F7DBD5135183 /* CrossProcessStateSync.swift */; };
 		96925611E343BBA733E39D68 /* OpenSnekHardware.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B4A9C2329D2DC93E67914B4 /* OpenSnekHardware.framework */; };
 		96D56FD27BF056283672F337 /* BLEVendorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405CA41EDB38DB20E5C0EF58 /* BLEVendorProtocol.swift */; };
@@ -279,6 +280,7 @@
 		535BE45BC93C06B123BC372A /* DeviceDiagnosticsFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDiagnosticsFormatter.swift; sourceTree = "<group>"; };
 		5590DEE85AD92DEB78DCE3E5 /* AppLifecycleDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycleDelegateTests.swift; sourceTree = "<group>"; };
 		58FFF2733703D2A6B60589C9 /* OpenSnekAppSupport.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = OpenSnekAppSupport.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F083FEAC20E95519AAC4B2D /* HIDDevicePresenceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HIDDevicePresenceMonitor.swift; sourceTree = "<group>"; };
 		677440F9B6CCD5E1657F6B07 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		6CE5899BC2B523D0AEB68A87 /* WindowChromeConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowChromeConfigurator.swift; sourceTree = "<group>"; };
 		70039EC5F73B83363C073BFA /* ProbeTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeTransport.swift; sourceTree = "<group>"; };
@@ -493,6 +495,7 @@
 				D5AFD15E4A5E43403A377E62 /* Abstractions.swift */,
 				FCE2CEEB636DB1FEE68464AA /* BLEVendorTransportClient.swift */,
 				AE627F1E0EBDBA7BE3E897CC /* HardwareModule.swift */,
+				5F083FEAC20E95519AAC4B2D /* HIDDevicePresenceMonitor.swift */,
 				9D0EE520F4843E13CD7214F8 /* USBHIDControlSession.swift */,
 				0165E25D97B7943014E776B8 /* USBPassiveDPIEventMonitor.swift */,
 			);
@@ -800,6 +803,7 @@
 			files = (
 				8C48CAC00B058083534C228C /* Abstractions.swift in Sources */,
 				718667DBF9C415590D20A2B0 /* BLEVendorTransportClient.swift in Sources */,
+				919460C78606DD055E4140B0 /* HIDDevicePresenceMonitor.swift in Sources */,
 				76E4CEB57DE4D41FC5E4E4C6 /* HardwareModule.swift in Sources */,
 				9C87E8DF80036227689BA964 /* USBHIDControlSession.swift in Sources */,
 				104601B0BC2F1D36B44A56C8 /* USBPassiveDPIEventMonitor.swift in Sources */,

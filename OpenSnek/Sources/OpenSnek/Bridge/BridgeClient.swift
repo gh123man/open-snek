@@ -10,13 +10,18 @@ actor BridgeClient {
     var deviceSessions: [String: USBHIDControlSession] = [:]
     var deviceSessionCandidates: [String: [USBHIDControlSession]] = [:]
     var lastStateByDeviceID: [String: MouseState] = [:]
+    var devicePresenceContinuations: [UUID: AsyncStream<HIDDevicePresenceEvent>.Continuation] = [:]
     var passiveDpiEventContinuations: [UUID: AsyncStream<PassiveDPIEvent>.Continuation] = [:]
     var passiveDpiArmedDeviceIDs: Set<String> = []
     var passiveDpiObservedDeviceIDs: Set<String> = []
+    var passiveDpiTargetPointersByDeviceID: [String: Set<UInt>] = [:]
+    var passiveDpiTargetsByDeviceID: [String: [PassiveDPIEventMonitor.WatchTarget]] = [:]
+    var passiveDpiUpgradeNotBeforeByDeviceID: [String: Date] = [:]
     var btReqID: UInt8 = 0x30
     var btDpiSnapshotByDeviceID: [String: (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)] = [:]
     var btExpectedDpiByDeviceID: [String: (active: Int, values: [Int], expiresAt: Date, remainingMasks: Int)] = [:]
     let btVendorClient = BLEVendorTransportClient()
+    let hidDevicePresenceMonitor = HIDDevicePresenceMonitor()
     let passiveDpiMonitor = PassiveDPIEventMonitor()
     var btExchangeLocked = false
     var btExchangeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -30,11 +35,29 @@ actor BridgeClient {
     private var hidManagerOpenResult: IOReturn?
 
     init() {
+        hidDevicePresenceMonitor.onChange = { [weak self] event in
+            Task {
+                await self?.handleHIDDevicePresenceEvent(event)
+            }
+        }
         passiveDpiMonitor.onEvent = { [weak self] event in
             Task {
                 await self?.handlePassiveDpiEvent(event)
             }
         }
+        hidDevicePresenceMonitor.start()
+    }
+
+    func devicePresenceEventStream() -> AsyncStream<HIDDevicePresenceEvent> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream.makeStream(of: HIDDevicePresenceEvent.self)
+        devicePresenceContinuations[id] = continuation
+        continuation.onTermination = { @Sendable [weak self] _ in
+            Task {
+                await self?.removeDevicePresenceContinuation(id: id)
+            }
+        }
+        return stream
     }
 
     func passiveDpiEventStream() -> AsyncStream<PassiveDPIEvent> {
@@ -61,8 +84,27 @@ actor BridgeClient {
         passiveDpiEventContinuations.removeValue(forKey: id)
     }
 
+    private func removeDevicePresenceContinuation(id: UUID) {
+        devicePresenceContinuations.removeValue(forKey: id)
+    }
+
+    private func handleHIDDevicePresenceEvent(_ event: HIDDevicePresenceEvent) {
+        AppLog.event(
+            "Bridge",
+            "hidPresence change=\(event.change.rawValue) device=\(event.deviceID)"
+        )
+        invalidateDiscoveryState(for: event.deviceID, reason: "hid-\(event.change.rawValue)")
+        for continuation in devicePresenceContinuations.values {
+            continuation.yield(event)
+        }
+    }
+
     private func handlePassiveDpiEvent(_ event: PassiveDPIEvent) {
         guard passiveDpiArmedDeviceIDs.contains(event.deviceID) else { return }
+        passiveDpiUpgradeNotBeforeByDeviceID.removeValue(forKey: event.deviceID)
+        if Self.isBluetoothDeviceID(event.deviceID) {
+            seedBluetoothPassiveDpiExpectation(event)
+        }
         let firstObserved = passiveDpiObservedDeviceIDs.insert(event.deviceID).inserted
         if firstObserved {
             AppLog.event(
@@ -72,6 +114,71 @@ actor BridgeClient {
         }
         for continuation in passiveDpiEventContinuations.values {
             continuation.yield(event)
+        }
+    }
+
+    private func seedBluetoothPassiveDpiExpectation(_ event: PassiveDPIEvent) {
+        if let projected = mergedStateFromPassiveDpiEvent(
+            previous: lastStateByDeviceID[event.deviceID],
+            event: event
+        ) {
+            lastStateByDeviceID[event.deviceID] = projected
+        }
+
+        guard let expected = Self.bluetoothPassiveDpiExpectation(
+            event: event,
+            snapshot: btDpiSnapshotByDeviceID[event.deviceID],
+            state: lastStateByDeviceID[event.deviceID]
+        ) else {
+            return
+        }
+
+        btExpectedDpiByDeviceID[event.deviceID] = (
+            active: expected.active,
+            values: expected.values,
+            expiresAt: Date().addingTimeInterval(1.2),
+            remainingMasks: 4
+        )
+
+        if let snapshot = btDpiSnapshotByDeviceID[event.deviceID] {
+            btDpiSnapshotByDeviceID[event.deviceID] = (
+                active: expected.active,
+                count: snapshot.count,
+                slots: snapshot.slots,
+                stageIDs: snapshot.stageIDs,
+                marker: snapshot.marker
+            )
+        }
+
+        AppLog.debug(
+            "Bridge",
+            "btPassiveDpi expected device=\(event.deviceID) active=\(expected.active) values=\(expected.values)"
+        )
+    }
+
+    private func clearPassiveDpiObservation(deviceID: String, reason: String) {
+        passiveDpiUpgradeNotBeforeByDeviceID.removeValue(forKey: deviceID)
+        guard passiveDpiObservedDeviceIDs.remove(deviceID) != nil else { return }
+        AppLog.debug(
+            "Bridge",
+            "passiveDpi reset device=\(deviceID) reason=\(reason); re-enabling fast DPI polling"
+        )
+    }
+
+    private func invalidateDiscoveryState(for deviceID: String, reason: String) {
+        deviceSessions.removeValue(forKey: deviceID)
+        deviceSessionCandidates.removeValue(forKey: deviceID)
+        lastStateByDeviceID.removeValue(forKey: deviceID)
+        passiveDpiArmedDeviceIDs.remove(deviceID)
+        passiveDpiTargetPointersByDeviceID.removeValue(forKey: deviceID)
+        passiveDpiTargetsByDeviceID.removeValue(forKey: deviceID)
+        passiveDpiUpgradeNotBeforeByDeviceID.removeValue(forKey: deviceID)
+        clearPassiveDpiObservation(deviceID: deviceID, reason: reason)
+
+        if let hidManager {
+            IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
+            self.hidManager = nil
+            hidManagerOpenResult = nil
         }
     }
 
@@ -112,6 +219,7 @@ actor BridgeClient {
     func listDevices() async throws -> [MouseDevice] {
         let start = Date()
         let (manager, openResult) = managedHIDManager()
+        let connectedBluetoothPeripheralNames = await btVendorClient.connectedPeripheralSummaries()?.map(\.name)
 
         let devices: [IOHIDDevice]
         if let set = IOHIDManagerCopyDevices(manager) {
@@ -132,6 +240,13 @@ actor BridgeClient {
             let serial = USBHIDSupport.stringProperty(device, key: kIOHIDSerialNumberKey as CFString)
             let transportRaw = (USBHIDSupport.stringProperty(device, key: kIOHIDTransportKey as CFString) ?? "").lowercased()
             let transport: DeviceTransportKind = transportRaw.contains("bluetooth") || vendor == btVID ? .bluetooth : .usb
+            if transport == .bluetooth,
+               !Self.shouldIncludeBluetoothHIDDevice(
+                hidDeviceName: name,
+                connectedPeripheralNames: connectedBluetoothPeripheralNames
+               ) {
+                continue
+            }
             let location = USBHIDSupport.intProperty(device, key: kIOHIDLocationIDKey as CFString) ?? 0
             let id = String(format: "%04x:%04x:%08x:%@", vendor, product, location, transport.rawValue)
             let profile = DeviceProfiles.resolve(vendorID: vendor, productID: product, transport: transport)
@@ -182,8 +297,26 @@ actor BridgeClient {
         }
         deviceSessionCandidates = candidatesByID
         deviceSessions = preferredSessionsByID
+        passiveDpiTargetsByDeviceID = Self.passiveDpiTargetsByDeviceID(targets: passiveDpiTargets)
+        let nextPassiveDpiTargetPointersByDeviceID = Self.passiveDpiTargetPointerSetsByDeviceID(targets: passiveDpiTargets)
         passiveDpiArmedDeviceIDs = await passiveDpiMonitor.replaceTargets(passiveDpiTargets)
-        passiveDpiObservedDeviceIDs.formIntersection(passiveDpiArmedDeviceIDs)
+        let activePassiveTargetPointersByDeviceID = nextPassiveDpiTargetPointersByDeviceID.filter {
+            passiveDpiArmedDeviceIDs.contains($0.key)
+        }
+        let nextObservedPassiveDpiDeviceIDs = Self.reconciledObservedPassiveDpiDeviceIDs(
+            observedDeviceIDs: passiveDpiObservedDeviceIDs,
+            previousTargetPointersByDeviceID: passiveDpiTargetPointersByDeviceID,
+            nextTargetPointersByDeviceID: activePassiveTargetPointersByDeviceID
+        )
+        let resetPassiveDpiDeviceIDs = passiveDpiObservedDeviceIDs.subtracting(nextObservedPassiveDpiDeviceIDs)
+        for deviceID in resetPassiveDpiDeviceIDs {
+            AppLog.debug(
+                "Bridge",
+                "passiveDpi reset device=\(deviceID) reason=registration-changed; re-enabling fast DPI polling"
+            )
+        }
+        passiveDpiObservedDeviceIDs = nextObservedPassiveDpiDeviceIDs
+        passiveDpiTargetPointersByDeviceID = activePassiveTargetPointersByDeviceID
         var result = Array(modelsByID.values)
 
         let hasBluetoothDevice = result.contains(where: { $0.transport == .bluetooth })
@@ -216,6 +349,36 @@ actor BridgeClient {
         }
         AppLog.event("Bridge", "listDevices count=\(sorted.count) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
         return sorted
+    }
+
+    private func maybeUpgradeUSBPassiveDpiFromPolling(device: MouseDevice, reason: String) async {
+        guard Self.shouldAttemptPassiveDpiUpgrade(
+            device: device,
+            targetAvailable: passiveDpiTargetsByDeviceID[device.id]?.isEmpty == false,
+            observedPassiveDpiDeviceIDs: passiveDpiObservedDeviceIDs,
+            retryNotBefore: passiveDpiUpgradeNotBeforeByDeviceID[device.id],
+            now: Date()
+        ) else {
+            return
+        }
+
+        let now = Date()
+        passiveDpiUpgradeNotBeforeByDeviceID[device.id] = now.addingTimeInterval(1.5)
+        let allTargets = Array(passiveDpiTargetsByDeviceID.values.joined())
+        guard !allTargets.isEmpty else { return }
+
+        AppLog.debug(
+            "Bridge",
+            "passiveDpi rearm device=\(device.id) reason=\(reason)"
+        )
+        passiveDpiArmedDeviceIDs = await passiveDpiMonitor.replaceTargets(
+            allTargets,
+            forceRebuildDeviceIDs: [device.id]
+        )
+        let nextTargetPointersByDeviceID = Self.passiveDpiTargetPointerSetsByDeviceID(targets: allTargets)
+        passiveDpiTargetPointersByDeviceID = nextTargetPointersByDeviceID.filter {
+            passiveDpiArmedDeviceIDs.contains($0.key)
+        }
     }
 
     private func passiveDpiWatchTarget(
@@ -253,6 +416,125 @@ actor BridgeClient {
         return !observedPassiveDpiDeviceIDs.contains(device.id)
     }
 
+    nonisolated static func shouldAttemptPassiveDpiUpgrade(
+        device: MouseDevice,
+        targetAvailable: Bool,
+        observedPassiveDpiDeviceIDs: Set<String>,
+        retryNotBefore: Date?,
+        now: Date
+    ) -> Bool {
+        guard device.transport == .usb else { return false }
+        guard targetAvailable else { return false }
+        guard !observedPassiveDpiDeviceIDs.contains(device.id) else { return false }
+        if let retryNotBefore, now < retryNotBefore {
+            return false
+        }
+        return true
+    }
+
+    nonisolated static func bluetoothPassiveDpiExpectation(
+        event: PassiveDPIEvent,
+        snapshot: (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)?,
+        state: MouseState?
+    ) -> (active: Int, values: [Int])? {
+        let values: [Int]
+        if let snapshot {
+            values = Array(snapshot.slots.prefix(snapshot.count))
+        } else if let stateValues = state?.dpi_stages.values {
+            values = stateValues
+        } else {
+            return nil
+        }
+
+        let matchingIndices = values.enumerated().compactMap { index, value in
+            value == event.dpiX ? index : nil
+        }
+        guard matchingIndices.count == 1 else { return nil }
+        return (active: matchingIndices[0], values: values)
+    }
+
+    nonisolated static func isBluetoothDeviceID(_ deviceID: String) -> Bool {
+        deviceID.hasSuffix(":\(DeviceTransportKind.bluetooth.rawValue)")
+    }
+
+    nonisolated static func reconciledObservedPassiveDpiDeviceIDs(
+        observedDeviceIDs: Set<String>,
+        previousTargetPointersByDeviceID: [String: Set<UInt>],
+        nextTargetPointersByDeviceID: [String: Set<UInt>]
+    ) -> Set<String> {
+        observedDeviceIDs.filter { deviceID in
+            guard let previous = previousTargetPointersByDeviceID[deviceID],
+                  let next = nextTargetPointersByDeviceID[deviceID] else {
+                return false
+            }
+            return previous == next
+        }
+    }
+
+    nonisolated static func shouldIncludeBluetoothHIDDevice(
+        hidDeviceName: String,
+        connectedPeripheralNames: [String?]?
+    ) -> Bool {
+        guard let connectedPeripheralNames else { return true }
+        guard !connectedPeripheralNames.isEmpty else { return false }
+        guard let normalizedHIDName = normalizedPeripheralName(hidDeviceName) else { return true }
+
+        var sawUnknownConnectedName = false
+        for connectedName in connectedPeripheralNames {
+            guard let normalizedConnectedName = normalizedPeripheralName(connectedName) else {
+                sawUnknownConnectedName = true
+                continue
+            }
+            if normalizedHIDName == normalizedConnectedName ||
+                normalizedHIDName.contains(normalizedConnectedName) ||
+                normalizedConnectedName.contains(normalizedHIDName) {
+                return true
+            }
+        }
+
+        return sawUnknownConnectedName
+    }
+
+    nonisolated static func passiveDpiTargetPointerSetsByDeviceID(
+        targets: [PassiveDPIEventMonitor.WatchTarget]
+    ) -> [String: Set<UInt>] {
+        var targetPointersByDeviceID: [String: Set<UInt>] = [:]
+        for target in targets {
+            let devicePointer = UInt(bitPattern: Unmanaged.passUnretained(target.device).toOpaque())
+            targetPointersByDeviceID[target.deviceID, default: []].insert(devicePointer)
+        }
+        return targetPointersByDeviceID
+    }
+
+    nonisolated static func passiveDpiTargetsByDeviceID(
+        targets: [PassiveDPIEventMonitor.WatchTarget]
+    ) -> [String: [PassiveDPIEventMonitor.WatchTarget]] {
+        var targetsByDeviceID: [String: [PassiveDPIEventMonitor.WatchTarget]] = [:]
+        for target in targets {
+            targetsByDeviceID[target.deviceID, default: []].append(target)
+        }
+        return targetsByDeviceID
+    }
+
+    private nonisolated static func normalizedPeripheralName(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let tokens = trimmed.lowercased().split { !$0.isLetter && !$0.isNumber }
+        let normalized = tokens.joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    nonisolated static func isUSBTelemetryUnavailableError(_ error: any Error) -> Bool {
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("telemetry unavailable") || lowered.contains("usable responses")
+    }
+
+    nonisolated static func shouldRetryUSBStateRead(firstScanErrors: [any Error]) -> Bool {
+        guard !firstScanErrors.isEmpty else { return true }
+        return !firstScanErrors.allSatisfy(Self.isUSBTelemetryUnavailableError)
+    }
+
     nonisolated static func makeBluetoothFallbackDevice(
         summary: BLEVendorTransportClient.ConnectedPeripheralSummary
     ) -> MouseDevice {
@@ -284,11 +566,16 @@ actor BridgeClient {
     func readState(device: MouseDevice) async throws -> MouseState {
         let start = Date()
         if device.transport == .bluetooth {
-            let session = sessionFor(device: device)
-            let state = try await readBluetoothState(device: device, session: session)
-            lastStateByDeviceID[device.id] = state
-            AppLog.debug("Bridge", "readState bt device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
-            return state
+            do {
+                let session = sessionFor(device: device)
+                let state = try await readBluetoothState(device: device, session: session)
+                lastStateByDeviceID[device.id] = state
+                AppLog.debug("Bridge", "readState bt device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
+                return state
+            } catch {
+                clearPassiveDpiObservation(deviceID: device.id, reason: "read-state-failed")
+                throw error
+            }
         }
 
         let sessions = sessionsFor(device: device)
@@ -304,6 +591,7 @@ actor BridgeClient {
         var firstError: Error?
         for scanAttempt in 0..<2 {
             firstError = nil
+            var scanErrors: [any Error] = []
             for (index, session) in sessions.enumerated() {
                 do {
                     let state = try await readUSBState(device: device, session: session)
@@ -312,22 +600,32 @@ actor BridgeClient {
                         AppLog.debug("Bridge", "readState usb switched to alternate session index=\(index) device=\(device.id)")
                     }
                     lastStateByDeviceID[device.id] = state
+                    await maybeUpgradeUSBPassiveDpiFromPolling(device: device, reason: "read-state-ok")
                     AppLog.debug("Bridge", "readState usb device=\(device.id) elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
                     return state
                 } catch {
                     if firstError == nil {
                         firstError = error
                     }
+                    scanErrors.append(error)
                     AppLog.debug("Bridge", "readState usb candidate index=\(index) failed: \(error.localizedDescription)")
                 }
             }
             if scanAttempt == 0 {
+                guard Self.shouldRetryUSBStateRead(firstScanErrors: scanErrors) else {
+                    AppLog.debug(
+                        "Bridge",
+                        "readState usb aborting retry after telemetry-unavailable sweep device=\(device.id)"
+                    )
+                    break
+                }
                 usleep(120_000)
             }
         }
 
         deviceSessions[device.id]?.invalidateCachedTransaction()
         if let firstError {
+            clearPassiveDpiObservation(deviceID: device.id, reason: "read-state-failed")
             throw firstError
         }
         throw BridgeError.commandFailed("USB device telemetry unavailable")
@@ -355,6 +653,7 @@ actor BridgeClient {
                     active = stages.active
                 }
                 deviceSessions[device.id] = session
+                await maybeUpgradeUSBPassiveDpiFromPolling(device: device, reason: "fast-poll-ok")
                 return (active: active, values: stages.values)
             } catch {
                 if firstError == nil {

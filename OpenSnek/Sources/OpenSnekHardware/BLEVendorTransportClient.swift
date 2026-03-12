@@ -70,12 +70,37 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
     public func currentPeripheralSummary() async -> ConnectedPeripheralSummary? {
         await withCheckedContinuation { continuation in
             queue.async {
-                guard let peripheral = self.peripheral else {
+                guard let peripheral = self.peripheral,
+                      peripheral.state == .connected else {
                     continuation.resume(returning: nil)
                     return
                 }
                 continuation.resume(
                     returning: ConnectedPeripheralSummary(name: peripheral.name, identifier: peripheral.identifier)
+                )
+            }
+        }
+    }
+
+    public func connectedPeripheralSummaries() async -> [ConnectedPeripheralSummary]? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                guard let central = self.central else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                guard central.state == .poweredOn else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let peripherals = central.retrieveConnectedPeripherals(withServices: [
+                    CBUUID(nsuuid: BLEVendorProtocol.serviceUUID)
+                ])
+                continuation.resume(
+                    returning: peripherals.map { peripheral in
+                        ConnectedPeripheralSummary(name: peripheral.name, identifier: peripheral.identifier)
+                    }
                 )
             }
         }
@@ -212,6 +237,9 @@ extension BLEVendorTransportClient: CBCentralManagerDelegate, CBPeripheralDelega
         isNotifyReady = false
         writeChar = nil
         notifyChar = nil
+        if self.peripheral?.identifier == peripheral.identifier {
+            self.peripheral = nil
+        }
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {

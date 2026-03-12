@@ -114,12 +114,18 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
 
     public init() {}
 
-    public func replaceTargets(_ targets: [WatchTarget]) async -> Set<String> {
+    public func replaceTargets(
+        _ targets: [WatchTarget],
+        forceRebuildDeviceIDs: Set<String> = []
+    ) async -> Set<String> {
         await withCheckedContinuation { continuation in
             queue.async {
                 self.ensureRunLoopLocked()
                 self.performOnRunLoopLocked {
-                    let active = self.replaceTargetsOnRunLoop(targets)
+                    let active = self.replaceTargetsOnRunLoop(
+                        targets,
+                        forceRebuildDeviceIDs: forceRebuildDeviceIDs
+                    )
                     continuation.resume(returning: active)
                 }
             }
@@ -174,7 +180,10 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         CFRunLoopWakeUp(runLoop)
     }
 
-    private func replaceTargetsOnRunLoop(_ targets: [WatchTarget]) -> Set<String> {
+    private func replaceTargetsOnRunLoop(
+        _ targets: [WatchTarget],
+        forceRebuildDeviceIDs: Set<String>
+    ) -> Set<String> {
         var desiredByKey: [RegistrationKey: WatchTarget] = [:]
         for target in targets {
             let key = RegistrationKey(
@@ -187,6 +196,12 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         let obsoleteKeys = Set(registrationsByKey.keys).subtracting(desiredByKey.keys)
         for key in obsoleteKeys {
             removeRegistration(key: key)
+        }
+        if !forceRebuildDeviceIDs.isEmpty {
+            let forcedKeys = registrationsByKey.keys.filter { forceRebuildDeviceIDs.contains($0.deviceID) }
+            for key in forcedKeys {
+                removeRegistration(key: key)
+            }
         }
 
         var activeDeviceIDs: Set<String> = []

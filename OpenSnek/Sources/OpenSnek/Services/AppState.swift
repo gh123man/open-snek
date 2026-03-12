@@ -9,6 +9,68 @@ struct DeviceStatusIndicator {
     let color: Color
 }
 
+private enum DeviceConnectionState: Equatable {
+    case disconnected
+    case reconnecting
+    case connected
+    case unsupported
+    case error
+
+    var indicator: DeviceStatusIndicator {
+        switch self {
+        case .disconnected:
+            DeviceStatusIndicator(label: "Disconnected", color: Color(hex: 0xFF453A))
+        case .reconnecting:
+            DeviceStatusIndicator(label: "Reconnecting", color: Color(hex: 0xFFD60A))
+        case .connected:
+            DeviceStatusIndicator(label: "Connected", color: Color(hex: 0x30D158))
+        case .unsupported:
+            DeviceStatusIndicator(label: "Unsupported", color: Color(hex: 0xFFD60A))
+        case .error:
+            DeviceStatusIndicator(label: "Error", color: Color(hex: 0xFF453A))
+        }
+    }
+
+    var allowsInteraction: Bool {
+        self == .connected
+    }
+
+    var diagnosticsLabel: String {
+        switch self {
+        case .disconnected:
+            "Disconnected"
+        case .reconnecting:
+            "Reconnecting to live telemetry"
+        case .connected:
+            "Live"
+        case .unsupported:
+            "Unsupported"
+        case .error:
+            "Error"
+        }
+    }
+}
+
+private enum DpiUpdateTransportStatus: Equatable {
+    case unknown
+    case pollingFallback
+    case realTimeHID
+    case unsupported
+
+    var diagnosticsLabel: String {
+        switch self {
+        case .unknown:
+            "Checking"
+        case .pollingFallback:
+            "Polling fallback active"
+        case .realTimeHID:
+            "Real-time HID active"
+        case .unsupported:
+            "Unsupported"
+        }
+    }
+}
+
 private struct RemoteClientPresenceState {
     let expiresAt: Date
     let selectedDeviceID: String?
@@ -165,6 +227,9 @@ final class AppState {
     private var keyboardDraftApplyTaskBySlot: [Int: Task<Void, Never>] = [:]
     private var isPollingDevices = false
     private var refreshFailureCountByDeviceID: [String: Int] = [:]
+    private var stateRefreshSuppressedUntilByDeviceID: [String: Date] = [:]
+    private var unavailableDeviceIDs: Set<String> = []
+    private var dpiUpdateTransportStatusByDeviceID: [String: DpiUpdateTransportStatus] = [:]
     private var hasCheckedForUpdates = false
     private var runtimeTask: Task<Void, Never>?
     private var didStartRuntime = false
@@ -226,6 +291,25 @@ final class AppState {
         return selectedDevice.transport == .usb && resolvedProfile(for: selectedDevice) == nil
     }
 
+    var selectedDeviceControlsEnabled: Bool {
+        guard let selectedDevice else { return false }
+        return connectionState(for: selectedDevice).allowsInteraction
+    }
+
+    var selectedDeviceInteractionMessage: String? {
+        guard let selectedDevice else { return nil }
+        switch connectionState(for: selectedDevice) {
+        case .reconnecting:
+            return "Reconnecting to live telemetry. Controls will unlock automatically."
+        case .disconnected:
+            return "This device is disconnected. Controls will unlock after it reconnects."
+        case .error:
+            return errorMessage ?? "Live telemetry is unavailable right now."
+        case .unsupported, .connected:
+            return nil
+        }
+    }
+
     var visibleButtonSlots: [ButtonSlotDescriptor] {
         selectedDevice?.button_layout?.visibleSlots ?? buttonSlots
     }
@@ -275,35 +359,8 @@ final class AppState {
     }
 
     var currentDeviceStatusIndicator: DeviceStatusIndicator {
-        guard let selectedDevice else {
-            return DeviceStatusIndicator(label: "Disconnected", color: Color(hex: 0xFF453A))
-        }
-
-        if isStrictlyUnsupported(selectedDevice) {
-            return DeviceStatusIndicator(label: "Unsupported", color: Color(hex: 0xFFD60A))
-        }
-
-        if let errorMessage, !errorMessage.isEmpty {
-            let lowered = errorMessage.lowercased()
-            let label = lowered.contains("no device") || lowered.contains("disconnected") ? "Disconnected" : "Error"
-            return DeviceStatusIndicator(label: label, color: Color(hex: 0xFF453A))
-        }
-
-        let failures = refreshFailureCountByDeviceID[selectedDevice.id] ?? 0
-        if failures > 0 {
-            return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
-        }
-
-        let selectedLastUpdated = lastUpdatedByDeviceID[selectedDevice.id] ?? lastUpdated
-        if let selectedLastUpdated {
-            let age = Date().timeIntervalSince(selectedLastUpdated)
-            if age > max(4.5, currentPollingProfile.refreshStateInterval * 1.7) {
-                return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
-            }
-            return DeviceStatusIndicator(label: "Connected", color: Color(hex: 0x30D158))
-        }
-
-        return DeviceStatusIndicator(label: "Poll Delayed", color: Color(hex: 0xFFD60A))
+        guard let selectedDevice else { return DeviceConnectionState.disconnected.indicator }
+        return statusIndicator(for: selectedDevice)
     }
 
     func isButtonSlotEditable(_ slot: Int) -> Bool {
@@ -317,6 +374,9 @@ final class AppState {
     func diagnosticsDump(for device: MouseDevice, state explicitState: MouseState? = nil) -> String {
         let resolvedProfile = resolvedProfile(for: device)
         let liveState = explicitState ?? stateCacheByDeviceID[device.id] ?? (device.id == selectedDeviceID ? state : nil)
+        let deviceStatusIndicator = statusIndicator(for: device)
+        let deviceConnectionState = connectionState(for: device)
+        let deviceLastUpdated = lastUpdatedTimestamp(for: device)
         var appContextLines: [String] = [
             "App version: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown")",
             "Build: \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown")",
@@ -324,10 +384,14 @@ final class AppState {
             "Refreshing state: \(isRefreshingState ? "Yes" : "No")",
             "Applying changes: \(isApplying ? "Yes" : "No")",
             "Pending local edits: \(hasPendingLocalEdits ? "Yes" : "No")",
-            "Current status badge: \(currentDeviceStatusIndicator.label)",
-            "Last updated: \(lastUpdated.map(Self.diagnosticsTimestamp) ?? "Unknown")",
-            "Warning: \(warningMessage ?? "None")",
-            "Error: \(errorMessage ?? "None")",
+            "Current status badge: \(deviceStatusIndicator.label)",
+            "Physical presence: \(devices.contains(where: { $0.id == device.id }) ? "Detected by macOS" : "Not detected")",
+            "Telemetry status: \(deviceConnectionState.diagnosticsLabel)",
+            "Controls enabled: \(deviceConnectionState.allowsInteraction ? "Yes" : "No")",
+            "DPI update path: \(dpiUpdateTransportStatus(for: device).diagnosticsLabel)",
+            "Last updated: \(deviceLastUpdated.map(Self.diagnosticsTimestamp) ?? "Unknown")",
+            "Warning: \(device.id == selectedDeviceID ? (warningMessage ?? "None") : "None")",
+            "Error: \(device.id == selectedDeviceID ? (errorMessage ?? "None") : "None")",
         ]
 
         if device.id == selectedDeviceID {
@@ -420,6 +484,33 @@ final class AppState {
         !launchRole.isService && backend.usesRemoteServiceTransport
     }
 
+    func diagnosticsConnectionLines(for device: MouseDevice) -> [String] {
+        let deviceConnectionState = connectionState(for: device)
+        let presence = devices.contains(where: { $0.id == device.id }) ? "Detected by macOS" : "Not detected"
+        let dpiPath = deviceConnectionState == .disconnected
+            ? "Unavailable while disconnected"
+            : dpiUpdateTransportStatus(for: device).diagnosticsLabel
+        return [
+            "Presence: \(presence)",
+            "Telemetry: \(deviceConnectionState.diagnosticsLabel)",
+            "DPI updates: \(dpiPath)",
+        ]
+    }
+
+    func refreshConnectionDiagnostics(for device: MouseDevice) async {
+        guard !isStrictlyUnsupported(device) else {
+            dpiUpdateTransportStatusByDeviceID[device.id] = .unsupported
+            return
+        }
+        guard devices.contains(where: { $0.id == device.id }) || selectedDeviceID == device.id else {
+            dpiUpdateTransportStatusByDeviceID[device.id] = .unknown
+            return
+        }
+        let usesFastPolling = await backend.shouldUseFastDPIPolling(device: device)
+        guard devices.contains(where: { $0.id == device.id }) || selectedDeviceID == device.id else { return }
+        dpiUpdateTransportStatusByDeviceID[device.id] = usesFastPolling ? .pollingFallback : .realTimeHID
+    }
+
     func activeFastPollingDeviceIDs(at now: Date) -> [String] {
         let liveIDs = Set(devices.map(\.id))
         var ordered: [String] = []
@@ -505,12 +596,22 @@ final class AppState {
     private func handleBackendStateUpdate(_ update: BackendStateUpdate) async {
         guard isBackendReady else { return }
         switch update {
+        case .deviceList(let devices, _):
+            await handleBackendDeviceListUpdate(devices)
         case .snapshot(let snapshot):
             guard usesRemoteServiceUpdates else { return }
             applyRemoteServiceSnapshot(snapshot)
         case .deviceState(let deviceID, let updatedState, let updatedAt):
             applyBackendDeviceStateUpdate(deviceID: deviceID, state: updatedState, updatedAt: updatedAt)
         }
+    }
+
+    private func handleBackendDeviceListUpdate(_ listed: [MouseDevice]) async {
+        guard !usesRemoteServiceUpdates else { return }
+        _ = applyDeviceList(listed, source: "subscription")
+        guard !listed.isEmpty else { return }
+        await refreshAllDeviceStates()
+        await refreshDpiUpdateTransportStatuses(for: listed)
     }
 
     private func handleRemoteClientPresence(_ presence: CrossProcessClientPresence) async {
@@ -541,9 +642,20 @@ final class AppState {
         lastUpdatedByDeviceID = lastUpdatedByDeviceID.filter { liveIDs.contains($0.key) }
 
         for (deviceID, remoteState) in snapshot.stateByDeviceID {
+            let snapshotUpdatedAt = snapshot.lastUpdatedByDeviceID[deviceID] ?? Date()
+            if let latestCachedAt = lastUpdatedByDeviceID[deviceID],
+               latestCachedAt > snapshotUpdatedAt {
+                AppLog.debug(
+                    "AppState",
+                    "remoteSnapshot superseded-drop device=\(deviceID) updatedAt=\(snapshotUpdatedAt.timeIntervalSince1970) " +
+                    "cachedAt=\(latestCachedAt.timeIntervalSince1970)"
+                )
+                continue
+            }
             stateCacheByDeviceID[deviceID] = remoteState
-            lastUpdatedByDeviceID[deviceID] = snapshot.lastUpdatedByDeviceID[deviceID] ?? Date()
+            lastUpdatedByDeviceID[deviceID] = snapshotUpdatedAt
             refreshFailureCountByDeviceID[deviceID] = 0
+            unavailableDeviceIDs.remove(deviceID)
         }
 
         _ = applyDeviceList(snapshot.devices, source: "subscription")
@@ -567,6 +679,10 @@ final class AppState {
             warningMessage = nil
             errorMessage = nil
         }
+
+        Task { [weak self] in
+            await self?.refreshDpiUpdateTransportStatuses(for: snapshot.devices)
+        }
     }
 
     private func applyBackendDeviceStateUpdate(deviceID: String, state updatedState: MouseState, updatedAt: Date) {
@@ -576,13 +692,26 @@ final class AppState {
         }
 
         let presentationDeviceID = presentationDevice.id
+        if let latestCachedAt = latestCachedUpdateAt(sourceDeviceID: deviceID, presentationDeviceID: presentationDeviceID),
+           latestCachedAt > updatedAt {
+            AppLog.debug(
+                "AppState",
+                "backendStateUpdate superseded-drop device=\(presentationDeviceID) updatedAt=\(updatedAt.timeIntervalSince1970) " +
+                "cachedAt=\(latestCachedAt.timeIntervalSince1970)"
+            )
+            return
+        }
         let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[deviceID]
         let merged = updatedState.merged(with: previous)
         let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: merged)
 
         cacheState(merged, sourceDeviceID: deviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
+        dpiUpdateTransportStatusByDeviceID[deviceID] = .realTimeHID
+        dpiUpdateTransportStatusByDeviceID[presentationDeviceID] = .realTimeHID
         refreshFailureCountByDeviceID[deviceID] = 0
         refreshFailureCountByDeviceID[presentationDeviceID] = 0
+        unavailableDeviceIDs.remove(deviceID)
+        unavailableDeviceIDs.remove(presentationDeviceID)
 
         if shouldFocusOnActivity {
             focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
@@ -847,6 +976,7 @@ final class AppState {
         }
 
         await refreshAllDeviceStates()
+        await refreshDpiUpdateTransportStatuses(for: devices)
         AppLog.event("AppState", "refreshDevices end elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
     }
 
@@ -877,8 +1007,11 @@ final class AppState {
             if changed {
                 errorMessage = nil
                 await refreshAllDeviceStates()
+                await refreshDpiUpdateTransportStatuses(for: listed)
             } else if selectedDevice != nil, state == nil {
                 await refreshState()
+            } else if let selectedDevice {
+                await refreshConnectionDiagnostics(for: selectedDevice)
             }
         } catch {
             if devices.isEmpty {
@@ -914,7 +1047,11 @@ final class AppState {
                 self.hydratedButtonBindingsKey = nil
             }
             for id in removedIDs {
+                stateCacheByDeviceID[id] = nil
                 refreshFailureCountByDeviceID[id] = nil
+                stateRefreshSuppressedUntilByDeviceID[id] = nil
+                unavailableDeviceIDs.remove(id)
+                dpiUpdateTransportStatusByDeviceID[id] = nil
                 manualUSBButtonProfileSelectionByDeviceID.remove(id)
                 lastUpdatedByDeviceID[id] = nil
                 suppressFastDpiUntilByDeviceID[id] = nil
@@ -960,6 +1097,11 @@ final class AppState {
         guard selectedDeviceID != deviceID else { return }
         selectedDeviceID = deviceID
         syncSelectedDevicePresentation(deviceID: deviceID)
+        if let selectedDevice {
+            Task { [weak self] in
+                await self?.refreshConnectionDiagnostics(for: selectedDevice)
+            }
+        }
         if usesRemoteServiceUpdates {
             sendRemoteClientPresence()
         }
@@ -976,7 +1118,14 @@ final class AppState {
         }
 
         isRefreshingState = refreshingStateDeviceIDs.contains(deviceID)
-        if let cached = stateCacheByDeviceID[deviceID] {
+        if unavailableDeviceIDs.contains(deviceID) {
+            state = nil
+            lastUpdated = nil
+            warningMessage = nil
+            if errorMessage == nil || !Self.isDeviceAvailabilityMessage(errorMessage ?? "") {
+                errorMessage = "Device disconnected or unavailable"
+            }
+        } else if let cached = stateCacheByDeviceID[deviceID] {
             state = cached
             lastUpdated = lastUpdatedByDeviceID[deviceID]
             warningMessage = telemetryWarning(for: cached, device: device)
@@ -993,7 +1142,9 @@ final class AppState {
             lastUpdated = nil
             warningMessage = nil
         }
-        errorMessage = nil
+        if !unavailableDeviceIDs.contains(deviceID) {
+            errorMessage = nil
+        }
     }
 
     private func setTelemetryWarning(_ newValue: String?, device: MouseDevice) {
@@ -1001,6 +1152,62 @@ final class AppState {
             AppLog.warning("AppState", "telemetry degraded device=\(device.id) transport=\(device.transport.rawValue): \(newValue)")
         }
         warningMessage = newValue
+    }
+
+    private func connectionState(for device: MouseDevice) -> DeviceConnectionState {
+        if isStrictlyUnsupported(device) {
+            return .unsupported
+        }
+
+        if !devices.contains(where: { $0.id == device.id }) && selectedDeviceID != device.id {
+            return .disconnected
+        }
+
+        if unavailableDeviceIDs.contains(device.id) {
+            return .disconnected
+        }
+
+        if device.id == selectedDeviceID, let errorMessage, !errorMessage.isEmpty {
+            let lowered = errorMessage.lowercased()
+            return Self.isDeviceAvailabilityMessage(lowered) ? .disconnected : .error
+        }
+
+        let failures = refreshFailureCountByDeviceID[device.id] ?? 0
+        if failures > 0 {
+            return .reconnecting
+        }
+
+        guard let updatedAt = lastUpdatedTimestamp(for: device) else {
+            return .reconnecting
+        }
+
+        let age = Date().timeIntervalSince(updatedAt)
+        if age > max(4.5, currentPollingProfile.refreshStateInterval * 1.7) {
+            return .reconnecting
+        }
+
+        return .connected
+    }
+
+    private func statusIndicator(for device: MouseDevice) -> DeviceStatusIndicator {
+        connectionState(for: device).indicator
+    }
+
+    private func lastUpdatedTimestamp(for device: MouseDevice) -> Date? {
+        lastUpdatedByDeviceID[device.id] ?? (device.id == selectedDeviceID ? lastUpdated : nil)
+    }
+
+    private func dpiUpdateTransportStatus(for device: MouseDevice) -> DpiUpdateTransportStatus {
+        if isStrictlyUnsupported(device) {
+            return .unsupported
+        }
+        return dpiUpdateTransportStatusByDeviceID[device.id] ?? .unknown
+    }
+
+    private func refreshDpiUpdateTransportStatuses(for devices: [MouseDevice]) async {
+        for device in devices {
+            await refreshConnectionDiagnostics(for: device)
+        }
     }
 
     private func focusServiceSelectionOnActivity(deviceID: String) {
@@ -1074,6 +1281,7 @@ final class AppState {
 
     private func refreshableDevicesInPriorityOrder() -> [MouseDevice] {
         guard !devices.isEmpty else { return [] }
+        let now = Date()
 
         var ordered: [MouseDevice] = []
         var seen: Set<String> = []
@@ -1084,6 +1292,11 @@ final class AppState {
 
         for device in devices where !isStrictlyUnsupported(device) {
             guard seen.insert(device.id).inserted else { continue }
+            if selectedDeviceID != device.id,
+               let suppressedUntil = stateRefreshSuppressedUntilByDeviceID[device.id],
+               now < suppressedUntil {
+                continue
+            }
             ordered.append(device)
         }
 
@@ -1101,6 +1314,42 @@ final class AppState {
 
         if selectedDeviceID == presentationDeviceID {
             lastUpdated = updatedAt
+        }
+    }
+
+    private func latestCachedUpdateAt(sourceDeviceID: String, presentationDeviceID: String) -> Date? {
+        [lastUpdatedByDeviceID[sourceDeviceID], lastUpdatedByDeviceID[presentationDeviceID]]
+            .compactMap { $0 }
+            .max()
+    }
+
+    private static func isDeviceAvailabilityMessage(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("no device") ||
+            lowered.contains("disconnected") ||
+            lowered.contains("not available") ||
+            lowered.contains("telemetry unavailable") ||
+            lowered.contains("bt vendor timeout") ||
+            lowered.contains("failed to connect") ||
+            lowered.contains("bluetooth is powered off")
+    }
+
+    private func stateRefreshBackoffInterval(for device: MouseDevice, failures: Int, error: any Error) -> TimeInterval {
+        let lowered = error.localizedDescription.lowercased()
+        if device.transport == .usb,
+           lowered.contains("telemetry unavailable") || lowered.contains("usable responses") {
+            return 30.0
+        }
+
+        switch failures {
+        case ...1:
+            return 8.0
+        case 2:
+            return 15.0
+        case 3:
+            return 30.0
+        default:
+            return 60.0
         }
     }
 
@@ -1206,6 +1455,15 @@ final class AppState {
             }
 
             let presentationDeviceID = presentationDevice.id
+            if let latestCachedAt = latestCachedUpdateAt(sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID),
+               latestCachedAt > start {
+                AppLog.debug(
+                    "AppState",
+                    "refreshState superseded-drop device=\(presentationDeviceID) startedAt=\(start.timeIntervalSince1970) " +
+                    "cachedAt=\(latestCachedAt.timeIntervalSince1970)"
+                )
+                return false
+            }
             let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
             let merged = fetched.merged(
                 with: previous
@@ -1215,6 +1473,10 @@ final class AppState {
             cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
             refreshFailureCountByDeviceID[refreshDeviceID] = 0
             refreshFailureCountByDeviceID[presentationDeviceID] = 0
+            stateRefreshSuppressedUntilByDeviceID[refreshDeviceID] = nil
+            stateRefreshSuppressedUntilByDeviceID[presentationDeviceID] = nil
+            unavailableDeviceIDs.remove(refreshDeviceID)
+            unavailableDeviceIDs.remove(presentationDeviceID)
             if shouldFocusOnActivity {
                 focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
             }
@@ -1244,9 +1506,35 @@ final class AppState {
             let failures = (refreshFailureCountByDeviceID[presentationDeviceID] ?? 0) + 1
             refreshFailureCountByDeviceID[refreshDeviceID] = failures
             refreshFailureCountByDeviceID[presentationDeviceID] = failures
+            let isAvailabilityFailure = Self.isDeviceAvailabilityMessage(error.localizedDescription)
+            if isAvailabilityFailure {
+                unavailableDeviceIDs.insert(refreshDeviceID)
+                unavailableDeviceIDs.insert(presentationDeviceID)
+            }
+
+            if selectedDeviceID != presentationDeviceID {
+                let suppressedUntil = Date().addingTimeInterval(
+                    stateRefreshBackoffInterval(for: device, failures: failures, error: error)
+                )
+                stateRefreshSuppressedUntilByDeviceID[refreshDeviceID] = suppressedUntil
+                stateRefreshSuppressedUntilByDeviceID[presentationDeviceID] = suppressedUntil
+                AppLog.debug(
+                    "AppState",
+                    "refreshState backoff device=\(presentationDeviceID) failures=\(failures) " +
+                    "until=\(suppressedUntil.timeIntervalSince1970): \(error.localizedDescription)"
+                )
+            }
 
             guard selectedDeviceID == presentationDeviceID else {
                 AppLog.debug("AppState", "refreshState masked non-selected failure device=\(presentationDeviceID): \(error.localizedDescription)")
+                return false
+            }
+
+            if isAvailabilityFailure {
+                state = nil
+                lastUpdated = nil
+                warningMessage = nil
+                errorMessage = error.localizedDescription
                 return false
             }
 
@@ -1734,7 +2022,11 @@ final class AppState {
         guard !refreshingFastDpiDeviceIDs.contains(device.id) else { return }
         guard !refreshingStateDeviceIDs.contains(device.id) else { return }
         guard !hasPendingLocalEditsAffecting(device) else { return }
-        guard await backend.shouldUseFastDPIPolling(device: device) else { return }
+        let usesFastPolling = await backend.shouldUseFastDPIPolling(device: device)
+        if !usesFastPolling {
+            dpiUpdateTransportStatusByDeviceID[device.id] = .realTimeHID
+            return
+        }
 
         if device.transport == .usb,
            let lastUSBFastDpiAt = lastUSBFastDpiAtByDeviceID[device.id],
@@ -1787,6 +2079,10 @@ final class AppState {
 
             let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: updated)
             cacheState(updated, sourceDeviceID: device.id, presentationDeviceID: presentationDeviceID, updatedAt: readAt)
+            dpiUpdateTransportStatusByDeviceID[device.id] = .pollingFallback
+            dpiUpdateTransportStatusByDeviceID[presentationDeviceID] = .pollingFallback
+            unavailableDeviceIDs.remove(device.id)
+            unavailableDeviceIDs.remove(presentationDeviceID)
             if shouldFocusOnActivity {
                 focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
             }

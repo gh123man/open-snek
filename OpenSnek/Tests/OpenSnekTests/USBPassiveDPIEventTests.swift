@@ -49,6 +49,109 @@ final class USBPassiveDPIEventTests: XCTestCase {
         )
     }
 
+    func testPassiveDpiUpgradeRetriesOnlyForHealthyUnobservedUSBTargets() {
+        let now = Date(timeIntervalSince1970: 1_773_500_000)
+        let usbDevice = makePassiveTestDevice(id: "usb-passive-upgrade", transport: .usb)
+        let bluetoothDevice = makePassiveTestDevice(id: "bt-passive-upgrade", transport: .bluetooth)
+
+        XCTAssertTrue(
+            BridgeClient.shouldAttemptPassiveDpiUpgrade(
+                device: usbDevice,
+                targetAvailable: true,
+                observedPassiveDpiDeviceIDs: [],
+                retryNotBefore: nil,
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldAttemptPassiveDpiUpgrade(
+                device: usbDevice,
+                targetAvailable: false,
+                observedPassiveDpiDeviceIDs: [],
+                retryNotBefore: nil,
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldAttemptPassiveDpiUpgrade(
+                device: usbDevice,
+                targetAvailable: true,
+                observedPassiveDpiDeviceIDs: [usbDevice.id],
+                retryNotBefore: nil,
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldAttemptPassiveDpiUpgrade(
+                device: usbDevice,
+                targetAvailable: true,
+                observedPassiveDpiDeviceIDs: [],
+                retryNotBefore: now.addingTimeInterval(1.0),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldAttemptPassiveDpiUpgrade(
+                device: bluetoothDevice,
+                targetAvailable: true,
+                observedPassiveDpiDeviceIDs: [],
+                retryNotBefore: nil,
+                now: now
+            )
+        )
+    }
+
+    func testPassiveDpiObservedStateResetsWhenRegistrationChanges() {
+        let unchanged = BridgeClient.reconciledObservedPassiveDpiDeviceIDs(
+            observedDeviceIDs: ["bt-device", "usb-device"],
+            previousTargetPointersByDeviceID: [
+                "bt-device": [0x01],
+                "usb-device": [0x11, 0x12],
+            ],
+            nextTargetPointersByDeviceID: [
+                "bt-device": [0x01],
+                "usb-device": [0x21, 0x22],
+            ]
+        )
+        let removed = BridgeClient.reconciledObservedPassiveDpiDeviceIDs(
+            observedDeviceIDs: ["bt-device"],
+            previousTargetPointersByDeviceID: [
+                "bt-device": [0x01],
+            ],
+            nextTargetPointersByDeviceID: [:]
+        )
+
+        XCTAssertEqual(unchanged, ["bt-device"])
+        XCTAssertTrue(removed.isEmpty)
+    }
+
+    func testBluetoothHIDDiscoveryRequiresMatchingConnectedPeripheralWhenKnown() {
+        XCTAssertTrue(
+            BridgeClient.shouldIncludeBluetoothHIDDevice(
+                hidDeviceName: "Basilisk V3 X HyperSpeed",
+                connectedPeripheralNames: nil
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldIncludeBluetoothHIDDevice(
+                hidDeviceName: "Basilisk V3 X HyperSpeed",
+                connectedPeripheralNames: []
+            )
+        )
+        XCTAssertTrue(
+            BridgeClient.shouldIncludeBluetoothHIDDevice(
+                hidDeviceName: "Basilisk V3 X HyperSpeed",
+                connectedPeripheralNames: ["Razer Basilisk V3 X HyperSpeed"]
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldIncludeBluetoothHIDDevice(
+                hidDeviceName: "Basilisk V3 X HyperSpeed",
+                connectedPeripheralNames: ["DeathAdder V2 X HyperSpeed"]
+            )
+        )
+    }
+
     func testPassiveDPIParserAcceptsObservedUSBAndBluetoothFrames() {
         let descriptor = try! XCTUnwrap(
             DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AB, transport: .usb)?.passiveDPIInput
@@ -144,6 +247,41 @@ final class USBPassiveDPIEventTests: XCTestCase {
         XCTAssertNil(merged)
     }
 
+    func testBluetoothPassiveDpiExpectationUsesUniqueMatchedStage() {
+        let device = makePassiveTestDevice(id: "bt-passive-expected", transport: .bluetooth)
+        let event = PassiveDPIEvent(deviceID: device.id, dpiX: 1100, dpiY: 1100, observedAt: Date())
+        let expectationFromSnapshot = BridgeClient.bluetoothPassiveDpiExpectation(
+            event: event,
+            snapshot: (active: 0, count: 5, slots: [800, 900, 1000, 1100, 1500], stageIDs: [1, 2, 3, 4, 5], marker: 0x03),
+            state: nil
+        )
+        let expectationFromState = BridgeClient.bluetoothPassiveDpiExpectation(
+            event: event,
+            snapshot: nil,
+            state: makePassiveTestState(
+                device: device,
+                dpiValues: [800, 900, 1000, 1100, 1500],
+                activeStage: 0,
+                dpiValue: 800
+            )
+        )
+        let duplicateMatch = BridgeClient.bluetoothPassiveDpiExpectation(
+            event: PassiveDPIEvent(deviceID: device.id, dpiX: 2000, dpiY: 2000, observedAt: Date()),
+            snapshot: nil,
+            state: makePassiveTestState(
+                device: device,
+                dpiValues: [800, 2000, 2000],
+                activeStage: 0,
+                dpiValue: 800
+            )
+        )
+
+        XCTAssertEqual(expectationFromSnapshot?.active, 3)
+        XCTAssertEqual(expectationFromSnapshot?.values, [800, 900, 1000, 1100, 1500])
+        XCTAssertEqual(expectationFromState?.active, 3)
+        XCTAssertNil(duplicateMatch)
+    }
+
     func testAppStateAppliesBackendStateUpdatesWithoutWaitingForPolling() async {
         let device = makePassiveTestDevice(id: "usb-passive-live", transport: .usb)
         let backend = PassiveUpdateStubBackend(
@@ -232,6 +370,54 @@ final class USBPassiveDPIEventTests: XCTestCase {
 
         let fastReadCount = await backend.fastReadCount()
         XCTAssertEqual(fastReadCount, 1)
+    }
+
+    func testRefreshStateDoesNotOverwriteNewerPassiveBluetoothUpdateWithStaleRead() async {
+        let device = makePassiveTestDevice(id: "bt-passive-race", transport: .bluetooth)
+        let staleState = makePassiveTestState(
+            device: device,
+            dpiValues: [800, 900, 1000, 1100, 1200],
+            activeStage: 1,
+            dpiValue: 900
+        )
+        let passiveState = makePassiveTestState(
+            device: device,
+            dpiValues: [800, 900, 1000, 1100, 1200],
+            activeStage: 4,
+            dpiValue: 1200
+        )
+        let backend = RacingPassiveUpdateStubBackend(
+            devices: [device],
+            staleStateByDeviceID: [device.id: staleState]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        let refreshTask = Task {
+            await appState.refreshDevices()
+        }
+
+        await backend.waitForReadStateStart()
+        let passiveObservedAt = Date()
+        await backend.emitStateUpdate(
+            deviceID: device.id,
+            state: passiveState,
+            updatedAt: passiveObservedAt
+        )
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        await backend.resumeReadState()
+        await refreshTask.value
+
+        let liveDpi = await MainActor.run { appState.state?.dpi?.x }
+        let activeStage = await MainActor.run { appState.editableActiveStage }
+        let lastUpdated = await MainActor.run { appState.lastUpdated }
+
+        XCTAssertEqual(liveDpi, 1200)
+        XCTAssertEqual(activeStage, 5)
+        XCTAssertNotNil(lastUpdated)
+        XCTAssertEqual(lastUpdated!.timeIntervalSince1970, passiveObservedAt.timeIntervalSince1970, accuracy: 0.2)
     }
 }
 
@@ -327,6 +513,91 @@ private actor PassiveUpdateStubBackend: DeviceBackend {
 
     func fastReadCount() -> Int {
         fastReadCounter
+    }
+}
+
+private actor RacingPassiveUpdateStubBackend: DeviceBackend {
+    nonisolated var usesRemoteServiceTransport: Bool { false }
+
+    private let devices: [MouseDevice]
+    private var staleStateByDeviceID: [String: MouseState]
+    private let stateUpdateStreamPair = AsyncStream.makeStream(of: BackendStateUpdate.self)
+    private var readStateStarted = false
+    private var readStateStartedContinuations: [CheckedContinuation<Void, Never>] = []
+    private var readStateResumeContinuation: CheckedContinuation<Void, Never>?
+
+    init(devices: [MouseDevice], staleStateByDeviceID: [String: MouseState]) {
+        self.devices = devices
+        self.staleStateByDeviceID = staleStateByDeviceID
+    }
+
+    func listDevices() async throws -> [MouseDevice] {
+        devices
+    }
+
+    func readState(device: MouseDevice) async throws -> MouseState {
+        readStateStarted = true
+        let continuations = readStateStartedContinuations
+        readStateStartedContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+
+        await withCheckedContinuation { continuation in
+            readStateResumeContinuation = continuation
+        }
+
+        guard let state = staleStateByDeviceID[device.id] else {
+            throw NSError(domain: "USBPassiveDPIEventTests", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Missing stale state for \(device.id)"
+            ])
+        }
+        return state
+    }
+
+    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
+        nil
+    }
+
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
+        false
+    }
+
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        stateUpdateStreamPair.stream
+    }
+
+    func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState {
+        throw NSError(domain: "USBPassiveDPIEventTests", code: 4, userInfo: [
+            NSLocalizedDescriptionKey: "apply not implemented"
+        ])
+    }
+
+    func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? {
+        nil
+    }
+
+    func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? {
+        nil
+    }
+
+    func waitForReadStateStart() async {
+        if readStateStarted {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            readStateStartedContinuations.append(continuation)
+        }
+    }
+
+    func resumeReadState() {
+        readStateResumeContinuation?.resume()
+        readStateResumeContinuation = nil
+    }
+
+    func emitStateUpdate(deviceID: String, state: MouseState, updatedAt: Date) {
+        stateUpdateStreamPair.continuation.yield(.deviceState(deviceID: deviceID, state: state, updatedAt: updatedAt))
     }
 }
 

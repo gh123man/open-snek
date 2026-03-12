@@ -23,21 +23,26 @@ struct DeviceDetailView: View {
         GeometryReader { proxy in
             let sections = detailSections
             let contentWidth = detailContentWidth(for: proxy.size.width)
+            let controlsEnabled = appState.selectedDeviceControlsEnabled
 
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 18) {
                     DeviceOverviewBar(appState: appState, selected: selected, state: state)
-                    DetailColumnsLayout(
-                        minTwoColumnCardWidth: detailTwoColumnMinWidth,
-                        twoColumnBreakpointPadding: twoColumnBreakpointPadding,
-                        spacing: cardSpacing,
-                        maxCardWidth: detailCardMaxWidth
-                    ) {
-                        ForEach(sections, id: \.self) { section in
-                            detailCard(for: section)
-                                .layoutValue(key: PreferredDetailColumnLayoutKey.self, value: preferredColumn(for: section))
-                                .layoutValue(key: DetailCardMaxWidthLayoutKey.self, value: section == .buttonRemap ? detailContentMaxWidth : detailCardMaxWidth)
+                    VStack(alignment: .leading, spacing: 12) {
+                        DetailColumnsLayout(
+                            minTwoColumnCardWidth: detailTwoColumnMinWidth,
+                            twoColumnBreakpointPadding: twoColumnBreakpointPadding,
+                            spacing: cardSpacing,
+                            maxCardWidth: detailCardMaxWidth
+                        ) {
+                            ForEach(sections, id: \.self) { section in
+                                detailCard(for: section)
+                                    .layoutValue(key: PreferredDetailColumnLayoutKey.self, value: preferredColumn(for: section))
+                                    .layoutValue(key: DetailCardMaxWidthLayoutKey.self, value: section == .buttonRemap ? detailContentMaxWidth : detailCardMaxWidth)
+                            }
                         }
+                        .disabled(!controlsEnabled)
+                        .opacity(controlsEnabled ? 1.0 : 0.44)
                     }
                     DiagnosticsFooter(appState: appState, device: selected, state: state)
                 }
@@ -48,6 +53,9 @@ struct DeviceDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(WindowDragBlocker())
+            .task(id: selected.id) {
+                await appState.refreshConnectionDiagnostics(for: selected)
+            }
         }
     }
 
@@ -361,6 +369,50 @@ struct GenericDeviceDetailView: View {
     }
 }
 
+struct DeviceUnavailableDetailView: View {
+    @Bindable var appState: AppState
+    let selected: MouseDevice
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                GenericDeviceOverviewBar(appState: appState, selected: selected)
+
+                Card(title: appState.currentDeviceStatusIndicator.label) {
+                    Text(appState.selectedDeviceInteractionMessage ?? "Live telemetry is unavailable for this device right now.")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("The controls stay locked until the device reconnects and Open Snek is receiving live updates again.")
+                        .hintTextStyle()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(appState.diagnosticsConnectionLines(for: selected), id: \.self) { line in
+                            Text(line)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.78))
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+
+                DiagnosticsFooter(appState: appState, device: selected, state: nil)
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WindowDragBlocker())
+        .task(id: selected.id) {
+            await appState.refreshConnectionDiagnostics(for: selected)
+        }
+    }
+}
+
 struct GenericDeviceOverviewBar: View {
     @Bindable var appState: AppState
     let selected: MouseDevice
@@ -531,6 +583,26 @@ struct DeviceDiagnosticsSheet: View {
             Text("Use this dump in bug reports when a device is unsupported, partially supported, or behaving unexpectedly.")
                 .hintTextStyle()
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Connection Paths")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                ForEach(appState.diagnosticsConnectionLines(for: device), id: \.self) { line in
+                    Text(line)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.black.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
+            )
+
             ScrollView {
                 Text(diagnosticsText)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -550,6 +622,9 @@ struct DeviceDiagnosticsSheet: View {
         }
         .padding(18)
         .frame(minWidth: 760, minHeight: 540, alignment: .topLeading)
+        .task(id: device.id) {
+            await appState.refreshConnectionDiagnostics(for: device)
+        }
     }
 
     private func copyDiagnostics() {

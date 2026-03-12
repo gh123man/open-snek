@@ -34,6 +34,7 @@ struct DpiFastSnapshot: Codable, Hashable, Sendable {
 }
 
 enum BackendStateUpdate: Sendable {
+    case deviceList([MouseDevice], updatedAt: Date)
     case deviceState(deviceID: String, state: MouseState, updatedAt: Date)
     case snapshot(SharedServiceSnapshot)
 }
@@ -107,6 +108,7 @@ private enum BackgroundServiceMethod: String, Codable, Sendable {
     case listDevices
     case readState
     case readDpiStagesFast
+    case shouldUseFastDPIPolling
     case apply
     case readLightingColor
     case debugUSBReadButtonBinding
@@ -294,6 +296,7 @@ final actor LocalBridgeBackend: DeviceBackend {
     private var cachedFastByDeviceID: [String: DpiFastSnapshot] = [:]
     private var cachedFastAtByDeviceID: [String: Date] = [:]
     private var stateUpdateContinuations: [UUID: AsyncStream<BackendStateUpdate>.Continuation] = [:]
+    private var devicePresenceRefreshTask: Task<Void, Never>?
 
     nonisolated var usesRemoteServiceTransport: Bool { false }
 
@@ -305,6 +308,13 @@ final actor LocalBridgeBackend: DeviceBackend {
                 await self.handlePassiveDpiEvent(event)
             }
         }
+        Task { [weak self] in
+            guard let self else { return }
+            let stream = await self.client.devicePresenceEventStream()
+            for await event in stream {
+                await self.handleDevicePresenceEvent(event)
+            }
+        }
     }
 
     func listDevices() async throws -> [MouseDevice] {
@@ -314,8 +324,7 @@ final actor LocalBridgeBackend: DeviceBackend {
             return cachedDevices
         }
         let devices = try await client.listDevices()
-        cachedDevices = devices
-        cachedDevicesAt = Date()
+        updateCachedDevices(devices, updatedAt: Date(), publishUpdate: false)
         publishSnapshotIfService()
         return devices
     }
@@ -391,6 +400,20 @@ final actor LocalBridgeBackend: DeviceBackend {
         stateUpdateContinuations.removeValue(forKey: id)
     }
 
+    private func handleDevicePresenceEvent(_ event: HIDDevicePresenceEvent) {
+        invalidateCachedTelemetry(for: event.deviceID)
+        devicePresenceRefreshTask?.cancel()
+        devicePresenceRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshCachedDevicesAfterPresenceChange(observedAt: event.observedAt)
+        }
+    }
+
     private func updateCachedStateFromFastSnapshot(_ snapshot: DpiFastSnapshot, for deviceID: String) {
         guard let previous = cachedStateByDeviceID[deviceID], !snapshot.values.isEmpty else { return }
         let active = max(0, min(snapshot.values.count - 1, snapshot.active))
@@ -444,6 +467,52 @@ final actor LocalBridgeBackend: DeviceBackend {
         }
     }
 
+    private func refreshCachedDevicesAfterPresenceChange(observedAt: Date) async {
+        do {
+            let devices = try await client.listDevices()
+            updateCachedDevices(devices, updatedAt: observedAt, publishUpdate: true)
+            publishSnapshotIfService()
+        } catch {
+            AppLog.warning(
+                "Backend",
+                "device presence refresh failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func updateCachedDevices(
+        _ devices: [MouseDevice],
+        updatedAt: Date,
+        publishUpdate: Bool
+    ) {
+        let previousIDs = Set(cachedDevices.map(\.id))
+        let nextIDs = Set(devices.map(\.id))
+        purgeCaches(forRemovedDeviceIDs: previousIDs.subtracting(nextIDs))
+        cachedDevices = devices
+        cachedDevicesAt = updatedAt
+        if publishUpdate {
+            publishStateUpdate(.deviceList(devices, updatedAt: updatedAt))
+        }
+    }
+
+    private func invalidateCachedTelemetry(for deviceID: String) {
+        cachedDevicesAt = nil
+        cachedStateByDeviceID.removeValue(forKey: deviceID)
+        cachedStateAtByDeviceID.removeValue(forKey: deviceID)
+        cachedFastByDeviceID.removeValue(forKey: deviceID)
+        cachedFastAtByDeviceID.removeValue(forKey: deviceID)
+    }
+
+    private func purgeCaches(forRemovedDeviceIDs removedDeviceIDs: Set<String>) {
+        guard !removedDeviceIDs.isEmpty else { return }
+        for deviceID in removedDeviceIDs {
+            cachedStateByDeviceID.removeValue(forKey: deviceID)
+            cachedStateAtByDeviceID.removeValue(forKey: deviceID)
+            cachedFastByDeviceID.removeValue(forKey: deviceID)
+            cachedFastAtByDeviceID.removeValue(forKey: deviceID)
+        }
+    }
+
     private func publishSnapshotIfService() {
         guard OpenSnekProcessRole.current.isService else { return }
         let liveIDs = Set(cachedDevices.map(\.id))
@@ -490,6 +559,9 @@ private actor BackgroundServiceRequestHandler {
         case .readDpiStagesFast:
             let device = try decodePayload(MouseDevice.self, from: request.payload)
             payload = try BackendCodec.encode(try await backend.readDpiStagesFast(device: device))
+        case .shouldUseFastDPIPolling:
+            let device = try decodePayload(MouseDevice.self, from: request.payload)
+            payload = try BackendCodec.encode(await backend.shouldUseFastDPIPolling(device: device))
         case .apply:
             let applyRequest = try decodePayload(ApplyRequest.self, from: request.payload)
             payload = try BackendCodec.encode(try await backend.apply(device: applyRequest.device, patch: applyRequest.patch))
@@ -552,8 +624,12 @@ final actor IPCDeviceBackend: DeviceBackend {
         )
     }
 
-    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
-        false
+    func shouldUseFastDPIPolling(device: MouseDevice) async -> Bool {
+        (try? await request(
+            method: .shouldUseFastDPIPolling,
+            payload: try BackendCodec.encode(device),
+            responseType: Bool.self
+        )) ?? false
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {

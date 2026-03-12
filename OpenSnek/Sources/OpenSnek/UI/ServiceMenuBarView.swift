@@ -45,6 +45,10 @@ struct ServiceMenuBarView: View {
         appState.selectedDevice != nil && appState.state != nil
     }
 
+    private var controlsEnabled: Bool {
+        appState.selectedDeviceControlsEnabled
+    }
+
     private var showsDevicePicker: Bool {
         appState.devices.count > 1
     }
@@ -64,13 +68,30 @@ struct ServiceMenuBarView: View {
             header
             statusRow
             if showsDeviceControls {
-                stagePicker
-                dpiSlider
-                if let message = appState.compactStatusMessage {
-                    Text(message)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    if !controlsEnabled, let message = appState.selectedDeviceInteractionMessage {
+                        Text(message)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        stagePicker
+                        dpiSlider
+                    }
+                    .disabled(!controlsEnabled)
+                    .opacity(controlsEnabled ? 1.0 : 0.45)
+
+                    if let message = appState.compactStatusMessage {
+                        Text(message)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
                 }
+            } else if let message = appState.selectedDeviceInteractionMessage {
+                Text(message)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
             } else {
                 Text("Connect a supported mouse to edit DPI from the menu bar.")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -91,6 +112,10 @@ struct ServiceMenuBarView: View {
         .frame(width: 320)
         .task {
             await appState.start()
+        }
+        .task(id: appState.selectedDeviceID) {
+            guard let device = appState.selectedDevice else { return }
+            await appState.refreshConnectionDiagnostics(for: device)
         }
         .onAppear {
             appState.setCompactMenuPresented(true)
