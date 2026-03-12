@@ -91,7 +91,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
-DEFAULT_ICON_PNG="$PACKAGE_DIR/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
+DEFAULT_ICON_PNG="$PACKAGE_DIR/Branding/AppIcon-master.png"
 
 PRODUCT_NAME="OpenSnek"
 DISPLAY_NAME="Open Snek"

@@ -91,7 +91,7 @@ For distribution/signing workflows, use the generated Xcode project:
 ./OpenSnek/scripts/generate_xcodeproj.sh --open
 ```
 
-Regenerate app icon assets (if branding changes):
+Regenerate app icon assets from the canonical master PNG (`Branding/AppIcon-master.png`):
 
 ```bash
 ./OpenSnek/scripts/generate_appiconset.sh
