@@ -18,50 +18,26 @@ final class RemoteServiceSnapshotTests: XCTestCase {
             AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
         }
 
-        let device = MouseDevice(
+        let device = makeSnapshotDevice(
             id: "snapshot-device",
-            vendor_id: 0x1532,
-            product_id: 0x00AB,
-            product_name: "Snapshot Mouse",
+            productName: "Snapshot Mouse",
             transport: .usb,
-            path_b64: "",
             serial: "SNAPSHOT",
-            firmware: "1.0.0",
-            location_id: 1,
-            profile_id: .basiliskV3Pro,
-            supports_advanced_lighting_effects: true,
-            onboard_profile_count: 1
+            locationID: 1,
+            profile: .basiliskV3Pro
         )
-        let state = MouseState(
-            device: DeviceSummary(
-                id: device.id,
-                product_name: device.product_name,
-                serial: device.serial,
-                transport: device.transport,
-                firmware: device.firmware
-            ),
+        let state = makeSnapshotState(
+            device: device,
             connection: "usb",
-            battery_percent: 81,
-            charging: false,
-            dpi: DpiPair(x: 2400, y: 2400),
-            dpi_stages: DpiStages(active_stage: 1, values: [800, 2400, 6400]),
-            poll_rate: 1000,
-            device_mode: DeviceMode(mode: 0x00, param: 0x00),
-            led_value: 64,
-            capabilities: Capabilities(
-                dpi_stages: true,
-                poll_rate: true,
-                power_management: true,
-                button_remap: true,
-                lighting: true
-            )
+            batteryPercent: 81,
+            dpiValues: [800, 2400, 6400],
+            activeStage: 1,
+            dpiValue: 2400
         )
         let snapshot = SharedServiceSnapshot(
             devices: [device],
             stateByDeviceID: [device.id: state],
-            lastUpdatedByDeviceID: [device.id: Date(timeIntervalSince1970: 1_773_320_000)],
-            focusedDeviceID: nil,
-            focusedDeviceChangedAt: nil
+            lastUpdatedByDeviceID: [device.id: Date(timeIntervalSince1970: 1_773_320_000)]
         )
 
         await MainActor.run {
@@ -79,218 +55,214 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(pollRate, 1000)
     }
 
-    func testApplyRemoteServiceSnapshotFocusesLastChangedDevice() async {
+    func testApplyingLaterSnapshotKeepsExistingLocalSelection() async {
         let appState = await MainActor.run {
             AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
         }
 
-        let usbDevice = MouseDevice(
-            id: "usb-device",
-            vendor_id: 0x1532,
-            product_id: 0x00AB,
-            product_name: "USB Mouse",
-            transport: .usb,
-            path_b64: "",
-            serial: "USB",
-            firmware: "1.0.0",
-            location_id: 1,
-            profile_id: .basiliskV3Pro,
-            supports_advanced_lighting_effects: true,
-            onboard_profile_count: 1
-        )
-        let bluetoothDevice = MouseDevice(
+        let bluetoothDevice = makeSnapshotDevice(
             id: "bluetooth-device",
-            vendor_id: 0x1532,
-            product_id: 0x00BA,
-            product_name: "Bluetooth Mouse",
+            productName: "A Bluetooth Mouse",
             transport: .bluetooth,
-            path_b64: "",
             serial: "BT",
-            firmware: "1.0.0",
-            location_id: 2,
-            profile_id: .basiliskV3XHyperspeed,
-            supports_advanced_lighting_effects: true,
-            onboard_profile_count: 1
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
         )
-        let usbState = MouseState(
-            device: DeviceSummary(
-                id: usbDevice.id,
-                product_name: usbDevice.product_name,
-                serial: usbDevice.serial,
-                transport: usbDevice.transport,
-                firmware: usbDevice.firmware
-            ),
-            connection: "usb",
-            battery_percent: 81,
-            charging: false,
-            dpi: DpiPair(x: 2400, y: 2400),
-            dpi_stages: DpiStages(active_stage: 1, values: [800, 2400, 6400]),
-            poll_rate: 1000,
-            device_mode: DeviceMode(mode: 0x00, param: 0x00),
-            led_value: 64,
-            capabilities: Capabilities(
-                dpi_stages: true,
-                poll_rate: true,
-                power_management: true,
-                button_remap: true,
-                lighting: true
-            )
+        let usbDevice = makeSnapshotDevice(
+            id: "usb-device",
+            productName: "Z USB Mouse",
+            transport: .usb,
+            serial: "USB",
+            locationID: 1,
+            profile: .basiliskV3Pro
         )
-        let bluetoothState = MouseState(
-            device: DeviceSummary(
-                id: bluetoothDevice.id,
-                product_name: bluetoothDevice.product_name,
-                serial: bluetoothDevice.serial,
-                transport: bluetoothDevice.transport,
-                firmware: bluetoothDevice.firmware
-            ),
-            connection: "bluetooth",
-            battery_percent: 74,
-            charging: false,
-            dpi: DpiPair(x: 3200, y: 3200),
-            dpi_stages: DpiStages(active_stage: 2, values: [1200, 2400, 3200]),
-            poll_rate: 1000,
-            device_mode: DeviceMode(mode: 0x00, param: 0x00),
-            led_value: 64,
-            capabilities: Capabilities(
-                dpi_stages: true,
-                poll_rate: true,
-                power_management: true,
-                button_remap: true,
-                lighting: true
-            )
-        )
-        let snapshot = SharedServiceSnapshot(
+        let initialSnapshot = SharedServiceSnapshot(
             devices: [bluetoothDevice, usbDevice],
             stateByDeviceID: [
-                usbDevice.id: usbState,
-                bluetoothDevice.id: bluetoothState,
+                bluetoothDevice.id: makeSnapshotState(
+                    device: bluetoothDevice,
+                    connection: "bluetooth",
+                    batteryPercent: 74,
+                    dpiValues: [1200, 2400, 3200],
+                    activeStage: 2,
+                    dpiValue: 3200
+                ),
+                usbDevice.id: makeSnapshotState(
+                    device: usbDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [800, 2400, 6400],
+                    activeStage: 1,
+                    dpiValue: 2400
+                ),
             ],
             lastUpdatedByDeviceID: [
-                usbDevice.id: Date(timeIntervalSince1970: 1_773_320_000),
                 bluetoothDevice.id: Date(timeIntervalSince1970: 1_773_320_010),
+                usbDevice.id: Date(timeIntervalSince1970: 1_773_320_000),
+            ]
+        )
+        let laterSnapshot = SharedServiceSnapshot(
+            devices: [bluetoothDevice, usbDevice],
+            stateByDeviceID: [
+                bluetoothDevice.id: makeSnapshotState(
+                    device: bluetoothDevice,
+                    connection: "bluetooth",
+                    batteryPercent: 75,
+                    dpiValues: [1400, 2800, 4200],
+                    activeStage: 2,
+                    dpiValue: 4200
+                ),
+                usbDevice.id: makeSnapshotState(
+                    device: usbDevice,
+                    connection: "usb",
+                    batteryPercent: 82,
+                    dpiValues: [900, 1800, 3600],
+                    activeStage: 0,
+                    dpiValue: 900
+                ),
             ],
-            focusedDeviceID: bluetoothDevice.id,
-            focusedDeviceChangedAt: Date(timeIntervalSince1970: 1_773_320_020)
+            lastUpdatedByDeviceID: [
+                bluetoothDevice.id: Date(timeIntervalSince1970: 1_773_320_020),
+                usbDevice.id: Date(timeIntervalSince1970: 1_773_320_021),
+            ]
         )
 
         await MainActor.run {
-            appState.applyRemoteServiceSnapshot(snapshot)
+            appState.applyRemoteServiceSnapshot(initialSnapshot)
+            appState.selectDevice(usbDevice.id)
+            appState.applyRemoteServiceSnapshot(laterSnapshot)
         }
 
         let selectedDeviceID = await MainActor.run { appState.selectedDeviceID }
         let selectedDpi = await MainActor.run { appState.state?.dpi?.x }
+        let selectedBattery = await MainActor.run { appState.state?.battery_percent }
         let activeStage = await MainActor.run { appState.editableActiveStage }
 
-        XCTAssertEqual(selectedDeviceID, bluetoothDevice.id)
-        XCTAssertEqual(selectedDpi, 3200)
-        XCTAssertEqual(activeStage, 3)
+        XCTAssertEqual(selectedDeviceID, usbDevice.id)
+        XCTAssertEqual(selectedDpi, 900)
+        XCTAssertEqual(selectedBattery, 82)
+        XCTAssertEqual(activeStage, 1)
     }
 
-    func testRepeatedSnapshotDoesNotOverrideLaterManualSelection() async {
+    func testCurrentDeviceStatusUsesSelectedDeviceFreshnessFromSnapshotCache() async {
         let appState = await MainActor.run {
             AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
         }
 
-        let usbDevice = MouseDevice(
-            id: "usb-device",
-            vendor_id: 0x1532,
-            product_id: 0x00AB,
-            product_name: "USB Mouse",
+        let alphaDevice = makeSnapshotDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
             transport: .usb,
-            path_b64: "",
-            serial: "USB",
-            firmware: "1.0.0",
-            location_id: 1,
-            profile_id: .basiliskV3Pro,
-            supports_advanced_lighting_effects: true,
-            onboard_profile_count: 1
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
         )
-        let bluetoothDevice = MouseDevice(
-            id: "bluetooth-device",
-            vendor_id: 0x1532,
-            product_id: 0x00BA,
-            product_name: "Bluetooth Mouse",
-            transport: .bluetooth,
-            path_b64: "",
-            serial: "BT",
-            firmware: "1.0.0",
-            location_id: 2,
-            profile_id: .basiliskV3XHyperspeed,
-            supports_advanced_lighting_effects: true,
-            onboard_profile_count: 1
-        )
-        let usbState = MouseState(
-            device: DeviceSummary(
-                id: usbDevice.id,
-                product_name: usbDevice.product_name,
-                serial: usbDevice.serial,
-                transport: usbDevice.transport,
-                firmware: usbDevice.firmware
-            ),
-            connection: "usb",
-            battery_percent: 81,
-            charging: false,
-            dpi: DpiPair(x: 2400, y: 2400),
-            dpi_stages: DpiStages(active_stage: 1, values: [800, 2400, 6400]),
-            poll_rate: 1000,
-            device_mode: DeviceMode(mode: 0x00, param: 0x00),
-            led_value: 64,
-            capabilities: Capabilities(
-                dpi_stages: true,
-                poll_rate: true,
-                power_management: true,
-                button_remap: true,
-                lighting: true
-            )
-        )
-        let bluetoothState = MouseState(
-            device: DeviceSummary(
-                id: bluetoothDevice.id,
-                product_name: bluetoothDevice.product_name,
-                serial: bluetoothDevice.serial,
-                transport: bluetoothDevice.transport,
-                firmware: bluetoothDevice.firmware
-            ),
-            connection: "bluetooth",
-            battery_percent: 74,
-            charging: false,
-            dpi: DpiPair(x: 3200, y: 3200),
-            dpi_stages: DpiStages(active_stage: 2, values: [1200, 2400, 3200]),
-            poll_rate: 1000,
-            device_mode: DeviceMode(mode: 0x00, param: 0x00),
-            led_value: 64,
-            capabilities: Capabilities(
-                dpi_stages: true,
-                poll_rate: true,
-                power_management: true,
-                button_remap: true,
-                lighting: true
-            )
+        let betaDevice = makeSnapshotDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .usb,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
         )
         let snapshot = SharedServiceSnapshot(
-            devices: [bluetoothDevice, usbDevice],
+            devices: [alphaDevice, betaDevice],
             stateByDeviceID: [
-                usbDevice.id: usbState,
-                bluetoothDevice.id: bluetoothState,
+                alphaDevice.id: makeSnapshotState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 70,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800
+                ),
+                betaDevice.id: makeSnapshotState(
+                    device: betaDevice,
+                    connection: "usb",
+                    batteryPercent: 72,
+                    dpiValues: [1000, 2000, 3000],
+                    activeStage: 1,
+                    dpiValue: 2000
+                ),
             ],
             lastUpdatedByDeviceID: [
-                usbDevice.id: Date(timeIntervalSince1970: 1_773_320_000),
-                bluetoothDevice.id: Date(timeIntervalSince1970: 1_773_320_010),
-            ],
-            focusedDeviceID: bluetoothDevice.id,
-            focusedDeviceChangedAt: Date(timeIntervalSince1970: 1_773_320_020)
+                alphaDevice.id: Date(timeIntervalSince1970: 1_700_000_000),
+                betaDevice.id: Date(),
+            ]
         )
 
         await MainActor.run {
             appState.applyRemoteServiceSnapshot(snapshot)
-            appState.selectDevice(usbDevice.id)
-            appState.applyRemoteServiceSnapshot(snapshot)
+            appState.selectDevice(alphaDevice.id)
         }
+        let staleLabel = await MainActor.run { appState.currentDeviceStatusIndicator.label }
 
-        let selectedDeviceID = await MainActor.run { appState.selectedDeviceID }
-        XCTAssertEqual(selectedDeviceID, usbDevice.id)
+        await MainActor.run {
+            appState.selectDevice(betaDevice.id)
+        }
+        let freshLabel = await MainActor.run { appState.currentDeviceStatusIndicator.label }
+
+        XCTAssertEqual(staleLabel, "Poll Delayed")
+        XCTAssertEqual(freshLabel, "Connected")
     }
+}
+
+private func makeSnapshotDevice(
+    id: String,
+    productName: String,
+    transport: DeviceTransportKind,
+    serial: String,
+    locationID: Int,
+    profile: DeviceProfileID
+) -> MouseDevice {
+    MouseDevice(
+        id: id,
+        vendor_id: 0x1532,
+        product_id: transport == .bluetooth ? 0x00BA : 0x00AB,
+        product_name: productName,
+        transport: transport,
+        path_b64: "",
+        serial: serial,
+        firmware: "1.0.0",
+        location_id: locationID,
+        profile_id: profile,
+        supports_advanced_lighting_effects: true,
+        onboard_profile_count: 1
+    )
+}
+
+private func makeSnapshotState(
+    device: MouseDevice,
+    connection: String,
+    batteryPercent: Int,
+    dpiValues: [Int],
+    activeStage: Int,
+    dpiValue: Int
+) -> MouseState {
+    MouseState(
+        device: DeviceSummary(
+            id: device.id,
+            product_name: device.product_name,
+            serial: device.serial,
+            transport: device.transport,
+            firmware: device.firmware
+        ),
+        connection: connection,
+        battery_percent: batteryPercent,
+        charging: false,
+        dpi: DpiPair(x: dpiValue, y: dpiValue),
+        dpi_stages: DpiStages(active_stage: activeStage, values: dpiValues),
+        poll_rate: 1000,
+        device_mode: DeviceMode(mode: 0x00, param: 0x00),
+        led_value: 64,
+        capabilities: Capabilities(
+            dpi_stages: true,
+            poll_rate: true,
+            power_management: true,
+            button_remap: true,
+            lighting: true
+        )
+    )
 }
 
 private final class SnapshotTestRemoteBackend: DeviceBackend {

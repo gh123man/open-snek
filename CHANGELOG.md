@@ -5,6 +5,8 @@ All notable changes to this project are documented in this file.
 ## [2026-03-12]
 
 ### Fixed
+- Multi-device service ownership now keeps baseline state polling per-device instead of per-selected-device, so the menu bar UI and main window can stay focused on different mice without either one going stale or falling into `Poll Delayed`.
+- Cross-process service snapshots no longer force both UIs onto the same "last changed" device; each UI now keeps its own selection while still receiving live state updates for every connected mouse.
 - Removed the transient `Stage x -> y DPI applied` status message because the live UI already reflects successful DPI changes directly.
 - The `Menu bar icon` preference now keeps an upgrade user's stored choice intact; only installs without a saved preference pick up the default-on behavior.
 - Choosing `Quit` from the menu bar service now only ends the current background session; it no longer silently turns off `Menu bar icon` or clears `Start at login`.
@@ -19,7 +21,7 @@ All notable changes to this project are documented in this file.
 - The full app now adopts an already-running menu bar service as its hardware backend even if local service preferences are stale, preventing dual-process USB/HID contention when the compact widget and main window are open at the same time.
 
 ### Changed
-- The menu bar widget now includes a device picker when multiple supported mice are connected, and service-published apply snapshots now move both UIs to the last device that changed so the compact widget and full app stay focused on the same mouse.
+- The menu bar widget now includes a device picker when multiple supported mice are connected, and the service tracks active selections per UI so only the devices currently in use get the faster interactive DPI polling path.
 
 ## [2026-03-11]
 

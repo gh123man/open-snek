@@ -245,8 +245,6 @@ final actor LocalBridgeBackend: DeviceBackend {
     private var cachedStateAtByDeviceID: [String: Date] = [:]
     private var cachedFastByDeviceID: [String: DpiFastSnapshot] = [:]
     private var cachedFastAtByDeviceID: [String: Date] = [:]
-    private var focusedDeviceID: String?
-    private var focusedDeviceChangedAt: Date?
 
     nonisolated var usesRemoteServiceTransport: Bool { false }
 
@@ -296,8 +294,6 @@ final actor LocalBridgeBackend: DeviceBackend {
         let now = Date()
         cachedStateByDeviceID[device.id] = state
         cachedStateAtByDeviceID[device.id] = now
-        focusedDeviceID = device.id
-        focusedDeviceChangedAt = now
         if let values = state.dpi_stages.values,
            let active = state.dpi_stages.active_stage {
             let fast = DpiFastSnapshot(active: active, values: values)
@@ -350,9 +346,7 @@ final actor LocalBridgeBackend: DeviceBackend {
             snapshot: SharedServiceSnapshot(
                 devices: cachedDevices,
                 stateByDeviceID: cachedStateByDeviceID.filter { liveIDs.contains($0.key) },
-                lastUpdatedByDeviceID: cachedStateAtByDeviceID.filter { liveIDs.contains($0.key) },
-                focusedDeviceID: focusedDeviceID.flatMap { liveIDs.contains($0) ? $0 : nil },
-                focusedDeviceChangedAt: focusedDeviceID.flatMap { liveIDs.contains($0) ? focusedDeviceChangedAt : nil }
+                lastUpdatedByDeviceID: cachedStateAtByDeviceID.filter { liveIDs.contains($0.key) }
             )
         )
     }

@@ -5,12 +5,11 @@ struct SharedServiceSnapshot: Codable, Sendable {
     let devices: [MouseDevice]
     let stateByDeviceID: [String: MouseState]
     let lastUpdatedByDeviceID: [String: Date]
-    let focusedDeviceID: String?
-    let focusedDeviceChangedAt: Date?
 }
 
 struct CrossProcessClientPresence: Sendable {
     let sourceProcessID: Int32
+    let selectedDeviceID: String?
 }
 
 enum CrossProcessStateSync {
@@ -19,6 +18,7 @@ enum CrossProcessStateSync {
 
     private static let payloadKey = "payload"
     private static let sourceProcessIDKey = "sourceProcessID"
+    private static let selectedDeviceIDKey = "selectedDeviceID"
 
     static func post(snapshot: SharedServiceSnapshot) {
         guard let encoded = try? JSONEncoder().encode(snapshot) else { return }
@@ -46,11 +46,15 @@ enum CrossProcessStateSync {
         }
     }
 
-    static func postClientPresence() {
+    static func postClientPresence(selectedDeviceID: String? = nil) {
+        var userInfo: [String: Any] = [sourceProcessIDKey: Int(ProcessInfo.processInfo.processIdentifier)]
+        if let selectedDeviceID, !selectedDeviceID.isEmpty {
+            userInfo[selectedDeviceIDKey] = selectedDeviceID
+        }
         DistributedNotificationCenter.default().postNotificationName(
             clientPresenceNotificationName,
             object: nil,
-            userInfo: [sourceProcessIDKey: Int(ProcessInfo.processInfo.processIdentifier)],
+            userInfo: userInfo,
             deliverImmediately: true
         )
     }
@@ -86,10 +90,16 @@ enum CrossProcessStateSync {
         guard let userInfo = notification.userInfo else { return nil }
 
         if let intValue = userInfo[sourceProcessIDKey] as? Int {
-            return CrossProcessClientPresence(sourceProcessID: Int32(intValue))
+            return CrossProcessClientPresence(
+                sourceProcessID: Int32(intValue),
+                selectedDeviceID: userInfo[selectedDeviceIDKey] as? String
+            )
         }
         if let numberValue = userInfo[sourceProcessIDKey] as? NSNumber {
-            return CrossProcessClientPresence(sourceProcessID: numberValue.int32Value)
+            return CrossProcessClientPresence(
+                sourceProcessID: numberValue.int32Value,
+                selectedDeviceID: userInfo[selectedDeviceIDKey] as? String
+            )
         }
         return nil
     }
