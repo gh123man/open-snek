@@ -17,6 +17,7 @@ struct OpenSnekApp: App {
             } else {
                 ContentView(appState: appState)
                     .frame(minWidth: 900, minHeight: 600)
+                    .background(WindowChromeConfigurator().frame(width: 0, height: 0))
                     .background(SettingsOpenBridgeView().frame(width: 0, height: 0))
             }
         }
