@@ -8,6 +8,9 @@ final class RuntimeStore {
     var backgroundServiceEnabled: Bool
     var launchAtStartupEnabled: Bool
     var serviceStatusMessage: String?
+    var hidAccessStatus: HIDAccessStatus = .unknown()
+    var permissionStatusMessage: String?
+    var isResettingPermissions = false
     var statusItemTransientDpi: Int?
     @ObservationIgnored let statusItemDpiDisplayDuration: TimeInterval
 
@@ -78,6 +81,14 @@ final class RuntimeStore {
 
     func activeFastPollingDeviceIDs(at now: Date) -> [String] {
         runtimeController.activeFastPollingDeviceIDs(at: now)
+    }
+
+    func refreshHIDAccessStatus() async {
+        await runtimeController.refreshHIDAccessStatus()
+    }
+
+    func resetAllPermissions() async {
+        await runtimeController.resetAllPermissions()
     }
 
     func openFullAppFromService() {

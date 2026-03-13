@@ -22,15 +22,73 @@ protocol DeviceBackend: AnyObject, Sendable {
     func readState(device: MouseDevice) async throws -> MouseState
     func readDpiStagesFast(device: MouseDevice) async throws -> DpiFastSnapshot?
     func shouldUseFastDPIPolling(device: MouseDevice) async -> Bool
+    func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus
+    func hidAccessStatus() async -> HIDAccessStatus
     func stateUpdates() async -> AsyncStream<BackendStateUpdate>
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState
     func readLightingColor(device: MouseDevice) async throws -> RGBPatch?
     func debugUSBReadButtonBinding(device: MouseDevice, slot: Int, profile: Int) async throws -> [UInt8]?
 }
 
+extension DeviceBackend {
+    func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus {
+        let usesFastPolling = await shouldUseFastDPIPolling(device: device)
+        return usesFastPolling ? .pollingFallback : .realTimeHID
+    }
+}
+
 struct DpiFastSnapshot: Codable, Hashable, Sendable {
     let active: Int
     let values: [Int]
+}
+
+enum HIDAccessAuthorization: String, Codable, Sendable {
+    case unknown
+    case granted
+    case denied
+    case unavailable
+}
+
+struct HIDAccessStatus: Codable, Equatable, Sendable {
+    let authorization: HIDAccessAuthorization
+    let hostLabel: String
+    let bundleIdentifier: String?
+    let detail: String?
+
+    static func unknown(detail: String? = nil) -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .unknown,
+            hostLabel: PermissionSupport.currentHostLabel(),
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            detail: detail
+        )
+    }
+
+    static func unavailable(detail: String? = nil) -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .unavailable,
+            hostLabel: PermissionSupport.currentHostLabel(),
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            detail: detail
+        )
+    }
+
+    var isDenied: Bool {
+        authorization == .denied
+    }
+
+    var diagnosticsLabel: String {
+        switch authorization {
+        case .unknown:
+            return "Checking"
+        case .granted:
+            return "Granted"
+        case .denied:
+            return "Denied"
+        case .unavailable:
+            return "Unavailable"
+        }
+    }
 }
 
 enum BackendStateUpdate: Sendable {
@@ -109,6 +167,8 @@ private enum BackgroundServiceMethod: String, Codable, Sendable {
     case readState
     case readDpiStagesFast
     case shouldUseFastDPIPolling
+    case dpiUpdateTransportStatus
+    case hidAccessStatus
     case apply
     case readLightingColor
     case debugUSBReadButtonBinding
@@ -399,6 +459,14 @@ final actor LocalBridgeBackend: DeviceBackend {
         await client.shouldUseFastDPIPolling(device: device)
     }
 
+    func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus {
+        await client.dpiUpdateTransportStatus(device: device)
+    }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        await client.hidAccessStatus()
+    }
+
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         let id = UUID()
         let (stream, continuation) = AsyncStream.makeStream(of: BackendStateUpdate.self)
@@ -413,18 +481,22 @@ final actor LocalBridgeBackend: DeviceBackend {
 
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
         let state = try await client.apply(device: device, patch: patch)
+        let merged = Self.mergedApplyState(
+            state,
+            previous: cachedStateByDeviceID[device.id] ?? reconnectSeedStateByDeviceID[device.id]
+        )
         let now = Date()
-        cachedStateByDeviceID[device.id] = state
+        cachedStateByDeviceID[device.id] = merged
         cachedStateAtByDeviceID[device.id] = now
-        reconnectSeedStateByDeviceID[device.id] = state
-        if let values = state.dpi_stages.values,
-           let active = state.dpi_stages.active_stage {
+        reconnectSeedStateByDeviceID[device.id] = merged
+        if let values = merged.dpi_stages.values,
+           let active = merged.dpi_stages.active_stage {
             let fast = DpiFastSnapshot(active: active, values: values)
             cachedFastByDeviceID[device.id] = fast
             cachedFastAtByDeviceID[device.id] = now
         }
         publishSnapshotIfService()
-        return state
+        return merged
     }
 
     func readLightingColor(device: MouseDevice) async throws -> RGBPatch? {
@@ -437,6 +509,10 @@ final actor LocalBridgeBackend: DeviceBackend {
 
     private func removeStateUpdateContinuation(id: UUID) {
         stateUpdateContinuations.removeValue(forKey: id)
+    }
+
+    nonisolated static func mergedApplyState(_ state: MouseState, previous: MouseState?) -> MouseState {
+        state.merged(with: previous)
     }
 
     nonisolated static func shouldReuseCachedStateForRead(
@@ -720,6 +796,11 @@ private actor BackgroundServiceRequestHandler {
         case .shouldUseFastDPIPolling:
             let device = try decodePayload(MouseDevice.self, from: request.payload)
             payload = try BackendCodec.encode(await backend.shouldUseFastDPIPolling(device: device))
+        case .dpiUpdateTransportStatus:
+            let device = try decodePayload(MouseDevice.self, from: request.payload)
+            payload = try BackendCodec.encode(await backend.dpiUpdateTransportStatus(device: device))
+        case .hidAccessStatus:
+            payload = try BackendCodec.encode(await backend.hidAccessStatus())
         case .apply:
             let applyRequest = try decodePayload(ApplyRequest.self, from: request.payload)
             payload = try BackendCodec.encode(try await backend.apply(device: applyRequest.device, patch: applyRequest.patch))
@@ -788,6 +869,22 @@ final actor IPCDeviceBackend: DeviceBackend {
             payload: try BackendCodec.encode(device),
             responseType: Bool.self
         )) ?? false
+    }
+
+    func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus {
+        (try? await request(
+            method: .dpiUpdateTransportStatus,
+            payload: try BackendCodec.encode(device),
+            responseType: DpiUpdateTransportStatus.self
+        )) ?? .unknown
+    }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        (try? await request(
+            method: .hidAccessStatus,
+            payload: nil,
+            responseType: HIDAccessStatus.self
+        )) ?? HIDAccessStatus.unavailable(detail: "Failed to query HID access status from background service.")
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {

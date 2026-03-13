@@ -229,6 +229,17 @@ final class USBPassiveDPIEventTests: XCTestCase {
             report: [0x05, 0x02, 0x03, 0x20, 0x03, 0x20, 0x00, 0x00, 0x00],
             descriptor: bluetoothDescriptor
         )
+        let bluetoothV3ProDescriptor = try! XCTUnwrap(
+            DeviceProfiles.resolve(vendorID: 0x068E, productID: 0x00AC, transport: .bluetooth)?.passiveDPIInput
+        )
+        let bluetoothV3ProObserved900 = PassiveDPIParser.parse(
+            report: [0x05, 0x05, 0x02, 0x03, 0x84, 0x03, 0x84, 0x00, 0x00],
+            descriptor: bluetoothV3ProDescriptor
+        )
+        let bluetoothV3ProObserved1100 = PassiveDPIParser.parse(
+            report: [0x05, 0x05, 0x02, 0x04, 0x4C, 0x04, 0x4C, 0x00, 0x00],
+            descriptor: bluetoothV3ProDescriptor
+        )
 
         XCTAssertEqual(staged800, PassiveDPIReading(dpiX: 800, dpiY: 800))
         XCTAssertEqual(staged2000, PassiveDPIReading(dpiX: 2000, dpiY: 2000))
@@ -236,6 +247,8 @@ final class USBPassiveDPIEventTests: XCTestCase {
         XCTAssertEqual(shortObservedFrame, PassiveDPIReading(dpiX: 1100, dpiY: 1100))
         XCTAssertEqual(bluetoothDuplicatedReportID, PassiveDPIReading(dpiX: 2000, dpiY: 2000))
         XCTAssertEqual(bluetoothSingleReportID, PassiveDPIReading(dpiX: 800, dpiY: 800))
+        XCTAssertEqual(bluetoothV3ProObserved900, PassiveDPIReading(dpiX: 900, dpiY: 900))
+        XCTAssertEqual(bluetoothV3ProObserved1100, PassiveDPIReading(dpiX: 1100, dpiY: 1100))
     }
 
     func testPassiveUSBParserRejectsInvalidSubtypeAndOutOfRangeValues() {
@@ -580,6 +593,15 @@ private actor PassiveUpdateStubBackend: DeviceBackend {
         shouldUseFastPollingValue
     }
 
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         stateUpdateStreamPair.stream
     }
@@ -653,6 +675,15 @@ private actor RacingPassiveUpdateStubBackend: DeviceBackend {
 
     func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
         false
+    }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {

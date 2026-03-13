@@ -97,6 +97,10 @@ struct ServiceMenuBarView: View {
             actionRow("Settings…", systemImage: "gearshape") {
                 runtimeStore.openSettingsFromService()
             }
+            toggleRow("Start at login", systemImage: "checkmark.circle", isOn: Binding(
+                get: { runtimeStore.launchAtStartupEnabled },
+                set: { runtimeStore.setLaunchAtStartupEnabled($0) }
+            ))
             actionRow("Quit", systemImage: "power") {
                 runtimeStore.terminateServiceProcess()
             }
@@ -105,13 +109,16 @@ struct ServiceMenuBarView: View {
         .frame(width: 320)
         .task {
             await runtimeStore.start()
+            await refreshCompactMenuDiagnostics()
         }
         .task(id: deviceStore.selectedDeviceID) {
-            guard let device = deviceStore.selectedDevice else { return }
-            await deviceStore.refreshConnectionDiagnostics(for: device)
+            await refreshCompactMenuDiagnostics()
         }
         .onAppear {
             runtimeStore.setCompactMenuPresented(true)
+            Task {
+                await refreshCompactMenuDiagnostics()
+            }
         }
         .onDisappear {
             runtimeStore.setCompactMenuPresented(false)
@@ -183,6 +190,7 @@ struct ServiceMenuBarView: View {
             Label(deviceStore.currentDeviceStatusIndicator.label, systemImage: "circle.fill")
                 .foregroundStyle(deviceStore.currentDeviceStatusIndicator.color)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
+                .help(deviceStore.currentDeviceStatusTooltip ?? "")
 
             Spacer()
 
@@ -297,6 +305,37 @@ struct ServiceMenuBarView: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+
+    private func toggleRow(_ title: String, systemImage: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                Spacer()
+            }
+        }
+        .toggleStyle(.switch)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+
+    private func refreshCompactMenuDiagnostics() async {
+        await runtimeStore.refreshHIDAccessStatus()
+        guard let device = deviceStore.selectedDevice else { return }
+        await deviceStore.refreshConnectionDiagnostics(for: device)
     }
 }
 

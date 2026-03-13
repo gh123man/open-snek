@@ -50,8 +50,9 @@ enum DeviceConnectionState: Equatable {
     }
 }
 
-enum DpiUpdateTransportStatus: Equatable {
+enum DpiUpdateTransportStatus: String, Codable, Equatable, Sendable {
     case unknown
+    case listening
     case pollingFallback
     case realTimeHID
     case unsupported
@@ -60,6 +61,8 @@ enum DpiUpdateTransportStatus: Equatable {
         switch self {
         case .unknown:
             "Checking"
+        case .listening:
+            "Listening for first HID event"
         case .pollingFallback:
             "Polling fallback active"
         case .realTimeHID:

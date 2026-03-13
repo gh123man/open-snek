@@ -108,4 +108,20 @@ final class ServiceModeTests: XCTestCase {
 
         XCTAssertEqual(sleep, 1.0, accuracy: 0.001)
     }
+
+    func testHIDAccessStatusDeniedUsesExpectedDiagnosticsAndResetCommand() {
+        let status = HIDAccessStatus(
+            authorization: .denied,
+            hostLabel: "Open Snek (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: "Input Monitoring is required."
+        )
+
+        XCTAssertTrue(status.isDenied)
+        XCTAssertEqual(status.diagnosticsLabel, "Denied")
+        XCTAssertEqual(
+            PermissionSupport.permissionResetCommand(bundleIdentifier: status.bundleIdentifier),
+            "tccutil reset All io.opensnek.OpenSnek"
+        )
+    }
 }

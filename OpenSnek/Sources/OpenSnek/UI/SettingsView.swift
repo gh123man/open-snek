@@ -19,7 +19,51 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Background Service") {
+            Section("Permissions") {
+                LabeledContent("Input Monitoring") {
+                    Text(runtimeStore.hidAccessStatus.diagnosticsLabel)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(permissionStatusColor)
+                }
+
+                Text(permissionSummary)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(runtimeStore.hidAccessStatus.isDenied ? .red : .secondary)
+
+                Text("Current host: \(runtimeStore.hidAccessStatus.hostLabel)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .textSelection(.enabled)
+
+                if let detail = runtimeStore.hidAccessStatus.detail {
+                    Text(detail)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 10) {
+                    Button("Open Input Monitoring Settings") {
+                        PermissionSupport.openInputMonitoringSettings()
+                    }
+
+                    Button("Reset All Permissions") {
+                        Task { await runtimeStore.resetAllPermissions() }
+                    }
+                    .disabled(runtimeStore.isResettingPermissions)
+
+                    if runtimeStore.isResettingPermissions {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if let message = runtimeStore.permissionStatusMessage {
+                    Text(message)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("General") {
                 Toggle("Menu bar icon", isOn: Binding(
                     get: { runtimeStore.backgroundServiceEnabled },
                     set: { newValue in
@@ -106,11 +150,38 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 520)
+        .task {
+            await runtimeStore.refreshHIDAccessStatus()
+        }
         .sheet(isPresented: $showsDiagnosticsSheet) {
             IssueDiagnosticsSheet(payload: deviceStore.githubIssueDiagnosticsPayload())
         }
         .onAppear {
             AppLog.updateLevel(AppLogLevel(rawValue: logLevelRawValue) ?? AppLog.defaultLevel, resetLog: false)
+        }
+    }
+
+    private var permissionStatusColor: Color {
+        switch runtimeStore.hidAccessStatus.authorization {
+        case .granted:
+            return Color.green
+        case .denied:
+            return Color(hex: 0xD59A2B)
+        case .unknown, .unavailable:
+            return Color.secondary
+        }
+    }
+
+    private var permissionSummary: String {
+        switch runtimeStore.hidAccessStatus.authorization {
+        case .granted:
+            return "Input Monitoring is enabled, so Open Snek can attach real-time HID listeners for supported USB and Bluetooth devices."
+        case .denied:
+            return "macOS still needs you to allow Input Monitoring for this Open Snek host before instant DPI updates and some USB reads can work normally."
+        case .unknown:
+            return "Open Snek is still checking macOS HID permission state."
+        case .unavailable:
+            return "Open Snek could not confirm the current HID permission state. Use the controls below to reopen the settings pane or reset the app's TCC grants."
         }
     }
 

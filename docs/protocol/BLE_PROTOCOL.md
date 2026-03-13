@@ -294,13 +294,13 @@ If you want write behavior that matches the app/probe:
 
 The Bluetooth DPI-stage vendor exchange is still request/notify over GATT, but validated devices can also emit a passive HID input report when the on-device DPI cycle control changes the live DPI.
 
-Validated macOS HID topology for Basilisk V3 X HyperSpeed Bluetooth (`VID=0x068E`, `PID=0x00BA`):
+Validated macOS HID topology for Basilisk V3 X HyperSpeed Bluetooth (`VID=0x068E`, `PID=0x00BA`) and Basilisk V3 Pro Bluetooth (`VID=0x068E`, `PID=0x00AC`):
 - transport: `Bluetooth Low Energy`
 - primary usage: `0x01:0x02`
 - max input report size: `9`
 - max feature report size: `1`
 
-Observed passive frame shape in the existing Python HID sniff path:
+Observed passive frame shape in the existing Python HID sniff path and a live macOS `IOHIDDeviceRegisterInputReportCallback` capture on the Basilisk V3 Pro Bluetooth path:
 
 ```text
 05 05 02 <x_hi> <x_lo> <y_hi> <y_lo> ...
@@ -311,6 +311,11 @@ Where:
 - second `0x05`: duplicated report ID on the current hidapi path
 - `0x02`: DPI subtype
 - X/Y DPI are big-endian 16-bit values
+
+Observed V3 Pro Bluetooth examples:
+- `05 05 02 03 84 03 84 00 00` -> `900 / 900 DPI`
+- `05 05 02 07 D0 07 D0 00 00` -> `2000 / 2000 DPI`
+- `05 05 02 04 4C 04 4C 00 00` -> `1100 / 1100 DPI`
 
 OpenSnek's parser also accepts `05 02 ...` and `02 ...` report prefixes because macOS `IOHIDDeviceRegisterInputReportCallback` can normalize away one or both leading report-ID bytes. That normalization detail is an inference from current host behavior, not a separate wire-format claim.
 

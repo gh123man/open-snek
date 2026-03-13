@@ -4,6 +4,49 @@ import OpenSnekCore
 @testable import OpenSnek
 
 final class RemoteServiceSnapshotTests: XCTestCase {
+    func testLocalBridgeMergedApplyStatePreservesBatteryAcrossBluetoothDelta() {
+        let previous = makeSnapshotState(
+            device: makeSnapshotDevice(
+                id: "delta-device",
+                productName: "Delta Mouse",
+                transport: .bluetooth,
+                serial: "DELTA",
+                locationID: 9,
+                profile: .basiliskV3Pro
+            ),
+            connection: "bluetooth",
+            batteryPercent: 83,
+            dpiValues: [800, 1600, 2400],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let delta = MouseState(
+            device: previous.device,
+            connection: previous.connection,
+            battery_percent: nil,
+            charging: nil,
+            dpi: nil,
+            dpi_stages: DpiStages(active_stage: nil, values: nil),
+            poll_rate: nil,
+            sleep_timeout: nil,
+            device_mode: nil,
+            low_battery_threshold_raw: nil,
+            scroll_mode: nil,
+            scroll_acceleration: nil,
+            scroll_smart_reel: nil,
+            active_onboard_profile: nil,
+            onboard_profile_count: nil,
+            led_value: 20,
+            capabilities: previous.capabilities
+        )
+
+        let merged = LocalBridgeBackend.mergedApplyState(delta, previous: previous)
+
+        XCTAssertEqual(merged.battery_percent, 83)
+        XCTAssertEqual(merged.charging, false)
+        XCTAssertEqual(merged.led_value, 20)
+    }
+
     func testRemoteServiceBackendUsesSnapshotFeed() async {
         let appState = await MainActor.run {
             AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
@@ -265,6 +308,38 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(selectedBattery, 75)
         XCTAssertEqual(activeStage, 4)
     }
+
+    func testRemoteServiceStartBootstrapsSelectedStateBeforeFirstSnapshot() async throws {
+        let suiteName = "RemoteServiceSnapshotTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let backend = RemoteBootstrapServiceBackend()
+        let host = try BackgroundServiceHost(backend: backend, defaults: defaults)
+        try await host.start()
+        defer { host.stop() }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, serviceCoordinator: coordinator, autoStart: false)
+        }
+
+        await MainActor.run {
+            appState.environment.hasCheckedForUpdates = true
+        }
+        await appState.runtimeStore.start()
+
+        let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        let selectedBattery = await MainActor.run { appState.deviceStore.state?.battery_percent }
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+
+        XCTAssertEqual(selectedDeviceID, RemoteBootstrapServiceBackend.device.id)
+        XCTAssertEqual(selectedBattery, 83)
+        XCTAssertEqual(selectedDpi, 1600)
+    }
 }
 
 private func makeSnapshotDevice(
@@ -332,6 +407,14 @@ private final class SnapshotTestRemoteBackend: DeviceBackend {
     func readState(device _: MouseDevice) async throws -> MouseState { throw SnapshotBackendError.unimplemented }
     func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? { nil }
     func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool { false }
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         AsyncStream { continuation in
             continuation.finish()
@@ -339,6 +422,74 @@ private final class SnapshotTestRemoteBackend: DeviceBackend {
     }
     func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState { throw SnapshotBackendError.unimplemented }
     func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { nil }
+    func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? { nil }
+}
+
+private actor RemoteBootstrapServiceBackend: DeviceBackend {
+    nonisolated var usesRemoteServiceTransport: Bool { false }
+
+    nonisolated static let device = MouseDevice(
+        id: "remote-bootstrap-device",
+        vendor_id: 0x068E,
+        product_id: 0x00AC,
+        product_name: "Bootstrap Mouse",
+        transport: .bluetooth,
+        path_b64: "",
+        serial: "BOOTSTRAP",
+        firmware: "1.0.0",
+        location_id: 1,
+        profile_id: .basiliskV3Pro,
+        supports_advanced_lighting_effects: true,
+        onboard_profile_count: 1
+    )
+
+    private let state = MouseState(
+        device: DeviceSummary(
+            id: "remote-bootstrap-device",
+            product_name: "Bootstrap Mouse",
+            serial: "BOOTSTRAP",
+            transport: .bluetooth,
+            firmware: "1.0.0"
+        ),
+        connection: "bluetooth",
+        battery_percent: 83,
+        charging: false,
+        dpi: DpiPair(x: 1600, y: 1600),
+        dpi_stages: DpiStages(active_stage: 1, values: [800, 1600, 2400]),
+        poll_rate: nil,
+        sleep_timeout: 300,
+        device_mode: nil,
+        led_value: 64,
+        capabilities: Capabilities(
+            dpi_stages: true,
+            poll_rate: false,
+            power_management: true,
+            button_remap: true,
+            lighting: true
+        )
+    )
+
+    func listDevices() async throws -> [MouseDevice] { [Self.device] }
+    func readState(device _: MouseDevice) async throws -> MouseState { state }
+    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
+        DpiFastSnapshot(active: 1, values: [800, 1600, 2400])
+    }
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool { false }
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+    func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState { state }
+    func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { RGBPatch(r: 12, g: 34, b: 56) }
     func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? { nil }
 }
 

@@ -207,6 +207,198 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(status, "Disconnected")
     }
 
+    func testConnectedStatusPillStaysGreenWhileListeningForFirstHIDEvent() async {
+        let bluetoothDevice = makeTestDevice(
+            id: "bt-fallback",
+            productName: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            serial: "BT-FALLBACK",
+            locationID: 4,
+            profile: .basiliskV3Pro
+        )
+        let initialState = makeTestState(
+            device: bluetoothDevice,
+            connection: "bluetooth",
+            batteryPercent: 74,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [bluetoothDevice],
+            stateByDeviceID: [bluetoothDevice.id: initialState],
+            shouldUseFastDPIPolling: true,
+            dpiUpdateTransportStatus: .listening
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let indicator = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator }
+        let connectionTooltip = await MainActor.run { appState.deviceStore.currentDeviceConnectionTooltip }
+        let tooltip = await MainActor.run { appState.deviceStore.currentDeviceStatusTooltip }
+
+        XCTAssertEqual(indicator.label, "Connected")
+        XCTAssertEqual(OpenSnekCore.RGBColor.fromColor(indicator.color), RGBColor(r: 48, g: 209, b: 88))
+        XCTAssertEqual(
+            connectionTooltip,
+            """
+            Transport: Bluetooth
+            Connection state: Live
+            Control transport: bluetooth
+            Real-time HID: Listening for first HID event
+            Input Monitoring: Granted
+            """
+        )
+        XCTAssertEqual(
+            tooltip,
+            """
+            Control transport: bluetooth
+            Telemetry: Live
+            Real-time HID: Listening for first HID event
+            Input Monitoring: Granted
+            """
+        )
+    }
+
+    func testConnectedStatusPillWarnsWhenRealtimeHIDFallsBack() async {
+        let bluetoothDevice = makeTestDevice(
+            id: "bt-warning",
+            productName: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            serial: "BT-WARNING",
+            locationID: 5,
+            profile: .basiliskV3Pro
+        )
+        let initialState = makeTestState(
+            device: bluetoothDevice,
+            connection: "bluetooth",
+            batteryPercent: 71,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [bluetoothDevice],
+            stateByDeviceID: [bluetoothDevice.id: initialState],
+            shouldUseFastDPIPolling: true,
+            dpiUpdateTransportStatus: .pollingFallback,
+            hidAccessAuthorization: .denied
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let indicator = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator }
+        let connectionTooltip = await MainActor.run { appState.deviceStore.currentDeviceConnectionTooltip }
+        let tooltip = await MainActor.run { appState.deviceStore.currentDeviceStatusTooltip }
+
+        XCTAssertEqual(indicator.label, "Connected")
+        XCTAssertEqual(OpenSnekCore.RGBColor.fromColor(indicator.color), RGBColor(r: 244, g: 198, b: 93))
+        XCTAssertEqual(
+            connectionTooltip,
+            """
+            Transport: Bluetooth
+            Connection state: Live
+            Control transport: bluetooth
+            Real-time HID: Polling fallback active
+            Input Monitoring: Denied
+            """
+        )
+        XCTAssertEqual(
+            tooltip,
+            """
+            Control transport: bluetooth
+            Telemetry: Live
+            Real-time HID: Polling fallback active
+            Input Monitoring: Denied
+            """
+        )
+    }
+
+    func testConnectionDiagnosticsRevisionUpdatesWhenTransportStatusChanges() async {
+        let bluetoothDevice = makeTestDevice(
+            id: "bt-revision",
+            productName: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            serial: "BT-REVISION",
+            locationID: 6,
+            profile: .basiliskV3Pro
+        )
+        let initialState = makeTestState(
+            device: bluetoothDevice,
+            connection: "bluetooth",
+            batteryPercent: 69,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [bluetoothDevice],
+            stateByDeviceID: [bluetoothDevice.id: initialState],
+            shouldUseFastDPIPolling: true,
+            dpiUpdateTransportStatus: .pollingFallback
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        let initialRevision = await MainActor.run { appState.deviceStore.connectionDiagnosticsRevision }
+
+        await backend.setDpiUpdateTransportStatus(.listening)
+        await appState.deviceStore.refreshConnectionDiagnostics(for: bluetoothDevice)
+
+        let updatedRevision = await MainActor.run { appState.deviceStore.connectionDiagnosticsRevision }
+        let indicator = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator }
+
+        XCTAssertGreaterThan(updatedRevision, initialRevision)
+        XCTAssertEqual(indicator.label, "Connected")
+        XCTAssertEqual(OpenSnekCore.RGBColor.fromColor(indicator.color), RGBColor(r: 48, g: 209, b: 88))
+    }
+
+    func testFastDpiPollingDoesNotDowngradeListeningStatusToFallback() async {
+        let bluetoothDevice = makeTestDevice(
+            id: "bt-listening-fast",
+            productName: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            serial: "BT-LISTENING-FAST",
+            locationID: 7,
+            profile: .basiliskV3Pro
+        )
+        let initialState = makeTestState(
+            device: bluetoothDevice,
+            connection: "bluetooth",
+            batteryPercent: 66,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [bluetoothDevice],
+            stateByDeviceID: [bluetoothDevice.id: initialState],
+            shouldUseFastDPIPolling: true,
+            dpiUpdateTransportStatus: .listening
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await appState.deviceStore.refreshDpiFast()
+
+        let indicator = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator }
+        let tooltip = await MainActor.run { appState.deviceStore.currentDeviceStatusTooltip }
+
+        XCTAssertEqual(indicator.label, "Connected")
+        XCTAssertEqual(OpenSnekCore.RGBColor.fromColor(indicator.color), RGBColor(r: 48, g: 209, b: 88))
+        XCTAssertTrue(tooltip?.contains("Real-time HID: Listening for first HID event") == true)
+    }
+
     func testBackendDeviceListUpdateRemovesDisconnectedDeviceImmediately() async throws {
         let bluetoothDevice = makeTestDevice(
             id: "bt-device",
@@ -718,6 +910,15 @@ private actor MultiDeviceStubBackend: DeviceBackend {
         true
     }
 
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         AsyncStream { continuation in
             continuation.finish()
@@ -800,6 +1001,15 @@ private actor PartiallyFailingMultiDeviceStubBackend: DeviceBackend {
         false
     }
 
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         AsyncStream { continuation in
             continuation.finish()
@@ -863,6 +1073,15 @@ private actor DisconnectingMultiDeviceStubBackend: DeviceBackend {
         false
     }
 
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         AsyncStream { continuation in
             continuation.finish()
@@ -894,17 +1113,23 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
     private var devices: [MouseDevice]
     private var stateByDeviceID: [String: MouseState]
     private var usesFastDPIPolling: Bool
+    private var dpiUpdateTransportStatusOverride: DpiUpdateTransportStatus?
+    private var hidAccessAuthorization: HIDAccessAuthorization
     private var readCountByDeviceID: [String: Int] = [:]
     private let stateUpdateStreamPair = AsyncStream.makeStream(of: BackendStateUpdate.self)
 
     init(
         devices: [MouseDevice],
         stateByDeviceID: [String: MouseState],
-        shouldUseFastDPIPolling: Bool = false
+        shouldUseFastDPIPolling: Bool = false,
+        dpiUpdateTransportStatus: DpiUpdateTransportStatus? = nil,
+        hidAccessAuthorization: HIDAccessAuthorization = .granted
     ) {
         self.devices = devices
         self.stateByDeviceID = stateByDeviceID
         self.usesFastDPIPolling = shouldUseFastDPIPolling
+        self.dpiUpdateTransportStatusOverride = dpiUpdateTransportStatus
+        self.hidAccessAuthorization = hidAccessAuthorization
     }
 
     func listDevices() async throws -> [MouseDevice] {
@@ -921,12 +1146,30 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
         return state
     }
 
-    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
-        nil
+    func readDpiStagesFast(device: MouseDevice) async throws -> DpiFastSnapshot? {
+        guard let state = stateByDeviceID[device.id],
+              let active = state.dpi_stages.active_stage,
+              let values = state.dpi_stages.values else {
+            return nil
+        }
+        return DpiFastSnapshot(active: active, values: values)
     }
 
     func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
         usesFastDPIPolling
+    }
+
+    func dpiUpdateTransportStatus(device _: MouseDevice) async -> DpiUpdateTransportStatus {
+        dpiUpdateTransportStatusOverride ?? (usesFastDPIPolling ? .pollingFallback : .realTimeHID)
+    }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: hidAccessAuthorization,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
@@ -958,6 +1201,10 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
 
     func setShouldUseFastDPIPolling(_ value: Bool) {
         usesFastDPIPolling = value
+    }
+
+    func setDpiUpdateTransportStatus(_ value: DpiUpdateTransportStatus?) {
+        dpiUpdateTransportStatusOverride = value
     }
 
     func readCount(for deviceID: String) -> Int {

@@ -78,7 +78,11 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.buttonLayout.access(for: 106), .softwareReadOnly)
         XCTAssertEqual(profile?.buttonLayout.softwareReadOnlySlots.map(\.slot), [15, 106])
         XCTAssertEqual(profile?.supportsAdvancedLightingEffects, false)
-        XCTAssertNil(profile?.passiveDPIInput)
+        XCTAssertEqual(profile?.passiveDPIInput?.usagePage, 0x01)
+        XCTAssertEqual(profile?.passiveDPIInput?.usage, 0x02)
+        XCTAssertEqual(profile?.passiveDPIInput?.reportID, 0x05)
+        XCTAssertEqual(profile?.passiveDPIInput?.subtype, 0x02)
+        XCTAssertEqual(profile?.passiveDPIInput?.maxFeatureReportSize, 1)
         XCTAssertEqual(profile?.onboardProfileCount, 3)
     }
 

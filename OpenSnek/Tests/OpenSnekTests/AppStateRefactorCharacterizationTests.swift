@@ -372,6 +372,15 @@ private actor AppStateRefactorStubBackend: DeviceBackend {
         shouldUseFastPolling
     }
 
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
         AsyncStream { continuation in
             continuation.finish()

@@ -5,6 +5,7 @@ import OpenSnekCore
 struct Pill: View {
     let text: String
     let color: Color
+    var helpText: String?
     var fontSize: CGFloat = 11
     var horizontalPadding: CGFloat = 10
     var verticalPadding: CGFloat = 5
@@ -16,6 +17,13 @@ struct Pill: View {
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
             .background(color, in: Capsule())
+            .contentShape(Capsule())
+            .hoverTooltip(
+                helpText,
+                xOffset: 6,
+                yOffset: fontSize + (verticalPadding * 2) + 10,
+                maxWidth: 360
+            )
     }
 }
 
@@ -91,6 +99,22 @@ extension View {
     func hintTextStyle() -> some View {
         modifier(HintTextModifier())
     }
+
+    func hoverTooltip(
+        _ helpText: String?,
+        xOffset: CGFloat = 6,
+        yOffset: CGFloat = 34,
+        maxWidth: CGFloat = 360
+    ) -> some View {
+        modifier(
+            HoverTooltipModifier(
+                helpText: helpText,
+                xOffset: xOffset,
+                yOffset: yOffset,
+                maxWidth: maxWidth
+            )
+        )
+    }
 }
 
 struct WindowDragBlocker: NSViewRepresentable {
@@ -129,6 +153,62 @@ private struct HintTextModifier: ViewModifier {
         content
             .font(.system(size: 12, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.58))
+    }
+}
+
+private struct HoverTooltipModifier: ViewModifier {
+    let helpText: String?
+    let xOffset: CGFloat
+    let yOffset: CGFloat
+    let maxWidth: CGFloat
+    @State private var isHovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .topLeading) {
+                if let helpText, !helpText.isEmpty, isHovering {
+                    HoverTooltipBubble(text: helpText, maxWidth: maxWidth)
+                        .offset(x: xOffset, y: yOffset)
+                        .allowsHitTesting(false)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+                }
+            }
+            .zIndex(isHovering ? 8 : 0)
+            .onHover { hovering in
+                guard let helpText, !helpText.isEmpty else {
+                    isHovering = false
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+    }
+}
+
+private struct HoverTooltipBubble: View {
+    let text: String
+    let maxWidth: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.92))
+            .lineSpacing(2)
+            .multilineTextAlignment(.leading)
+            .frame(minWidth: 220, idealWidth: min(320, maxWidth), maxWidth: maxWidth, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.black.opacity(0.86))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.24), radius: 14, y: 6)
+            )
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

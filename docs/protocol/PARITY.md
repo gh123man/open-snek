@@ -122,6 +122,7 @@ Validated in-session over Bluetooth:
 
 Validated in-session over Bluetooth:
 - vendor GATT path uses the same request headers and key catalog as the Basilisk V3 X HyperSpeed path, but the notify header is the shorter 8-byte variant and payload continuations may end with a short final fragment
+- passive HID DPI reports are present on the paired BT HID interface with the same `05 05 02 <x_hi> <x_lo> <y_hi> <y_lo> ...` shape used by the validated V3 X Bluetooth path; a live macOS callback capture on `0x00AC` observed `900`, `2000`, and `1100` DPI stage frames
 - working read/write/readback: DPI stages + active stage (`0B84`/`0B04`), sleep timeout (`05 84 00 00` / `05 04 00 00`), lighting brightness (`10 85 01 01` / `10 05 01 00`)
 - working read: battery raw (`05 81 00 01`), battery status (`05 80 00 01`)
 - working write ACKs on tested BLE button-remap slots: `0x01..0x05`, `0x09`, `0x0A`, `0x34`, `0x35`

@@ -7,6 +7,7 @@ struct ContentView: View {
     let editorStore: EditorStore
     let runtimeStore: RuntimeStore
     @Environment(\.scenePhase) private var scenePhase
+    @State private var dismissedPermissionNoticeKey: String?
 
     var body: some View {
         NavigationSplitView {
@@ -18,6 +19,7 @@ struct ContentView: View {
         .navigationSplitViewStyle(.automatic)
         .task {
             await runtimeStore.start()
+            await runtimeStore.refreshHIDAccessStatus()
         }
         .onChange(of: deviceStore.selectedDeviceID) { _, _ in
             guard !deviceStore.usesRemoteServiceUpdates || deviceStore.state == nil else { return }
@@ -25,11 +27,19 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                if deviceStore.usesRemoteServiceUpdates {
-                    runtimeStore.sendRemoteClientPresence()
-                } else {
-                    Task { await deviceStore.refreshDevices() }
+                Task {
+                    await runtimeStore.refreshHIDAccessStatus()
+                    if deviceStore.usesRemoteServiceUpdates {
+                        runtimeStore.sendRemoteClientPresence()
+                    } else {
+                        await deviceStore.refreshDevices()
+                    }
                 }
+            }
+        }
+        .onChange(of: runtimeStore.hidAccessStatus.authorization) { _, authorization in
+            if authorization != .denied {
+                dismissedPermissionNoticeKey = nil
             }
         }
     }
@@ -91,31 +101,44 @@ struct ContentView: View {
             lowered.contains("kioreturnnotpermitted")
     }
 
-    private func openInputMonitoringSettings() {
-        let candidates = [
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_InputMonitoring",
-            "x-apple.systempreferences:com.apple.preference.security?Privacy",
-            "x-apple.systempreferences:com.apple.preference.security",
+    private var permissionGuidanceDetailLines: [String] {
+        [
+            "Open Input Monitoring settings and turn on Open Snek.",
+            "If it still looks stuck, use Reset Permissions and try again.",
+            "After changing the permission, quit and reopen Open Snek.",
+            "Current app host: \(runtimeStore.hidAccessStatus.hostLabel)"
         ]
-        for candidate in candidates {
-            guard let url = URL(string: candidate) else { continue }
-            if NSWorkspace.shared.open(url) {
-                return
-            }
-        }
     }
 
-    private var currentHostLabel: String {
-        let process = ProcessInfo.processInfo.processName
-        let bundleID = Bundle.main.bundleIdentifier ?? "unknown.bundle"
-        return "\(process) (\(bundleID))"
+    private var activePermissionNoticeKey: String? {
+        guard runtimeStore.hidAccessStatus.isDenied,
+              let selectedDevice = deviceStore.selectedDevice else {
+            return nil
+        }
+        if selectedDevice.transport == .bluetooth, deviceStore.selectedDeviceSupportsPassiveDPIInput {
+            return "bt:\(selectedDevice.id):\(runtimeStore.hidAccessStatus.authorization.rawValue)"
+        }
+        if selectedDevice.transport == .usb, isInputMonitoringError(deviceStore.errorMessage) {
+            return "usb:\(selectedDevice.id):\(runtimeStore.hidAccessStatus.authorization.rawValue)"
+        }
+        return nil
+    }
+
+    private var shouldShowPermissionNotice: Bool {
+        guard let activePermissionNoticeKey else { return false }
+        return dismissedPermissionNoticeKey != activePermissionNoticeKey
+    }
+
+    private var showsBluetoothHIDAccessCallout: Bool {
+        guard runtimeStore.hidAccessStatus.isDenied else { return false }
+        guard let selectedDevice = deviceStore.selectedDevice, selectedDevice.transport == .bluetooth else { return false }
+        return deviceStore.selectedDeviceSupportsPassiveDPIInput && shouldShowPermissionNotice
     }
 
     private var showsUSBAccessCallout: Bool {
         guard deviceStore.selectedDevice?.transport == .usb else { return false }
         if isInputMonitoringError(deviceStore.errorMessage) {
-            return true
+            return shouldShowPermissionNotice
         }
         if deviceStore.warningMessage != nil {
             return true
@@ -141,34 +164,74 @@ struct ContentView: View {
     private var noticeItems: [NoticeItem] {
         var notices: [NoticeItem] = []
 
+        if showsBluetoothHIDAccessCallout, let selectedDevice = deviceStore.selectedDevice {
+            notices.append(
+                NoticeItem(
+                    title: "Allow Input Monitoring",
+                    message: "Open Snek can talk to \(selectedDevice.product_name), but macOS is still blocking the permission that lets instant on-device DPI changes show up right away.",
+                    detailLines: permissionGuidanceDetailLines,
+                    tone: .permission,
+                    actions: [
+                        NoticeAction(title: "Open Settings", isProminent: true) {
+                            PermissionSupport.openInputMonitoringSettings()
+                        },
+                        NoticeAction(title: "Reset Permissions") {
+                            Task { await runtimeStore.resetAllPermissions() }
+                        },
+                        NoticeAction(title: "Refresh") {
+                            Task {
+                                await runtimeStore.refreshHIDAccessStatus()
+                                await deviceStore.refreshDevices()
+                            }
+                        },
+                        NoticeAction(title: "Dismiss") {
+                            dismissedPermissionNoticeKey = activePermissionNoticeKey
+                        }
+                    ]
+                )
+            )
+        }
+
         if showsUSBAccessCallout {
             var detailLines: [String] = []
             var actions: [NoticeAction] = [
                 NoticeAction(title: "Refresh") {
-                    Task { await deviceStore.refreshDevices() }
+                    Task {
+                        await runtimeStore.refreshHIDAccessStatus()
+                        await deviceStore.refreshDevices()
+                    }
                 }
             ]
 
             if isInputMonitoringError(deviceStore.errorMessage) {
-                detailLines = [
-                    "Grant Input Monitoring for the app host (Open Snek, Terminal, or Xcode), then relaunch.",
-                    "If already granted but still blocked, reset stale TCC grant: tccutil reset ListenEvent \(Bundle.main.bundleIdentifier ?? "io.opensnek.OpenSnek")",
-                    "Denied host: \(currentHostLabel)"
-                ]
+                detailLines = permissionGuidanceDetailLines
                 actions.insert(
                     NoticeAction(title: "Open Settings", isProminent: true) {
-                        openInputMonitoringSettings()
+                        PermissionSupport.openInputMonitoringSettings()
                     },
                     at: 0
+                )
+                actions.insert(
+                    NoticeAction(title: "Reset Permissions") {
+                        Task { await runtimeStore.resetAllPermissions() }
+                    },
+                    at: 1
+                )
+                actions.append(
+                    NoticeAction(title: "Dismiss") {
+                        dismissedPermissionNoticeKey = activePermissionNoticeKey
+                    }
                 )
             }
 
             notices.append(
                 NoticeItem(
-                    title: usbCalloutTitle,
-                    message: usbCalloutMessage,
+                    title: isInputMonitoringError(deviceStore.errorMessage) ? "Allow Input Monitoring" : usbCalloutTitle,
+                    message: isInputMonitoringError(deviceStore.errorMessage)
+                        ? "Open Snek needs one more macOS permission before it can read all USB settings from this mouse."
+                        : usbCalloutMessage,
                     detailLines: detailLines,
-                    tone: isInputMonitoringError(deviceStore.errorMessage) ? .error : .warning,
+                    tone: isInputMonitoringError(deviceStore.errorMessage) ? .permission : .warning,
                     actions: actions
                 )
             )
@@ -361,6 +424,7 @@ private struct NoticeAction {
 private enum StatusNoticeTone {
     case error
     case warning
+    case permission
 
     var backgroundColor: Color {
         switch self {
@@ -368,6 +432,8 @@ private enum StatusNoticeTone {
             Color(hex: 0xB3261E)
         case .warning:
             Color(hex: 0x8A6A00)
+        case .permission:
+            Color(hex: 0x8D6B2C)
         }
     }
 
@@ -377,6 +443,8 @@ private enum StatusNoticeTone {
             Color(hex: 0xFF8A80)
         case .warning:
             Color(hex: 0xF4C65D)
+        case .permission:
+            Color(hex: 0xF1CA82)
         }
     }
 }

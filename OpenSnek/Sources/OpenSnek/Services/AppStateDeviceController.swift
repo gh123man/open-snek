@@ -88,18 +88,22 @@ final class AppStateDeviceController {
 
     func refreshConnectionDiagnostics(for device: MouseDevice) async {
         guard !isStrictlyUnsupported(device) else {
-            dpiUpdateTransportStatusByDeviceID[device.id] = .unsupported
+            setDpiUpdateTransportStatus(.unsupported, for: device.id)
+            return
+        }
+        guard resolvedProfile(for: device)?.passiveDPIInput != nil else {
+            setDpiUpdateTransportStatus(.unsupported, for: device.id)
             return
         }
         guard deviceStore.devices.contains(where: { $0.id == device.id }) || deviceStore.selectedDeviceID == device.id else {
-            dpiUpdateTransportStatusByDeviceID[device.id] = .unknown
+            setDpiUpdateTransportStatus(.unknown, for: device.id)
             return
         }
-        let usesFastPolling = await environment.backend.shouldUseFastDPIPolling(device: device)
+        let transportStatus = await environment.backend.dpiUpdateTransportStatus(device: device)
         guard deviceStore.devices.contains(where: { $0.id == device.id }) || deviceStore.selectedDeviceID == device.id else {
             return
         }
-        dpiUpdateTransportStatusByDeviceID[device.id] = usesFastPolling ? .pollingFallback : .realTimeHID
+        setDpiUpdateTransportStatus(transportStatus, for: device.id)
     }
 
     func handleBackendDeviceListUpdate(_ listed: [MouseDevice]) async {
@@ -187,8 +191,8 @@ final class AppStateDeviceController {
         let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: merged)
 
         cacheState(merged, sourceDeviceID: deviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
-        dpiUpdateTransportStatusByDeviceID[deviceID] = .realTimeHID
-        dpiUpdateTransportStatusByDeviceID[presentationDeviceID] = .realTimeHID
+        setDpiUpdateTransportStatus(.realTimeHID, for: deviceID)
+        setDpiUpdateTransportStatus(.realTimeHID, for: presentationDeviceID)
         refreshFailureCountByDeviceID[deviceID] = 0
         refreshFailureCountByDeviceID[presentationDeviceID] = 0
         unavailableDeviceIDs.remove(deviceID)
@@ -285,7 +289,7 @@ final class AppStateDeviceController {
                 refreshFailureCountByDeviceID[id] = nil
                 stateRefreshSuppressedUntilByDeviceID[id] = nil
                 unavailableDeviceIDs.remove(id)
-                dpiUpdateTransportStatusByDeviceID[id] = nil
+                setDpiUpdateTransportStatus(nil, for: id)
                 lastUpdatedByDeviceID[id] = nil
                 suppressFastDpiUntilByDeviceID[id] = nil
                 lastUSBFastDpiAtByDeviceID[id] = nil
@@ -893,7 +897,7 @@ final class AppStateDeviceController {
         guard !applyController.hasPendingLocalEditsAffecting(device) else { return }
         let usesFastPolling = await environment.backend.shouldUseFastDPIPolling(device: device)
         if !usesFastPolling {
-            dpiUpdateTransportStatusByDeviceID[device.id] = .realTimeHID
+            setDpiUpdateTransportStatus(.realTimeHID, for: device.id)
             return
         }
 
@@ -950,8 +954,11 @@ final class AppStateDeviceController {
 
             let shouldFocusOnActivity = shouldFocusServiceSelectionOnActivity(previous: previous, next: updated)
             cacheState(updated, sourceDeviceID: device.id, presentationDeviceID: presentationDeviceID, updatedAt: readAt)
-            dpiUpdateTransportStatusByDeviceID[device.id] = .pollingFallback
-            dpiUpdateTransportStatusByDeviceID[presentationDeviceID] = .pollingFallback
+            let existingTransportStatus = dpiUpdateTransportStatusByDeviceID[presentationDeviceID]
+            if existingTransportStatus != .listening {
+                setDpiUpdateTransportStatus(.pollingFallback, for: device.id)
+                setDpiUpdateTransportStatus(.pollingFallback, for: presentationDeviceID)
+            }
             unavailableDeviceIDs.remove(device.id)
             unavailableDeviceIDs.remove(presentationDeviceID)
             if shouldFocusOnActivity {
@@ -974,5 +981,12 @@ final class AppStateDeviceController {
         } catch {
             // Ignore fast-poll transient failures to keep UI stable.
         }
+    }
+
+    private func setDpiUpdateTransportStatus(_ status: DpiUpdateTransportStatus?, for deviceID: String) {
+        let previous = dpiUpdateTransportStatusByDeviceID[deviceID]
+        guard previous != status else { return }
+        dpiUpdateTransportStatusByDeviceID[deviceID] = status
+        deviceStore.invalidateConnectionDiagnostics()
     }
 }

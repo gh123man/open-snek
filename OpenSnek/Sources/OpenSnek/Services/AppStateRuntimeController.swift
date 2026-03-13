@@ -64,6 +64,30 @@ final class AppStateRuntimeController {
         isBackendReady = ready
     }
 
+    func refreshHIDAccessStatus() async {
+        runtimeStore.hidAccessStatus = await environment.backend.hidAccessStatus()
+    }
+
+    func resetAllPermissions() async {
+        guard !runtimeStore.isResettingPermissions else { return }
+
+        runtimeStore.isResettingPermissions = true
+        defer { runtimeStore.isResettingPermissions = false }
+
+        do {
+            let result = try PermissionSupport.resetAllPermissions(
+                bundleIdentifier: runtimeStore.hidAccessStatus.bundleIdentifier
+            )
+            runtimeStore.permissionStatusMessage =
+                "Permissions reset for \(result.bundleIdentifier). Re-enable Input Monitoring, then relaunch Open Snek."
+            PermissionSupport.openInputMonitoringSettings()
+        } catch {
+            runtimeStore.permissionStatusMessage = "Permission reset failed: \(error.localizedDescription)"
+        }
+
+        await refreshHIDAccessStatus()
+    }
+
     func setCompactInteraction(until date: Date?) {
         compactInteractionUntil = date
     }
@@ -239,7 +263,10 @@ final class AppStateRuntimeController {
             await configureBackendForCurrentPreferences()
         }
 
+        await refreshHIDAccessStatus()
+
         if environment.usesRemoteServiceUpdates {
+            await bootstrapRemoteStateIfNeeded()
             sendRemoteClientPresence()
         } else {
             await deviceController.refreshDevices()
@@ -281,6 +308,7 @@ final class AppStateRuntimeController {
                 environment.backend = try await environment.serviceCoordinator.connectOrLaunchService()
                 await restartBackendStateUpdates()
                 isBackendReady = true
+                await refreshHIDAccessStatus()
                 runtimeStore.serviceStatusMessage = "Menu bar service connected"
                 transientStatusUntil = Date().addingTimeInterval(3.0)
                 deviceStore.errorMessage = nil
@@ -288,6 +316,7 @@ final class AppStateRuntimeController {
                 environment.backend = LocalBridgeBackend.shared
                 await restartBackendStateUpdates()
                 isBackendReady = true
+                await refreshHIDAccessStatus()
                 runtimeStore.backgroundServiceEnabled = false
                 environment.serviceCoordinator.setBackgroundServiceEnabled(false)
                 deviceStore.errorMessage = "Background service unavailable: \(error.localizedDescription)"
@@ -296,6 +325,7 @@ final class AppStateRuntimeController {
             environment.backend = LocalBridgeBackend.shared
             await restartBackendStateUpdates()
             isBackendReady = true
+            await refreshHIDAccessStatus()
             if environment.launchRole.isService {
                 environment.serviceCoordinator.stopCurrentServiceHostIfNeeded()
                 NSApp.terminate(nil)
@@ -308,6 +338,7 @@ final class AppStateRuntimeController {
         }
 
         if environment.usesRemoteServiceUpdates {
+            await bootstrapRemoteStateIfNeeded()
             sendRemoteClientPresence()
         } else {
             await deviceController.refreshDevices()
@@ -318,10 +349,6 @@ final class AppStateRuntimeController {
         do {
             try environment.serviceCoordinator.setLaunchAtStartupEnabled(enabled)
             runtimeStore.launchAtStartupEnabled = enabled
-            runtimeStore.serviceStatusMessage = enabled
-                ? "Launch at startup enabled for next login"
-                : "Launch at startup disabled"
-            transientStatusUntil = Date().addingTimeInterval(3.0)
         } catch {
             deviceStore.errorMessage = "Launch at startup failed: \(error.localizedDescription)"
             runtimeStore.launchAtStartupEnabled = environment.serviceCoordinator.launchAtStartupEnabled
@@ -348,6 +375,7 @@ final class AppStateRuntimeController {
 
     func refreshNow() async {
         if environment.usesRemoteServiceUpdates {
+            await bootstrapRemoteStateIfNeeded(force: true)
             sendRemoteClientPresence()
         } else {
             await deviceController.refreshDevices()
@@ -366,6 +394,7 @@ final class AppStateRuntimeController {
             environment.backend = try await environment.serviceCoordinator.makeBackendForCurrentMode()
             await restartBackendStateUpdates()
             isBackendReady = true
+            await refreshHIDAccessStatus()
             if runtimeStore.backgroundServiceEnabled {
                 runtimeStore.serviceStatusMessage = "Menu bar service connected"
                 transientStatusUntil = Date().addingTimeInterval(2.0)
@@ -374,6 +403,7 @@ final class AppStateRuntimeController {
             environment.backend = LocalBridgeBackend.shared
             await restartBackendStateUpdates()
             isBackendReady = true
+            await refreshHIDAccessStatus()
             deviceStore.errorMessage = "Background service unavailable: \(error.localizedDescription)"
         }
     }
@@ -392,6 +422,16 @@ final class AppStateRuntimeController {
         } catch {
             AppLog.debug("AppState", "checkForUpdates failed: \(error.localizedDescription)")
         }
+    }
+
+    private func bootstrapRemoteStateIfNeeded(force: Bool = false) async {
+        guard environment.usesRemoteServiceUpdates else { return }
+        if !force,
+           !deviceStore.devices.isEmpty,
+           deviceStore.state != nil {
+            return
+        }
+        await deviceController.refreshDevices()
     }
 
     func runtimeSleepInterval(after now: Date) -> TimeInterval {

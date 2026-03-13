@@ -280,15 +280,20 @@ struct DeviceOverviewBar: View {
             HStack(spacing: 10) {
                 Pill(
                     text: state.connection,
-                    color: selected.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A)
+                    color: selected.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A),
+                    helpText: deviceStore.currentDeviceConnectionTooltip
                 )
-                DeviceStatusBadge(indicator: deviceStore.currentDeviceStatusIndicator)
+                DeviceStatusBadge(
+                    indicator: deviceStore.currentDeviceStatusIndicator,
+                    helpText: deviceStore.currentDeviceStatusTooltip
+                )
             }
 
             Rectangle()
                 .fill(Color.white.opacity(0.14))
                 .frame(height: 1)
         }
+        .zIndex(6)
     }
 
     private var showsUnsupportedUSBMarker: Bool {
@@ -441,15 +446,20 @@ struct GenericDeviceOverviewBar: View {
             HStack(spacing: 10) {
                 Pill(
                     text: selected.connectionLabel,
-                    color: selected.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A)
+                    color: selected.transport == .bluetooth ? Color(hex: 0x66D9FF) : Color(hex: 0xA8F46A),
+                    helpText: deviceStore.currentDeviceConnectionTooltip
                 )
-                DeviceStatusBadge(indicator: deviceStore.currentDeviceStatusIndicator)
+                DeviceStatusBadge(
+                    indicator: deviceStore.currentDeviceStatusIndicator,
+                    helpText: deviceStore.currentDeviceStatusTooltip
+                )
             }
 
             Rectangle()
                 .fill(Color.white.opacity(0.14))
                 .frame(height: 1)
         }
+        .zIndex(6)
     }
 
     private var showsUnsupportedUSBMarker: Bool {
@@ -500,6 +510,7 @@ struct DiagnosticsFooter: View {
 
 struct DeviceStatusBadge: View {
     let indicator: DeviceStatusIndicator
+    var helpText: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -522,6 +533,8 @@ struct DeviceStatusBadge: View {
                         .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 )
         )
+        .contentShape(Capsule())
+        .hoverTooltip(helpText, xOffset: 6, yOffset: 34, maxWidth: 360)
     }
 }
 

@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import OpenSnekAppSupport
 import OpenSnekCore
+import SwiftUI
 
 @MainActor
 @Observable
@@ -17,6 +18,7 @@ final class DeviceStore {
     var errorMessage: String?
     var warningMessage: String?
     var lastUpdated: Date?
+    var connectionDiagnosticsRevision = 0
 
     @ObservationIgnored private weak var deviceControllerStorage: AppStateDeviceController?
     @ObservationIgnored private weak var applyControllerStorage: AppStateApplyController?
@@ -97,11 +99,18 @@ final class DeviceStore {
     }
 
     var selectedDeviceControlsEnabled: Bool {
+        _ = connectionDiagnosticsRevision
         guard let selectedDevice else { return false }
         return deviceController.connectionState(for: selectedDevice).allowsInteraction
     }
 
+    var selectedDeviceSupportsPassiveDPIInput: Bool {
+        guard let selectedDevice else { return false }
+        return resolvedProfile(for: selectedDevice)?.passiveDPIInput != nil
+    }
+
     var selectedDeviceInteractionMessage: String? {
+        _ = connectionDiagnosticsRevision
         guard let selectedDevice else { return nil }
         switch deviceController.connectionState(for: selectedDevice) {
         case .reconnecting:
@@ -116,8 +125,58 @@ final class DeviceStore {
     }
 
     var currentDeviceStatusIndicator: DeviceStatusIndicator {
+        _ = connectionDiagnosticsRevision
         guard let selectedDevice else { return DeviceConnectionState.disconnected.indicator }
-        return deviceController.statusIndicator(for: selectedDevice)
+        let base = deviceController.statusIndicator(for: selectedDevice)
+        guard deviceController.connectionState(for: selectedDevice) == .connected,
+              selectedDeviceSupportsPassiveDPIInput,
+              deviceController.dpiUpdateTransportStatus(for: selectedDevice) == .pollingFallback else {
+            return base
+        }
+        return DeviceStatusIndicator(label: base.label, color: Color(hex: 0xF4C65D))
+    }
+
+    var currentDeviceStatusTooltip: String? {
+        _ = connectionDiagnosticsRevision
+        guard let selectedDevice else { return nil }
+        let telemetryStatus = deviceController.connectionState(for: selectedDevice)
+        let realtimeStatus = deviceController.dpiUpdateTransportStatus(for: selectedDevice)
+        let controlTransport = state?.connection ?? selectedDevice.connectionLabel
+
+        let realtimeLabel: String
+        if selectedDeviceSupportsPassiveDPIInput {
+            realtimeLabel = realtimeStatus.diagnosticsLabel
+        } else {
+            realtimeLabel = "Not used on this device"
+        }
+
+        return [
+            "Control transport: \(controlTransport)",
+            "Telemetry: \(telemetryStatus.diagnosticsLabel)",
+            "Real-time HID: \(realtimeLabel)",
+            "Input Monitoring: \(runtimeStore.hidAccessStatus.diagnosticsLabel)"
+        ].joined(separator: "\n")
+    }
+
+    var currentDeviceConnectionTooltip: String? {
+        _ = connectionDiagnosticsRevision
+        guard let selectedDevice else { return nil }
+        let telemetryStatus = deviceController.connectionState(for: selectedDevice)
+        let realtimeStatus = deviceController.dpiUpdateTransportStatus(for: selectedDevice)
+        let controlTransport = state?.connection ?? selectedDevice.connectionLabel
+
+        var lines = [
+            "Transport: \(selectedDevice.connectionLabel)",
+            "Connection state: \(telemetryStatus.diagnosticsLabel)",
+            "Control transport: \(controlTransport)"
+        ]
+
+        if selectedDeviceSupportsPassiveDPIInput {
+            lines.append("Real-time HID: \(realtimeStatus.diagnosticsLabel)")
+            lines.append("Input Monitoring: \(runtimeStore.hidAccessStatus.diagnosticsLabel)")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     var visibleButtonSlots: [ButtonSlotDescriptor] {
@@ -137,6 +196,7 @@ final class DeviceStore {
     }
 
     func refreshDevices() async {
+        await runtimeController.refreshHIDAccessStatus()
         await deviceController.refreshDevices()
     }
 
@@ -161,7 +221,12 @@ final class DeviceStore {
     }
 
     func diagnosticsConnectionLines(for device: MouseDevice) -> [String] {
-        deviceController.diagnosticsConnectionLines(for: device)
+        _ = connectionDiagnosticsRevision
+        return deviceController.diagnosticsConnectionLines(for: device)
+    }
+
+    func invalidateConnectionDiagnostics() {
+        connectionDiagnosticsRevision &+= 1
     }
 
     func diagnosticsDump(for device: MouseDevice, state explicitState: MouseState? = nil) -> String {
@@ -183,11 +248,16 @@ final class DeviceStore {
             "Last selected-state update: \(lastUpdated.map(diagnosticsTimestamp) ?? "Never")",
             "Current error: \(errorMessage ?? "none")",
             "Current warning: \(warningMessage ?? "none")",
+            "Input Monitoring: \(runtimeStore.hidAccessStatus.diagnosticsLabel)",
+            "Input Monitoring host: \(runtimeStore.hidAccessStatus.hostLabel)",
             "Polling profile: \(pollingProfileLabel(runtimeController.pollingProfile(at: Date())))",
             "Remote service transport: \(usesRemoteServiceUpdates ? "Enabled" : "Disabled")",
             "Compact menu service: \(runtimeStore.backgroundServiceEnabled ? "Enabled" : "Disabled")",
         ]
         var lines = appContextLines
+        if let hidAccessDetail = runtimeStore.hidAccessStatus.detail {
+            lines.append("Input Monitoring detail: \(hidAccessDetail)")
+        }
         if device.id == selectedDeviceID {
             lines.append("Editable lighting effect: \(editorStore.editableLightingEffect.label)")
             lines.append("Editable lighting zone: \(editorStore.editableUSBLightingZoneID)")

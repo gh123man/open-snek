@@ -80,6 +80,24 @@ actor BridgeClient {
         )
     }
 
+    func dpiUpdateTransportStatus(device: MouseDevice) -> DpiUpdateTransportStatus {
+        let profile = DeviceProfiles.resolve(
+            vendorID: device.vendor_id,
+            productID: device.product_id,
+            transport: device.transport
+        )
+        guard profile?.passiveDPIInput != nil else {
+            return .unsupported
+        }
+        if passiveDpiObservedDeviceIDs.contains(device.id) {
+            return .realTimeHID
+        }
+        if passiveDpiArmedDeviceIDs.contains(device.id) {
+            return .listening
+        }
+        return .pollingFallback
+    }
+
     private func removePassiveDpiContinuation(id: UUID) {
         passiveDpiEventContinuations.removeValue(forKey: id)
     }
@@ -174,12 +192,7 @@ actor BridgeClient {
         passiveDpiTargetsByDeviceID.removeValue(forKey: deviceID)
         passiveDpiUpgradeNotBeforeByDeviceID.removeValue(forKey: deviceID)
         clearPassiveDpiObservation(deviceID: deviceID, reason: reason)
-
-        if let hidManager {
-            IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
-            self.hidManager = nil
-            hidManagerOpenResult = nil
-        }
+        clearManagedHIDManager()
     }
 
     private func managedHIDManager() -> (manager: IOHIDManager, openResult: IOReturn) {
@@ -187,11 +200,7 @@ actor BridgeClient {
             return (hidManager, hidManagerOpenResult)
         }
 
-        if let hidManager {
-            IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
-            self.hidManager = nil
-            hidManagerOpenResult = nil
-        }
+        clearManagedHIDManager()
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatchingMultiple(manager, [
@@ -214,6 +223,44 @@ actor BridgeClient {
         hidManager = manager
         hidManagerOpenResult = openResult
         return (manager, openResult)
+    }
+
+    private func clearManagedHIDManager() {
+        if let hidManager {
+            IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
+            self.hidManager = nil
+        }
+        hidManagerOpenResult = nil
+        managerAccessDenied = false
+    }
+
+    func hidAccessStatus(forceRefresh: Bool = true) -> HIDAccessStatus {
+        if forceRefresh {
+            clearManagedHIDManager()
+        }
+
+        let (_, openResult) = managedHIDManager()
+        let authorization: HIDAccessAuthorization
+        let detail: String?
+
+        switch openResult {
+        case kIOReturnSuccess:
+            authorization = .granted
+            detail = nil
+        case kIOReturnNotPermitted:
+            authorization = .denied
+            detail = "Input Monitoring is required before macOS will allow HID listeners and feature-report access."
+        default:
+            authorization = .unavailable
+            detail = "IOHIDManagerOpen failed (\(openResult))."
+        }
+
+        return HIDAccessStatus(
+            authorization: authorization,
+            hostLabel: PermissionSupport.currentHostLabel(),
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            detail: detail
+        )
     }
 
     func listDevices() async throws -> [MouseDevice] {

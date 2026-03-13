@@ -48,6 +48,8 @@ final class BackgroundServiceTransportTests: XCTestCase {
         XCTAssertEqual(fast, DpiFastSnapshot(active: 2, values: [1200, 2400, 3600]))
         let usesFastPolling = await serviceBackend.shouldUseFastDPIPolling(device: devices[0])
         XCTAssertTrue(usesFastPolling)
+        let transportStatus = await serviceBackend.dpiUpdateTransportStatus(device: devices[0])
+        XCTAssertEqual(transportStatus, .listening)
 
         let lighting = try await serviceBackend.readLightingColor(device: devices[0])
         XCTAssertEqual(lighting, RGBPatch(r: 10, g: 20, b: 30))
@@ -118,6 +120,19 @@ private actor StubServiceBackend: DeviceBackend {
 
     func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
         true
+    }
+
+    func dpiUpdateTransportStatus(device _: MouseDevice) async -> DpiUpdateTransportStatus {
+        .listening
+    }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
