@@ -86,6 +86,46 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.onboardProfileCount, 3)
     }
 
+    func testBasiliskV3ProBluetoothHidesLightingControls() {
+        let bluetoothV3Pro = MouseDevice(
+            id: "bt-v3-pro",
+            vendor_id: 0x068E,
+            product_id: 0x00AC,
+            product_name: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            path_b64: "",
+            serial: nil,
+            firmware: nil,
+            profile_id: .basiliskV3Pro
+        )
+        let bluetoothV3X = MouseDevice(
+            id: "bt-v3x",
+            vendor_id: 0x068E,
+            product_id: 0x00BA,
+            product_name: "Basilisk V3 X HyperSpeed",
+            transport: .bluetooth,
+            path_b64: "",
+            serial: nil,
+            firmware: nil,
+            profile_id: .basiliskV3XHyperspeed
+        )
+        let usbV3Pro = MouseDevice(
+            id: "usb-v3-pro",
+            vendor_id: 0x1532,
+            product_id: 0x00AB,
+            product_name: "Basilisk V3 Pro",
+            transport: .usb,
+            path_b64: "",
+            serial: nil,
+            firmware: nil,
+            profile_id: .basiliskV3Pro
+        )
+
+        XCTAssertFalse(bluetoothV3Pro.showsLightingControls)
+        XCTAssertTrue(bluetoothV3X.showsLightingControls)
+        XCTAssertTrue(usbV3Pro.showsLightingControls)
+    }
+
     func testResolveBluetoothFallbackProfileByName() {
         let exact = DeviceProfiles.resolveBluetoothFallback(name: "Basilisk V3 X HyperSpeed")
         XCTAssertEqual(exact?.id, .basiliskV3XHyperspeed)

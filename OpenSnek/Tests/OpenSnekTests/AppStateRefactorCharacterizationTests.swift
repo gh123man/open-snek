@@ -173,6 +173,55 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(editableColor, persistedColor)
     }
 
+    func testBluetoothV3ProPersistedLightingDoesNotReapplyWhenLightingIsHidden() async throws {
+        let device = MouseDevice(
+            id: "bt-v3-pro-lighting-hidden",
+            vendor_id: 0x068E,
+            product_id: 0x00AC,
+            product_name: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            path_b64: "",
+            serial: "BT-V3PRO-LIGHT-\(UUID().uuidString)",
+            firmware: "1.0.0",
+            location_id: 1,
+            profile_id: .basiliskV3Pro,
+            supports_advanced_lighting_effects: false,
+            onboard_profile_count: 3
+        )
+        let persistedColor = RGBColor(r: 10, g: 20, b: 30)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "bluetooth",
+                    batteryPercent: 68,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 1,
+                    dpiValue: 2400,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let applyCount = await backend.applyCount()
+        let editableLightingEffect = await MainActor.run { appState.editorStore.editableLightingEffect }
+
+        XCTAssertEqual(applyCount, 0)
+        XCTAssertEqual(editableLightingEffect, .staticColor)
+    }
+
     func testUSBPersistedLightingColorReappliesOnFirstHydrationUsingSavedZone() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-lighting-device",

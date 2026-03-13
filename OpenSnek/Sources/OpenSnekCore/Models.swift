@@ -88,6 +88,15 @@ public struct MouseDevice: Codable, Identifiable, Hashable, Sendable {
         transport.connectionLabel
     }
 
+    // Temporary app-level gate until V3 Pro Bluetooth lighting is capture-backed and reliable.
+    public var showsLightingControls: Bool {
+        if transport == .bluetooth,
+           (profile_id == .basiliskV3Pro || product_id == 0x00AC) {
+            return false
+        }
+        return true
+    }
+
     public var identity: DeviceIdentity {
         DeviceIdentity(
             vendorID: vendor_id,

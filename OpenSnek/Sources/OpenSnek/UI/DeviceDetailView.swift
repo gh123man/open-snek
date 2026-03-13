@@ -65,7 +65,7 @@ struct DeviceDetailView: View {
         if state.capabilities.dpi_stages {
             sections.append(.dpiStages)
         }
-        if state.capabilities.lighting {
+        if selected.showsLightingControls, state.capabilities.lighting {
             sections.append(.lighting)
         }
         if state.capabilities.power_management {

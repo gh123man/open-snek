@@ -135,6 +135,13 @@ final class AppStateEditorController {
     }
 
     func hydrateLightingStateIfNeeded(device: MouseDevice) async {
+        guard device.showsLightingControls else {
+            editorStore.editableUSBLightingZoneID = "all"
+            editorStore.editableLightingEffect = .staticColor
+            hydratedLightingStateByDeviceID.insert(device.id)
+            return
+        }
+
         if hydratePersistedLightingStateIfNeeded(device: device) {
             return
         }
@@ -309,6 +316,8 @@ final class AppStateEditorController {
     }
 
     func persistedLightingRestorePlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
+        guard device.showsLightingControls else { return nil }
+
         let persistedColor = loadPersistedLightingColor(device: device)
         let normalizedZoneID = normalizedLightingZoneID(
             for: device,
