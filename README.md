@@ -58,9 +58,9 @@ Status key: `Yes` = supported and validated, `Not yet` = the transport exists on
 
 | Device | USB | Bluetooth |
 |---|---|---|
-| Basilisk V3 X HyperSpeed | Yes | Yes |
-| Basilisk V3 Pro | Yes | Yes |
-| Basilisk V3 35K | Yes | No |
+| Basilisk V3 X HyperSpeed | ✅ | ✅ |
+| Basilisk V3 Pro | ✅ | ✅ |
+| Basilisk V3 35K | ✅ | - |
 
 Not every feature is fully supported on every listed transport yet. Some controls and readback paths are still partial while capture, testing, and validation continue.
 
