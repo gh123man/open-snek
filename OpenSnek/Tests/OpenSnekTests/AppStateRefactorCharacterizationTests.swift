@@ -173,6 +173,188 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(editableColor, persistedColor)
     }
 
+    func testUSBPersistedLightingColorReappliesOnFirstHydrationUsingSavedZone() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-lighting-device",
+            transport: .usb,
+            serial: "USB-LIGHT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        let persistedColor = RGBColor(r: 40, g: 50, b: 60)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: device)
+        preferenceStore.persistLightingZoneID("logo", device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 73,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        try await waitForRefactorCondition {
+            await backend.applyCount() == 1
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.first)
+        let editableColor = await MainActor.run { appState.editorStore.editableColor }
+        let editableZone = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+
+        XCTAssertEqual(patch.ledRGB?.r, persistedColor.r)
+        XCTAssertEqual(patch.ledRGB?.g, persistedColor.g)
+        XCTAssertEqual(patch.ledRGB?.b, persistedColor.b)
+        XCTAssertNil(patch.lightingEffect)
+        XCTAssertEqual(patch.usbLightingZoneLEDIDs, [0x04])
+        XCTAssertEqual(editableColor, persistedColor)
+        XCTAssertEqual(editableZone, "logo")
+    }
+
+    func testSelectedDevicePresentationHydratesPersistedLightingBeforeStateRefresh() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-selected-lighting-device",
+            transport: .usb,
+            serial: "USB-SELECTED-LIGHT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        let persistedColor = RGBColor(r: 91, g: 102, b: 113)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: device)
+        preferenceStore.persistLightingZoneID("logo", device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(devices: [], stateByDeviceID: [:])
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([device], source: "refresh")
+        }
+
+        let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        let editableColor = await MainActor.run { appState.editorStore.editableColor }
+        let editableZone = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+        let applyCount = await backend.applyCount()
+
+        XCTAssertEqual(selectedDeviceID, device.id)
+        XCTAssertEqual(editableColor, persistedColor)
+        XCTAssertEqual(editableZone, "logo")
+        XCTAssertEqual(applyCount, 0)
+    }
+
+    func testUSBPersistedLightingEffectReappliesOnFirstHydration() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-effect-device",
+            transport: .usb,
+            serial: "USB-EFFECT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        let persistedColor = RGBColor(r: 70, g: 80, b: 90)
+        let persistedEffect = LightingEffectPatch(
+            kind: .wave,
+            primary: RGBPatch(r: persistedColor.r, g: persistedColor.g, b: persistedColor.b),
+            secondary: RGBPatch(r: 1, g: 2, b: 3),
+            waveDirection: .right,
+            reactiveSpeed: 4
+        )
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: device)
+        preferenceStore.persistLightingEffect(persistedEffect, device: device)
+        preferenceStore.persistLightingZoneID("logo", device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 71,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        try await waitForRefactorCondition {
+            await backend.applyCount() == 1
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.first)
+        let effect = try XCTUnwrap(patch.lightingEffect)
+
+        XCTAssertNil(patch.ledRGB)
+        XCTAssertEqual(effect.kind, .wave)
+        XCTAssertEqual(effect.primary.r, persistedColor.r)
+        XCTAssertEqual(effect.primary.g, persistedColor.g)
+        XCTAssertEqual(effect.primary.b, persistedColor.b)
+        XCTAssertEqual(effect.secondary.r, 1)
+        XCTAssertEqual(effect.secondary.g, 2)
+        XCTAssertEqual(effect.secondary.b, 3)
+        XCTAssertEqual(effect.waveDirection, .right)
+        XCTAssertEqual(effect.reactiveSpeed, 4)
+        XCTAssertNil(patch.usbLightingZoneLEDIDs)
+    }
+
+    func testMissingPersistedLightingDoesNotAutoApply() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-no-lighting",
+            transport: .usb,
+            serial: "USB-NO-LIGHT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 75,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let applyCount = await backend.applyCount()
+        XCTAssertEqual(applyCount, 0)
+    }
+
     func testUSBButtonHydrationPrefersDeviceReadbackOverPersistedCache() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-button-device",
@@ -571,6 +753,8 @@ private func clearRefactorPreferences(for device: MouseDevice) {
     let prefixes = [
         "lightingColor.\(key)",
         "lightingColor.\(legacyKey)",
+        "lightingZone.\(key)",
+        "lightingZone.\(legacyKey)",
         "lightingEffect.\(key)",
         "lightingEffect.\(legacyKey)",
         "buttonBindings.\(key)",

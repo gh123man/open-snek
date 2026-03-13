@@ -26,6 +26,21 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         )
     }
 
+    public func persistLightingZoneID(_ zoneID: String, device: MouseDevice) {
+        let key = "lightingZone.\(DevicePersistenceKeys.key(for: device))"
+        defaults.set(zoneID, forKey: key)
+    }
+
+    public func loadPersistedLightingZoneID(device: MouseDevice) -> String? {
+        let key = "lightingZone.\(DevicePersistenceKeys.key(for: device))"
+        let legacyKey = "lightingZone.\(DevicePersistenceKeys.legacyKey(for: device))"
+        let zoneID = defaults.string(forKey: key) ?? defaults.string(forKey: legacyKey)
+        guard let trimmed = zoneID?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
     public func persistLightingEffect(_ effect: LightingEffectPatch, device: MouseDevice) {
         let key = "lightingEffect.\(DevicePersistenceKeys.key(for: device))"
         let persisted = PersistedLightingEffect(

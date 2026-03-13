@@ -416,9 +416,29 @@ final class AppStateApplyController {
         }
     }
 
+    @discardableResult
+    func applyPersistedLightingRestore(
+        _ patch: DevicePatch,
+        to device: MouseDevice,
+        usbLightingZoneID: String
+    ) async -> Bool {
+        let selectedIdentity = deviceStore.selectedDevice.map(deviceController.deviceIdentityKey)
+        let targetIdentity = deviceController.deviceIdentityKey(device)
+        let targetsSelectedDevice = selectedIdentity == targetIdentity
+        return await apply(
+            device: device,
+            patch: patch,
+            markApplyingState: targetsSelectedDevice,
+            shouldFocusOnActivity: false,
+            shouldSurfaceApplyFailure: targetsSelectedDevice,
+            persistLightingZoneID: usbLightingZoneID,
+            clearLocalEditsOnSuccess: false
+        )
+    }
+
     private func drainApplyQueue() async {
         while let patch = applyCoordinator.dequeue() {
-            await applyNow(patch: patch)
+            await applySelectedPatch(patch)
             hasPendingLocalEdits = applyCoordinator.hasPending
         }
         hasPendingLocalEdits = false
@@ -426,28 +446,54 @@ final class AppStateApplyController {
         applyDrainTask = nil
     }
 
-    private func applyNow(patch: DevicePatch) async {
+    private func applySelectedPatch(_ patch: DevicePatch) async {
         guard let selectedDevice = deviceStore.selectedDevice else {
             AppLog.warning("AppState", "apply skipped with no selected device patch=\(patch.describe)")
             deviceStore.errorMessage = "No device selected"
             return
         }
+        _ = await apply(
+            device: selectedDevice,
+            patch: patch,
+            markApplyingState: true,
+            shouldFocusOnActivity: true,
+            shouldSurfaceApplyFailure: true,
+            persistLightingZoneID: editorStore.editableUSBLightingZoneID,
+            clearLocalEditsOnSuccess: true
+        )
+    }
 
+    @discardableResult
+    private func apply(
+        device targetDevice: MouseDevice,
+        patch: DevicePatch,
+        markApplyingState: Bool,
+        shouldFocusOnActivity: Bool,
+        shouldSurfaceApplyFailure: Bool,
+        persistLightingZoneID: String,
+        clearLocalEditsOnSuccess: Bool
+    ) async -> Bool {
         applyCoordinator.bumpRevision()
-        AppLog.event("AppState", "apply start device=\(selectedDevice.id) patch=\(patch.describe)")
-        deviceStore.isApplying = true
-        defer { deviceStore.isApplying = false }
+        AppLog.event("AppState", "apply start device=\(targetDevice.id) patch=\(patch.describe)")
+        if markApplyingState {
+            deviceStore.isApplying = true
+        }
+        defer {
+            if markApplyingState {
+                deviceStore.isApplying = false
+            }
+        }
 
         let start = Date()
-        let applyDeviceID = selectedDevice.id
+        let applyDeviceID = targetDevice.id
 
         do {
-            let next = try await environment.backend.apply(device: selectedDevice, patch: patch)
-            guard let presentationDevice = deviceController.presentationDevice(for: selectedDevice) else {
+            let next = try await environment.backend.apply(device: targetDevice, patch: patch)
+            guard let presentationDevice = deviceController.presentationDevice(for: targetDevice) else {
                 let merged = next.merged(with: deviceController.cachedState(for: applyDeviceID))
                 deviceController.storeState(merged, for: applyDeviceID, updatedAt: Date())
                 AppLog.debug("AppState", "apply result cached for missing-presentation device=\(applyDeviceID)")
-                return
+                return true
             }
 
             let presentationDeviceID = presentationDevice.id
@@ -455,14 +501,16 @@ final class AppStateApplyController {
                 with: deviceController.cachedState(for: presentationDeviceID) ?? deviceController.cachedState(for: applyDeviceID)
             )
             deviceController.cacheState(merged, sourceDeviceID: applyDeviceID, presentationDeviceID: presentationDeviceID)
-            deviceController.focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
+            if shouldFocusOnActivity {
+                deviceController.focusServiceSelectionOnActivity(deviceID: presentationDeviceID)
+            }
 
             if deviceStore.selectedDeviceID == presentationDeviceID, deviceStore.state != merged {
                 deviceStore.state = merged
             }
 
-            let localEditsChangedDuringApply = (lastLocalEditAt ?? .distantPast) > start
-            let shouldHydrateEditableState = !localEditsChangedDuringApply && !applyCoordinator.hasPending
+            let localEditsChangedDuringApply = clearLocalEditsOnSuccess && (lastLocalEditAt ?? .distantPast) > start
+            let shouldHydrateEditableState = clearLocalEditsOnSuccess && !localEditsChangedDuringApply && !applyCoordinator.hasPending
             if patch.dpiStages != nil || patch.activeStage != nil {
                 let suppressedUntil = Date().addingTimeInterval(0.9)
                 deviceController.setFastDpiSuppressed(until: suppressedUntil, for: applyDeviceID)
@@ -480,18 +528,11 @@ final class AppStateApplyController {
                 )
             }
 
-            if patch.ledRGB != nil {
-                editorController.persistLightingColor(editorStore.editableColor, device: presentationDevice)
-                editorController.markLightingHydrated(deviceID: presentationDevice.id)
-            }
-            if let lightingEffect = patch.lightingEffect {
-                editorController.persistLightingEffect(lightingEffect, device: presentationDevice)
-                editorController.persistLightingColor(
-                    RGBColor(r: lightingEffect.primary.r, g: lightingEffect.primary.g, b: lightingEffect.primary.b),
-                    device: presentationDevice
-                )
-                editorController.markLightingHydrated(deviceID: presentationDevice.id)
-            }
+            persistSuccessfulLightingPatch(
+                patch,
+                device: presentationDevice,
+                usbLightingZoneID: persistLightingZoneID
+            )
             if let buttonBinding = patch.buttonBinding {
                 editorController.persistButtonBinding(buttonBinding, device: presentationDevice, profile: buttonBinding.persistentProfile)
                 editorController.markButtonBindingsHydrated(device: presentationDevice)
@@ -511,25 +552,56 @@ final class AppStateApplyController {
                 "values=\(merged.dpi_stages.values?.map(String.init).joined(separator: ",") ?? "nil") " +
                 "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s"
             )
+            return true
         } catch {
-            AppLog.error("AppState", "apply failed device=\(selectedDevice.id): \(error.localizedDescription)")
-            let shouldShowApplyFailure: Bool
-            if let currentSelectedDevice = deviceStore.selectedDevice {
-                shouldShowApplyFailure = deviceController.deviceIdentityKey(currentSelectedDevice) ==
-                    deviceController.deviceIdentityKey(selectedDevice)
-            } else {
-                shouldShowApplyFailure = false
-            }
-            if shouldShowApplyFailure {
-                deviceStore.errorMessage = error.localizedDescription
-                deviceStore.warningMessage = nil
-                if patch.dpiStages != nil || patch.activeStage != nil {
-                    runtimeStore.serviceStatusMessage = "DPI update failed"
-                    runtimeController.setTransientStatus(until: Date().addingTimeInterval(4.0))
+            AppLog.error("AppState", "apply failed device=\(targetDevice.id): \(error.localizedDescription)")
+            if shouldSurfaceApplyFailure {
+                let shouldShowApplyFailure: Bool
+                if let currentSelectedDevice = deviceStore.selectedDevice {
+                    shouldShowApplyFailure = deviceController.deviceIdentityKey(currentSelectedDevice) ==
+                        deviceController.deviceIdentityKey(targetDevice)
+                } else {
+                    shouldShowApplyFailure = false
+                }
+                if shouldShowApplyFailure {
+                    deviceStore.errorMessage = error.localizedDescription
+                    deviceStore.warningMessage = nil
+                    if patch.dpiStages != nil || patch.activeStage != nil {
+                        runtimeStore.serviceStatusMessage = "DPI update failed"
+                        runtimeController.setTransientStatus(until: Date().addingTimeInterval(4.0))
+                    }
+                } else {
+                    AppLog.debug("AppState", "apply failure masked for no-longer-selected device=\(targetDevice.id)")
                 }
             } else {
-                AppLog.debug("AppState", "apply failure masked for no-longer-selected device=\(selectedDevice.id)")
+                AppLog.debug("AppState", "apply failure masked for non-selected restore device=\(targetDevice.id)")
             }
+            return false
+        }
+    }
+
+    private func persistSuccessfulLightingPatch(
+        _ patch: DevicePatch,
+        device: MouseDevice,
+        usbLightingZoneID: String
+    ) {
+        if let rgb = patch.ledRGB {
+            editorController.persistLightingColor(
+                RGBColor(r: rgb.r, g: rgb.g, b: rgb.b),
+                device: device
+            )
+            editorController.persistLightingZoneID(usbLightingZoneID, device: device)
+        }
+        if let lightingEffect = patch.lightingEffect {
+            editorController.persistLightingEffect(lightingEffect, device: device)
+            editorController.persistLightingColor(
+                RGBColor(r: lightingEffect.primary.r, g: lightingEffect.primary.g, b: lightingEffect.primary.b),
+                device: device
+            )
+            editorController.persistLightingZoneID(
+                lightingEffect.kind == .staticColor ? usbLightingZoneID : "all",
+                device: device
+            )
         }
     }
 }

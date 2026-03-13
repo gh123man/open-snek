@@ -20,6 +20,8 @@ final class AppStateDeviceController {
     private var stateRefreshSuppressedUntilByDeviceID: [String: Date] = [:]
     private var unavailableDeviceIDs: Set<String> = []
     private var dpiUpdateTransportStatusByDeviceID: [String: DpiUpdateTransportStatus] = [:]
+    private var pendingLightingRestoreDeviceIDs: Set<String> = []
+    private var restoringLightingDeviceIDs: Set<String> = []
 
     init(environment: AppEnvironment, deviceStore: DeviceStore) {
         self.environment = environment
@@ -295,7 +297,17 @@ final class AppStateDeviceController {
                 lastUSBFastDpiAtByDeviceID[id] = nil
                 refreshingStateDeviceIDs.remove(id)
                 refreshingFastDpiDeviceIDs.remove(id)
+                pendingLightingRestoreDeviceIDs.remove(id)
+                restoringLightingDeviceIDs.remove(id)
             }
+        }
+
+        let newlyVisibleIDs = newIDs.subtracting(previousIDs)
+        if !newlyVisibleIDs.isEmpty {
+            pendingLightingRestoreDeviceIDs.formUnion(newlyVisibleIDs)
+        }
+        if source == "subscription", previousIDs == newIDs, !newIDs.isEmpty {
+            pendingLightingRestoreDeviceIDs.formUnion(newIDs)
         }
 
         deviceStore.devices = sorted
@@ -404,6 +416,9 @@ final class AppStateDeviceController {
         }
 
         deviceStore.isRefreshingState = refreshingStateDeviceIDs.contains(deviceID)
+        if applyController.shouldHydrateEditable {
+            editorController.hydratePersistedLightingStateIfNeeded(device: device)
+        }
         if unavailableDeviceIDs.contains(deviceID) {
             deviceStore.state = nil
             deviceStore.lastUpdated = nil
@@ -808,6 +823,7 @@ final class AppStateDeviceController {
                 deviceStore.errorMessage = nil
                 setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
             }
+            await restorePersistedLightingIfNeeded(for: presentationDevice)
 
             AppLog.debug(
                 "AppState",
@@ -988,5 +1004,29 @@ final class AppStateDeviceController {
         guard previous != status else { return }
         dpiUpdateTransportStatusByDeviceID[deviceID] = status
         deviceStore.invalidateConnectionDiagnostics()
+    }
+
+    private func restorePersistedLightingIfNeeded(for device: MouseDevice) async {
+        guard pendingLightingRestoreDeviceIDs.contains(device.id) else { return }
+        guard !restoringLightingDeviceIDs.contains(device.id) else { return }
+        guard !(deviceStore.selectedDeviceID == device.id && !applyController.shouldHydrateEditable) else { return }
+        guard !applyController.hasPendingLocalEditsAffecting(device) else { return }
+
+        guard let restorePlan = editorController.persistedLightingRestorePlan(device: device) else {
+            pendingLightingRestoreDeviceIDs.remove(device.id)
+            return
+        }
+
+        restoringLightingDeviceIDs.insert(device.id)
+        defer { restoringLightingDeviceIDs.remove(device.id) }
+
+        let restored = await applyController.applyPersistedLightingRestore(
+            restorePlan.patch,
+            to: device,
+            usbLightingZoneID: restorePlan.usbLightingZoneID
+        )
+        if restored {
+            pendingLightingRestoreDeviceIDs.remove(device.id)
+        }
     }
 }

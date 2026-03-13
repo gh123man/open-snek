@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import OpenSnekAppSupport
 import OpenSnekCore
 @testable import OpenSnek
 
@@ -487,6 +488,131 @@ final class AppStateMultiDeviceTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(readCount, initialReadCount + 1)
         XCTAssertEqual(activeStage, 2)
+    }
+
+    func testBackendDeviceListUpdateRearmsLightingRestoreForStableReconnect() async throws {
+        let usbDevice = makeTestDevice(
+            id: "usb-lighting-reconnect",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "USB-LIGHTING-RECONNECT",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let persistedColor = RGBColor(r: 11, g: 22, b: 33)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: usbDevice)
+        preferenceStore.persistLightingZoneID("logo", device: usbDevice)
+        defer { clearMultiDeviceLightingPreferences(for: usbDevice) }
+
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [usbDevice],
+            stateByDeviceID: [
+                usbDevice.id: makeTestState(
+                    device: usbDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 0,
+                    dpiValue: 800
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        try await waitForAppStateCondition {
+            await backend.applyCount() == 1
+        }
+
+        await backend.emitDeviceListUpdate([usbDevice])
+
+        try await waitForAppStateCondition {
+            await backend.applyCount() == 2
+        }
+
+        let patches = await backend.recordedPatches()
+        XCTAssertEqual(patches.count, 2)
+        XCTAssertEqual(patches[0].ledRGB?.r, persistedColor.r)
+        XCTAssertEqual(patches[1].ledRGB?.r, persistedColor.r)
+    }
+
+    func testNonSelectedReconnectLightingRestoreDoesNotChangeSelection() async throws {
+        let alphaDevice = makeTestDevice(
+            id: "alpha-selected",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA-SELECTED",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-restore",
+            productName: "Beta Mouse",
+            transport: .usb,
+            serial: "BETA-RESTORE",
+            locationID: 2,
+            profile: .basiliskV3Pro
+        )
+        let persistedColor = RGBColor(r: 21, g: 31, b: 41)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: betaDevice)
+        preferenceStore.persistLightingZoneID("logo", device: betaDevice)
+        defer {
+            clearMultiDeviceLightingPreferences(for: alphaDevice)
+            clearMultiDeviceLightingPreferences(for: betaDevice)
+        }
+
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [betaDevice, alphaDevice],
+            stateByDeviceID: [
+                alphaDevice.id: makeTestState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 0,
+                    dpiValue: 800
+                ),
+                betaDevice.id: makeTestState(
+                    device: betaDevice,
+                    connection: "usb",
+                    batteryPercent: 79,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        try await waitForAppStateCondition {
+            await backend.applyCount() == 1
+        }
+
+        let initialSelectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        let initialApplyDevices = await backend.recordedApplyDeviceIDs()
+        XCTAssertEqual(initialSelectedDeviceID, alphaDevice.id)
+        XCTAssertEqual(initialApplyDevices, [betaDevice.id])
+
+        await backend.emitDeviceListUpdate([betaDevice, alphaDevice])
+
+        try await waitForAppStateCondition {
+            await backend.applyCount() == 2
+        }
+
+        let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        let applyDeviceIDs = await backend.recordedApplyDeviceIDs()
+
+        XCTAssertEqual(selectedDeviceID, alphaDevice.id)
+        XCTAssertEqual(applyDeviceIDs, [betaDevice.id, betaDevice.id])
     }
 
     func testBackendDeviceListUpdateRecoversSelectionToMatchingBluetoothTransportWhenUSBHasNoTelemetry() async throws {
@@ -1116,6 +1242,8 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
     private var dpiUpdateTransportStatusOverride: DpiUpdateTransportStatus?
     private var hidAccessAuthorization: HIDAccessAuthorization
     private var readCountByDeviceID: [String: Int] = [:]
+    private var applyPatches: [DevicePatch] = []
+    private var applyDeviceIDs: [String] = []
     private let stateUpdateStreamPair = AsyncStream.makeStream(of: BackendStateUpdate.self)
 
     init(
@@ -1176,10 +1304,17 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
         stateUpdateStreamPair.stream
     }
 
-    func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState {
-        throw NSError(domain: "AppStateMultiDeviceTests", code: 10, userInfo: [
-            NSLocalizedDescriptionKey: "apply not implemented"
-        ])
+    func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
+        applyDeviceIDs.append(device.id)
+        applyPatches.append(patch)
+        guard let current = stateByDeviceID[device.id] else {
+            throw NSError(domain: "AppStateMultiDeviceTests", code: 10, userInfo: [
+                NSLocalizedDescriptionKey: "Missing apply state for \(device.id)"
+            ])
+        }
+        let next = stateApplying(patch, to: current)
+        stateByDeviceID[device.id] = next
+        return next
     }
 
     func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? {
@@ -1209,6 +1344,51 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
 
     func readCount(for deviceID: String) -> Int {
         readCountByDeviceID[deviceID] ?? 0
+    }
+
+    func applyCount() -> Int {
+        applyPatches.count
+    }
+
+    func recordedPatches() -> [DevicePatch] {
+        applyPatches
+    }
+
+    func recordedApplyDeviceIDs() -> [String] {
+        applyDeviceIDs
+    }
+
+    private func stateApplying(_ patch: DevicePatch, to current: MouseState) -> MouseState {
+        let nextStages: [Int]? = patch.dpiStages ?? current.dpi_stages.values
+        let nextActive = patch.activeStage ?? current.dpi_stages.active_stage
+        let resolvedStages = DpiStages(active_stage: nextActive, values: nextStages)
+        let nextDpi: DpiPair? = {
+            guard let values = nextStages, !values.isEmpty else {
+                return current.dpi
+            }
+            let activeIndex = max(0, min(values.count - 1, nextActive ?? 0))
+            return DpiPair(x: values[activeIndex], y: values[activeIndex])
+        }()
+
+        return MouseState(
+            device: current.device,
+            connection: current.connection,
+            battery_percent: current.battery_percent,
+            charging: current.charging,
+            dpi: nextDpi,
+            dpi_stages: resolvedStages,
+            poll_rate: patch.pollRate ?? current.poll_rate,
+            sleep_timeout: patch.sleepTimeout ?? current.sleep_timeout,
+            device_mode: patch.deviceMode ?? current.device_mode,
+            low_battery_threshold_raw: patch.lowBatteryThresholdRaw ?? current.low_battery_threshold_raw,
+            scroll_mode: patch.scrollMode ?? current.scroll_mode,
+            scroll_acceleration: patch.scrollAcceleration ?? current.scroll_acceleration,
+            scroll_smart_reel: patch.scrollSmartReel ?? current.scroll_smart_reel,
+            active_onboard_profile: current.active_onboard_profile,
+            onboard_profile_count: current.onboard_profile_count,
+            led_value: patch.ledBrightness ?? current.led_value,
+            capabilities: current.capabilities
+        )
     }
 }
 
@@ -1268,6 +1448,23 @@ private func makeTestState(
             lighting: true
         )
     )
+}
+
+private func clearMultiDeviceLightingPreferences(for device: MouseDevice) {
+    let defaults = UserDefaults.standard
+    let key = DevicePersistenceKeys.key(for: device)
+    let legacyKey = DevicePersistenceKeys.legacyKey(for: device)
+    let keys = [
+        "lightingColor.\(key)",
+        "lightingColor.\(legacyKey)",
+        "lightingZone.\(key)",
+        "lightingZone.\(legacyKey)",
+        "lightingEffect.\(key)",
+        "lightingEffect.\(legacyKey)",
+    ]
+    for key in keys {
+        defaults.removeObject(forKey: key)
+    }
 }
 
 private func waitForAppStateCondition(

@@ -47,6 +47,13 @@ final class AppStateEditorController {
         return applyControllerStorage
     }
 
+    struct PersistedLightingRestorePlan {
+        let patch: DevicePatch
+        let primaryColor: RGBColor?
+        let lightingEffect: LightingEffectPatch?
+        let usbLightingZoneID: String
+    }
+
     func removeHydratedState(for removedDeviceIDs: Set<String>) {
         guard !removedDeviceIDs.isEmpty else { return }
         hydratedLightingStateByDeviceID.subtract(removedDeviceIDs)
@@ -128,60 +135,44 @@ final class AppStateEditorController {
     }
 
     func hydrateLightingStateIfNeeded(device: MouseDevice) async {
-        guard !hydratedLightingStateByDeviceID.contains(device.id) else { return }
-        var loadedPersistedColor = false
-        editorStore.editableUSBLightingZoneID = "all"
+        if hydratePersistedLightingStateIfNeeded(device: device) {
+            return
+        }
 
+        guard !hydratedLightingStateByDeviceID.contains(device.id) else { return }
         if device.transport == .bluetooth,
-           let persisted = loadPersistedLightingColor(device: device) {
-            editorStore.editableColor = persisted
-            loadedPersistedColor = true
-            AppLog.debug(
-                "AppState",
-                "hydrated Bluetooth lighting color from persisted cache id=\(device.id) rgb=(\(persisted.r),\(persisted.g),\(persisted.b))"
-            )
-        } else if device.transport == .bluetooth,
                   let rgb = try? await environment.backend.readLightingColor(device: device) {
             editorStore.editableColor = RGBColor(r: rgb.r, g: rgb.g, b: rgb.b)
             persistLightingColor(editorStore.editableColor, device: device)
+            editorStore.editableUSBLightingZoneID = "all"
+            if !device.supports_advanced_lighting_effects {
+                editorStore.editableLightingEffect = .staticColor
+            }
             AppLog.debug("AppState", "hydrated Bluetooth lighting color from device id=\(device.id) rgb=(\(rgb.r),\(rgb.g),\(rgb.b))")
-        } else if let persisted = loadPersistedLightingColor(device: device) {
-            editorStore.editableColor = persisted
-            loadedPersistedColor = true
-            AppLog.debug(
-                "AppState",
-                "hydrated lighting color from persisted cache id=\(device.id) rgb=(\(persisted.r),\(persisted.g),\(persisted.b))"
-            )
         } else {
+            editorStore.editableUSBLightingZoneID = "all"
+            if !device.supports_advanced_lighting_effects {
+                editorStore.editableLightingEffect = .staticColor
+            }
             AppLog.debug("AppState", "lighting color read unavailable for device id=\(device.id)")
         }
 
-        if device.supports_advanced_lighting_effects, let persistedEffect = loadPersistedLightingEffect(device: device) {
-            let supportedEffects = DeviceProfiles
-                .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
-                .supportedLightingEffects ?? LightingEffectKind.allCases
-            editorStore.editableLightingEffect = supportedEffects.contains(persistedEffect.kind)
-                ? persistedEffect.kind
-                : (supportedEffects.first ?? .staticColor)
-            editorStore.editableLightingWaveDirection = persistedEffect.waveDirection
-            editorStore.editableLightingReactiveSpeed = persistedEffect.reactiveSpeed
-            editorStore.editableSecondaryColor = persistedEffect.secondaryColor
-            AppLog.debug(
-                "AppState",
-                "hydrated lighting effect from persisted cache id=\(device.id) kind=\(persistedEffect.kind.rawValue)"
-            )
-        } else if !device.supports_advanced_lighting_effects {
-            editorStore.editableLightingEffect = .staticColor
-        }
-
-        if loadedPersistedColor, device.transport == .bluetooth {
-            applyController.enqueueApply(
-                DevicePatch(ledRGB: RGBPatch(r: editorStore.editableColor.r, g: editorStore.editableColor.g, b: editorStore.editableColor.b))
-            )
-            AppLog.debug("AppState", "queued persisted lighting color reapply id=\(device.id)")
-        }
-
         hydratedLightingStateByDeviceID.insert(device.id)
+    }
+
+    @discardableResult
+    func hydratePersistedLightingStateIfNeeded(device: MouseDevice) -> Bool {
+        guard !hydratedLightingStateByDeviceID.contains(device.id) else { return false }
+        guard let plan = persistedLightingRestorePlan(device: device) else { return false }
+
+        applyPersistedLightingRestorePlanToEditor(plan)
+        AppLog.debug(
+            "AppState",
+            "hydrated lighting restore plan from persisted cache id=\(device.id) " +
+                "kind=\(plan.lightingEffect?.kind.rawValue ?? "static") zone=\(plan.usbLightingZoneID)"
+        )
+        hydratedLightingStateByDeviceID.insert(device.id)
+        return true
     }
 
     func markLightingHydrated(deviceID: String) {
@@ -194,6 +185,14 @@ final class AppStateEditorController {
 
     func loadPersistedLightingColor(device: MouseDevice) -> RGBColor? {
         preferenceStore.loadPersistedLightingColor(device: device)
+    }
+
+    func persistLightingZoneID(_ zoneID: String, device: MouseDevice) {
+        preferenceStore.persistLightingZoneID(zoneID, device: device)
+    }
+
+    func loadPersistedLightingZoneID(device: MouseDevice) -> String? {
+        preferenceStore.loadPersistedLightingZoneID(device: device)
     }
 
     func persistLightingEffect(_ effect: LightingEffectPatch, device: MouseDevice) {
@@ -309,10 +308,117 @@ final class AppStateEditorController {
         )
     }
 
+    func persistedLightingRestorePlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
+        let persistedColor = loadPersistedLightingColor(device: device)
+        let normalizedZoneID = normalizedLightingZoneID(
+            for: device,
+            preferredZoneID: loadPersistedLightingZoneID(device: device)
+        )
+
+        if device.supports_advanced_lighting_effects,
+           let persistedEffect = loadPersistedLightingEffect(device: device) {
+            let supportedEffects = DeviceProfiles
+                .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
+                .supportedLightingEffects ?? LightingEffectKind.allCases
+            let resolvedKind = supportedEffects.contains(persistedEffect.kind)
+                ? persistedEffect.kind
+                : (supportedEffects.first ?? .staticColor)
+
+            let primaryPatch: RGBPatch
+            if resolvedKind.usesPrimaryColor {
+                guard let persistedColor else {
+                    AppLog.debug(
+                        "AppState",
+                        "skipping persisted lighting restore missing-primary-color id=\(device.id) kind=\(resolvedKind.rawValue)"
+                    )
+                    return nil
+                }
+                primaryPatch = RGBPatch(r: persistedColor.r, g: persistedColor.g, b: persistedColor.b)
+            } else if let persistedColor {
+                primaryPatch = RGBPatch(r: persistedColor.r, g: persistedColor.g, b: persistedColor.b)
+            } else {
+                primaryPatch = RGBPatch(r: 0, g: 0, b: 0)
+            }
+
+            let effect = LightingEffectPatch(
+                kind: resolvedKind,
+                primary: primaryPatch,
+                secondary: RGBPatch(
+                    r: persistedEffect.secondaryColor.r,
+                    g: persistedEffect.secondaryColor.g,
+                    b: persistedEffect.secondaryColor.b
+                ),
+                waveDirection: persistedEffect.waveDirection,
+                reactiveSpeed: persistedEffect.reactiveSpeed
+            )
+            return PersistedLightingRestorePlan(
+                patch: DevicePatch(
+                    lightingEffect: effect,
+                    usbLightingZoneLEDIDs: resolvedKind == .staticColor
+                        ? usbLightingZoneLEDIDs(for: device, zoneID: normalizedZoneID)
+                        : nil
+                ),
+                primaryColor: persistedColor,
+                lightingEffect: effect,
+                usbLightingZoneID: resolvedKind == .staticColor ? normalizedZoneID : "all"
+            )
+        }
+
+        guard let persistedColor else { return nil }
+        return PersistedLightingRestorePlan(
+            patch: DevicePatch(
+                ledRGB: RGBPatch(r: persistedColor.r, g: persistedColor.g, b: persistedColor.b),
+                usbLightingZoneLEDIDs: usbLightingZoneLEDIDs(for: device, zoneID: normalizedZoneID)
+            ),
+            primaryColor: persistedColor,
+            lightingEffect: nil,
+            usbLightingZoneID: normalizedZoneID
+        )
+    }
+
+    func applyPersistedLightingRestorePlanToEditor(_ plan: PersistedLightingRestorePlan) {
+        if let primaryColor = plan.primaryColor {
+            editorStore.editableColor = primaryColor
+        }
+        editorStore.editableUSBLightingZoneID = plan.usbLightingZoneID
+        if let lightingEffect = plan.lightingEffect {
+            editorStore.editableLightingEffect = lightingEffect.kind
+            editorStore.editableLightingWaveDirection = lightingEffect.waveDirection
+            editorStore.editableLightingReactiveSpeed = lightingEffect.reactiveSpeed
+            editorStore.editableSecondaryColor = RGBColor(
+                r: lightingEffect.secondary.r,
+                g: lightingEffect.secondary.g,
+                b: lightingEffect.secondary.b
+            )
+        } else {
+            editorStore.editableLightingEffect = .staticColor
+        }
+    }
+
     func currentUSBLightingZoneLEDIDs() -> [UInt8]? {
         guard editorStore.editableLightingEffect == .staticColor else { return nil }
         guard editorStore.editableUSBLightingZoneID != "all" else { return nil }
         return editorStore.visibleUSBLightingZones.first(where: { $0.id == editorStore.editableUSBLightingZoneID })?.ledIDs
+    }
+
+    private func normalizedLightingZoneID(for device: MouseDevice, preferredZoneID: String?) -> String {
+        guard let preferredZoneID, preferredZoneID != "all" else { return "all" }
+        let validZoneIDs = Set(
+            DeviceProfiles
+                .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
+                .usbLightingZones
+                .map(\.id) ?? []
+        )
+        return validZoneIDs.contains(preferredZoneID) ? preferredZoneID : "all"
+    }
+
+    private func usbLightingZoneLEDIDs(for device: MouseDevice, zoneID: String) -> [UInt8]? {
+        guard zoneID != "all" else { return nil }
+        return DeviceProfiles
+            .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
+            .usbLightingZones
+            .first(where: { $0.id == zoneID })?
+            .ledIDs
     }
 
     func syncUSBButtonProfileSelection(from state: MouseState) {
