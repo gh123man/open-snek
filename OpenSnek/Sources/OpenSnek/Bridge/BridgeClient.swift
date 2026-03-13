@@ -517,12 +517,7 @@ actor BridgeClient {
     }
 
     private nonisolated static func normalizedPeripheralName(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let tokens = trimmed.lowercased().split { !$0.isLetter && !$0.isNumber }
-        let normalized = tokens.joined(separator: " ")
-        return normalized.isEmpty ? nil : normalized
+        BluetoothNameMatcher.normalized(value)
     }
 
     nonisolated static func isUSBTelemetryUnavailableError(_ error: any Error) -> Bool {
@@ -713,7 +708,13 @@ actor BridgeClient {
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: .lightingFrameGet)
         let notifies = try await btExchange([header], timeout: 0.6, device: device)
         guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
-            AppLog.debug("Bridge", "readLightingColor no-payload device=\(device.id) notifies=\(notifies.count)")
+            let notifySummary = notifies
+                .map { $0.map { String(format: "%02x", $0) }.joined() }
+                .joined(separator: " | ")
+            AppLog.debug(
+                "Bridge",
+                "readLightingColor no-payload device=\(device.id) req=\(req) notifies=\(notifySummary)"
+            )
             return nil
         }
         let parsed = parseLightingRGB(payload: payload)

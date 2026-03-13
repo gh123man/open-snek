@@ -20,6 +20,38 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(Array(parsed ?? Data()), [0xAA, 0xBB, 0xCC])
     }
 
+    func testParsePayloadFramesSupportsEightByteHeaderAndShortFinalFrame() {
+        let header = Data([0x30, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        let firstPayload = Data([
+            0x03, 0x05, 0x01, 0x20, 0x03, 0x20, 0x03, 0x00, 0x00, 0x02,
+            0x84, 0x03, 0x84, 0x03, 0x00, 0x00, 0x03, 0xD0, 0x07, 0xD0,
+        ])
+        let finalPayload = Data([
+            0x07, 0x00, 0x00, 0x04, 0x4C, 0x04, 0x4C, 0x04,
+            0x00, 0x00, 0x05, 0xB0, 0x04, 0xB0, 0x04, 0x00,
+        ])
+
+        let parsed = BLEVendorProtocol.parsePayloadFrames(
+            notifies: [header, firstPayload, finalPayload],
+            req: 0x30
+        )
+
+        XCTAssertEqual(parsed?.count, 0x24)
+        XCTAssertEqual(
+            parsed,
+            firstPayload + finalPayload
+        )
+    }
+
+    func testParsePayloadFramesSupportsEightByteHeaderScalarPayload() {
+        let header = Data([0x32, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        let payload = Data([0xFF])
+
+        let parsed = BLEVendorProtocol.parsePayloadFrames(notifies: [header, payload], req: 0x32)
+
+        XCTAssertEqual(parsed, payload)
+    }
+
     func testParsePayloadFramesErrorStatusReturnsNil() {
         let header = Data([0x40, 0x03, 0, 0, 0, 0, 0, 0x03] + Array(repeating: 0, count: 12))
         let payloadFrame = Data([0xAA, 0xBB, 0xCC] + Array(repeating: 0, count: 17))

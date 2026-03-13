@@ -23,7 +23,7 @@ Device onboarding and capture interpretation live in:
 
 - `Sources/OpenSnekCore/`
   - shared device/state models
-  - hybrid device-profile registry (`Basilisk V3 X` USB + BLE, `Basilisk V3 Pro` USB, `Basilisk V3 35K` USB)
+  - hybrid device-profile registry (`Basilisk V3 X` USB + BLE, `Basilisk V3 Pro` USB + BLE, `Basilisk V3 35K` USB)
   - button binding/turbo helpers and persistence key builders
 - `Sources/OpenSnekProtocols/`
   - `BLEVendorProtocol`: BLE framing, key map, and DPI payload parsing/building

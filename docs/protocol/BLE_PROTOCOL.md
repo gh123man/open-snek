@@ -16,6 +16,7 @@ Source-of-truth rule:
 
 Supported device baseline:
 - Basilisk V3 X HyperSpeed Bluetooth (`VID=0x068E`, `PID=0x00BA`)
+- Basilisk V3 Pro Bluetooth (`VID=0x068E`, `PID=0x00AC`)
 
 Document goal:
 - A new reader should be able to build a client that implements the current OpenSnek Bluetooth feature set from scratch:
@@ -86,7 +87,7 @@ OpenSnek considers an exchange complete after:
 - no more notify frames arrive for a short idle window
 
 That idle window is a client policy, not an on-wire field. Your client can instead finish as soon as it has:
-- the first 20-byte notify header with matching `req`, and
+- the first matching notify header with `req`, and
 - enough payload bytes to satisfy `payload_length`
 
 ## 4. Frame Formats
@@ -120,7 +121,12 @@ Write header:
 
 ### 4.2 Notify Header
 
-The first notify frame for a response is always 20 bytes:
+Observed notify-header variants:
+
+- 20-byte header on the Basilisk V3 X HyperSpeed Bluetooth path
+- 8-byte header on the Basilisk V3 Pro Bluetooth path
+
+Shared parsed fields:
 
 ```text
 byte 0   req_id echo
@@ -131,9 +137,9 @@ byte 4   reserved
 byte 5   reserved
 byte 6   reserved
 byte 7   status
-byte 8   reserved/session
+byte 8   reserved/session (20-byte variant only)
 ...
-byte 19  reserved/session
+byte 19  reserved/session (20-byte variant only)
 ```
 
 Current status values:
@@ -148,17 +154,22 @@ Current status values:
 
 After a successful notify header:
 
-- payload bytes usually arrive in one or more additional 20-byte notify frames
+- payload bytes usually arrive in one or more additional notify frames
 - concatenate those continuation frames in arrival order
 - truncate the concatenated stream to `payload_length`
 
 OpenSnek parser details:
-- it searches for the first 20-byte notify whose `req` matches and whose status is in `{0x02, 0x03, 0x05}`
+- it searches for the first notify header (currently `>= 8` bytes) whose `req` matches and whose status is in `{0x02, 0x03, 0x05}`
 - if status is not `0x02`, the operation is treated as failed
 - if there are continuation frames, payload comes from those frames
 - if there are no continuation frames but `payload_length > 0`, the parser falls back to bytes `8...` of the notify header itself
 
 That last fallback exists in Swift for robustness. The implemented keys in this repo are still capture-backed as header-plus-continuation transactions.
+
+V3 Pro Bluetooth framing note:
+- observed read responses use the same request header and key catalog as the V3 X Bluetooth path
+- notify headers shrink to 8 bytes (`req len 00 00 00 00 00 status`)
+- continuation frames may end with a short final fragment instead of always being 20 bytes
 
 ## 5. Key Catalog
 

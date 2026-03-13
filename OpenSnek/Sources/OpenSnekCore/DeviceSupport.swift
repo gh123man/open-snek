@@ -236,6 +236,32 @@ public enum DeviceProfiles {
         ),
     ]
 
+    public static let basiliskV3ProBluetoothButtonSlots: [ButtonSlotDescriptor] = [
+        ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
+        ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
+        ButtonSlotDescriptor(slot: 3, friendlyName: "Middle Click", defaultKind: .middleClick),
+        ButtonSlotDescriptor(slot: 4, friendlyName: "Back Button", defaultKind: .mouseBack),
+        ButtonSlotDescriptor(slot: 5, friendlyName: "Forward Button", defaultKind: .mouseForward),
+        ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
+        ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
+        ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
+    ]
+
+    public static let basiliskV3ProBluetoothDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "The V3 Pro Bluetooth path needs a capture-backed clutch action block before Open Snek can remap or restore this button safely."
+        ),
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "The V3 Pro Bluetooth path still needs capture-backed profile-button defaults before Open Snek can expose this control."
+        ),
+    ]
+
     public static let basiliskV335KUSBButtonSlots: [ButtonSlotDescriptor] = [
         ButtonSlotDescriptor(slot: 1, friendlyName: "Left Click", defaultKind: .leftClick),
         ButtonSlotDescriptor(slot: 2, friendlyName: "Right Click", defaultKind: .rightClick),
@@ -375,11 +401,28 @@ public enum DeviceProfiles {
         onboardProfileCount: 1
     )
 
+    public static let basiliskV3ProBluetooth = DeviceProfile(
+        id: .basiliskV3Pro,
+        productName: "Basilisk V3 Pro",
+        transport: .bluetooth,
+        supportedProducts: [0x00AC],
+        buttonLayout: ButtonSlotLayout(
+            visibleSlots: basiliskV3ProBluetoothButtonSlots,
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 52, 53],
+            documentedSlots: basiliskV3ProBluetoothDocumentedReadOnlySlots
+        ),
+        supportsAdvancedLightingEffects: false,
+        supportedLightingEffects: [.staticColor],
+        usbLightingZones: basiliskV335KUSBLightingZones,
+        onboardProfileCount: 3
+    )
+
     public static let all: [DeviceProfile] = [
         basiliskV3XUSB,
         basiliskV3ProUSB,
         basiliskV335KUSB,
         basiliskV3XBluetooth,
+        basiliskV3ProBluetooth,
     ]
 
     public static func resolve(vendorID: Int, productID: Int, transport: DeviceTransportKind) -> DeviceProfile? {
@@ -398,20 +441,6 @@ public enum DeviceProfiles {
     }
 
     private static func normalizedBluetoothFallbackName(_ name: String?) -> String? {
-        guard let name else { return nil }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let lowered = trimmed.lowercased()
-        let withoutRazerPrefix: String
-        if lowered.hasPrefix("razer ") {
-            withoutRazerPrefix = String(trimmed.dropFirst(6))
-        } else {
-            withoutRazerPrefix = trimmed
-        }
-
-        let pieces = withoutRazerPrefix.lowercased().split { !$0.isLetter && !$0.isNumber }
-        let normalized = pieces.joined(separator: " ")
-        return normalized.isEmpty ? nil : normalized
+        BluetoothNameMatcher.normalized(name)
     }
 }

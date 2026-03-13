@@ -1,5 +1,6 @@
 import Foundation
 import CoreBluetooth
+import OpenSnekCore
 import OpenSnekProtocols
 
 public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
@@ -179,20 +180,11 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
 
     private func peripheralMatchesPreference(_ peripheral: CBPeripheral) -> Bool {
         guard let preferredPeripheralName, !preferredPeripheralName.isEmpty else { return true }
-        guard let actualName = normalizedName(peripheral.name) else { return false }
-        guard let preferredName = normalizedName(preferredPeripheralName) else { return true }
-        return actualName == preferredName ||
-            actualName.contains(preferredName) ||
-            preferredName.contains(actualName)
+        return BluetoothNameMatcher.looselyMatches(peripheral.name, preferredPeripheralName)
     }
 
     private func normalizedName(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let tokens = trimmed.lowercased().split { !$0.isLetter && !$0.isNumber }
-        let normalized = tokens.joined(separator: " ")
-        return normalized.isEmpty ? nil : normalized
+        BluetoothNameMatcher.normalized(value)
     }
 
     private func finish(_ output: Result<[Data], Error>) {

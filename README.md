@@ -12,6 +12,12 @@
 
 Open Snek is an open source native macOS app for configuring supported Razer mice over USB or Bluetooth.
 
+## Highlights
+
+- Lightweight native macOS app bundle with no unnecessary runtime bloat
+- Very low idle and background overhead, so it stays out of the way when you are not using it
+- Optional menu bar control for quick, on-the-fly DPI adjustments
+
 ## Motivation
 
 Razer does not support the Basilisk V3 X HyperSpeed on macOS at all, so this project started by reverse engineering the BLE protocol from Windows traffic between the mouse and Synapse.
@@ -50,11 +56,13 @@ Current validated support:
 
 Status key: `Yes` = supported and validated, `Not yet` = the transport exists on the hardware but Open Snek does not support it yet, `No` = that transport is not available on the device.
 
-| Device | USB | Bluetooth | Notes |
-|---|---|---|---|
-| Basilisk V3 X HyperSpeed | Yes | Yes | Full core support, with transport-specific limits on some button remaps and lighting features |
-| Basilisk V3 Pro | Yes | Not yet | USB support includes DPI, polling rate, 3 lighting zones, extended button hydration, and validated wheel-tilt / clutch controls. The hardware supports Bluetooth, but Open Snek does not implement it yet. The mouse exposes 5 onboard profiles, and profile support is not implemented yet. |
-| Basilisk V3 35K | Yes | No | USB-only model. USB support includes DPI, polling rate, lighting zones, and validated button remap coverage |
+| Device | USB | Bluetooth |
+|---|---|---|
+| Basilisk V3 X HyperSpeed | Yes | Yes |
+| Basilisk V3 Pro | Yes | Yes |
+| Basilisk V3 35K | Yes | No |
+
+Not every feature is fully supported on every listed transport yet. Some controls and readback paths are still partial while capture, testing, and validation continue.
 
 Unsupported Razer mice still get a best-effort experience when possible. Open Snek will probe for controls that already match known behavior, show a light warning that the device is not fully supported, and avoid exposing UI for features that have not been mapped safely yet.
 

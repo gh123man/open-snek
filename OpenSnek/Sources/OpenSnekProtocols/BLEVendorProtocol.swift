@@ -44,7 +44,7 @@ public enum BLEVendorProtocol {
         public let status: UInt8
 
         public init?(data: Data) {
-            guard data.count == 20 else { return nil }
+            guard data.count >= 8 else { return nil }
             req = data[0]
             payloadLength = Int(data[1])
             status = data[7]
@@ -69,7 +69,7 @@ public enum BLEVendorProtocol {
 
         let continuation: [Data]
         if headerIndex + 1 < notifies.count {
-            continuation = Array(notifies[(headerIndex + 1)...]).filter { $0.count == 20 }
+            continuation = Array(notifies[(headerIndex + 1)...]).filter { !$0.isEmpty }
         } else {
             continuation = []
         }

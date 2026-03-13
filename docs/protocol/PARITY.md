@@ -7,6 +7,7 @@ This document is the single source of truth for feature parity between the USB H
 Target device baseline:
 - Basilisk V3 X HyperSpeed (`USB PID 0x00B9`, `BT PID 0x00BA`)
 - Basilisk V3 Pro (`USB PID 0x00AB`)
+- Basilisk V3 Pro Bluetooth (`BT PID 0x00AC`)
 - Basilisk V3 35K (`USB PID 0x00CB`)
 
 Transport paths:
@@ -116,6 +117,21 @@ Validated in-session over Bluetooth:
 - `basic-rebind.pcapng` includes a keyboard turbo-form payload (`action=0x0D`, key + rate fields).
 
 `razer_ble.py` now uses vendor battery raw as BT fallback in `get_battery()` when vendor GATT is enabled.
+
+## Validated BT Profile (Basilisk V3 Pro BT PID `0x00AC`, macOS stack)
+
+Validated in-session over Bluetooth:
+- vendor GATT path uses the same request headers and key catalog as the Basilisk V3 X HyperSpeed path, but the notify header is the shorter 8-byte variant and payload continuations may end with a short final fragment
+- working read/write/readback: DPI stages + active stage (`0B84`/`0B04`), sleep timeout (`05 84 00 00` / `05 04 00 00`), lighting brightness (`10 85 01 01` / `10 05 01 00`)
+- working read: battery raw (`05 81 00 01`), battery status (`05 80 00 01`)
+- working write ACKs on tested BLE button-remap slots: `0x01..0x05`, `0x09`, `0x0A`, `0x34`, `0x35`
+- observed V3 Pro Bluetooth button-layout shape now matches the shared Basilisk family on the tested slots, so Open Snek ships the core buttons plus wheel-tilt controls on the BT profile
+- not yet decoded enough to ship: sensitivity clutch (`0x0F`) restore/remap payloads, profile button (`0x6A`) restore/remap payloads
+- not yet decoded enough to trust: lighting frame-color readback on `10 84 00 00`; current runtime probes return no payload even though brightness works
+
+Validation notes:
+- the required hardware XCTest gate (`OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests`) currently aborts under macOS TCC before CoreBluetooth can start in the unbundled test runner on this host
+- the same five-step DPI stability sequence was rerun successfully through the bundled Open Snek app/service host, and every step converged for three consecutive reads before restore
 
 ## Validation Checklist
 

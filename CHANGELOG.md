@@ -4,7 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [2026-03-12]
 
+### Added
+- Bluetooth device-profile support for Razer Basilisk V3 Pro (`0x00AC`) in the shared Swift registry and macOS app, including direct PID matching, `BSK V3 PRO` fallback-name resolution, and the validated Bluetooth button layout for the shared primary controls plus wheel-tilt buttons.
+
 ### Fixed
+- The Swift BLE vendor parser now accepts the Basilisk V3 Pro Bluetooth notify framing variant (8-byte notify header plus short final payload fragments), which unlocks live DPI, battery, brightness, sleep-timeout, and button-remap traffic on the V3 Pro Bluetooth path instead of treating those replies as empty.
 - On the validated Basilisk V3 X HyperSpeed Bluetooth path (`0x00BA`), Open Snek now listens for passive HID DPI input reports and applies those cached-state updates immediately, then disables Bluetooth fast DPI polling for that device after the first live passive event is observed.
 - On the validated Basilisk V3 Pro USB path (`0x00AB`), Open Snek now listens for the mouse's passive DPI input report and applies those updates to cached state immediately, removing the old 200 ms fast-poll lag for on-device DPI changes while keeping the slower full USB state poll for other controls.
 - Passive HID DPI updates no longer get overwritten by slower stale state refreshes, and repeatedly failing non-selected devices now back off instead of re-running full state polls every cycle.

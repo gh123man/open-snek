@@ -4,6 +4,20 @@ import OpenSnekHardware
 import OpenSnekProtocols
 
 extension BridgeClient {
+    private func btHex(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func btKeyLabel(_ key: BLEVendorProtocol.Key) -> String {
+        btHex(Data(key.bytes))
+    }
+
+    private func btNotifySummary(_ notifies: [Data]) -> String {
+        notifies
+            .map(btHex)
+            .joined(separator: " | ")
+    }
+
     func readBluetoothState(device: MouseDevice, session: USBHIDControlSession?) async throws -> MouseState {
         let btStages = (try? await btGetDpiStages(device: device))
             ?? btDpiSnapshotByDeviceID[device.id].map { snapshot in
@@ -175,7 +189,19 @@ extension BridgeClient {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: key)
         let notifies = try await btExchange([header], timeout: 0.5, device: device)
-        guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req), payload.count >= size else {
+        guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
+            AppLog.debug(
+                "Bridge",
+                "btGetScalar no-payload device=\(device.id) key=\(btKeyLabel(key)) req=\(req) notifies=\(btNotifySummary(notifies))"
+            )
+            return nil
+        }
+        guard payload.count >= size else {
+            AppLog.debug(
+                "Bridge",
+                "btGetScalar short-payload device=\(device.id) key=\(btKeyLabel(key)) req=\(req) " +
+                "expected=\(size) actual=\(payload.count) payload=\(btHex(payload)) notifies=\(btNotifySummary(notifies))"
+            )
             return nil
         }
         return payload.prefix(size).enumerated().reduce(0) { partial, pair in
@@ -206,8 +232,20 @@ extension BridgeClient {
             let req = nextBTReq()
             let header = BLEVendorProtocol.buildReadHeader(req: req, key: .dpiStagesGet)
             let notifies = try await btExchange([header], timeout: 0.6, device: device)
-            guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req),
-                  let parsed = BLEVendorProtocol.parseDpiStages(blob: payload) else {
+            guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
+                AppLog.debug(
+                    "Bridge",
+                    "btGetDpiStages no-payload device=\(device.id) req=\(req) attempt=\(attempt + 1) notifies=\(btNotifySummary(notifies))"
+                )
+                if attempt == 0 { continue }
+                return nil
+            }
+            guard let parsed = BLEVendorProtocol.parseDpiStages(blob: payload) else {
+                AppLog.debug(
+                    "Bridge",
+                    "btGetDpiStages parse-failed device=\(device.id) req=\(req) attempt=\(attempt + 1) " +
+                    "payload=\(btHex(payload)) notifies=\(btNotifySummary(notifies))"
+                )
                 if attempt == 0 { continue }
                 return nil
             }
@@ -255,8 +293,19 @@ extension BridgeClient {
         let req = nextBTReq()
         let header = BLEVendorProtocol.buildReadHeader(req: req, key: .dpiStagesGet)
         let notifies = try await btExchange([header], timeout: 0.6, device: device)
-        guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req),
-              let parsed = BLEVendorProtocol.parseDpiStageSnapshot(blob: payload) else {
+        guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
+            AppLog.debug(
+                "Bridge",
+                "btGetDpiStageSnapshot no-payload device=\(device.id) req=\(req) notifies=\(btNotifySummary(notifies))"
+            )
+            return nil
+        }
+        guard let parsed = BLEVendorProtocol.parseDpiStageSnapshot(blob: payload) else {
+            AppLog.debug(
+                "Bridge",
+                "btGetDpiStageSnapshot parse-failed device=\(device.id) req=\(req) payload=\(btHex(payload)) " +
+                "notifies=\(btNotifySummary(notifies))"
+            )
             return nil
         }
         btDpiSnapshotByDeviceID[device.id] = parsed
