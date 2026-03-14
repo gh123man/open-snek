@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - The app’s user-facing brand and bundle name now use `OpenSnek` consistently, and launch-at-startup refreshes any stale login launch-agent configuration that still points at the legacy app bundle path.
+- Release links, in-app update checks, and bug-report URLs now point at the renamed GitHub repository path `gh123man/OpenSnek`.
 
 ### Fixed
 - The background menu bar service now suppresses its transient SwiftUI startup window before it becomes visible, which removes the brief window flash when the app starts or when `Menu bar icon` is turned on.

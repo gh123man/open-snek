@@ -191,7 +191,7 @@ struct SettingsView: View {
     }
 
     private func openBugReport() {
-        guard let url = URL(string: "https://github.com/gh123man/open-snek/issues/new?template=bug_report.md") else { return }
+        guard let url = URL(string: "https://github.com/gh123man/OpenSnek/issues/new?template=bug_report.md") else { return }
         NSWorkspace.shared.open(url)
     }
 }

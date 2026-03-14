@@ -30,7 +30,7 @@ You can set them with:
   --notary-key /path/to/AuthKey_XXXX.p8 \
   --notary-key-id '<KEY_ID>' \
   --notary-issuer-id '<ISSUER_ID>' \
-  --repo gh123man/open-snek \
+  --repo gh123man/OpenSnek \
   --apply
 ```
 

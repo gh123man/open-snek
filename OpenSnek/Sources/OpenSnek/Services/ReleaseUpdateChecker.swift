@@ -111,7 +111,7 @@ struct ReleaseUpdateChecker: Sendable {
         let html_url: String?
     }
 
-    static let releasesPageURL = URL(string: "https://github.com/gh123man/open-snek/releases")!
+    static let releasesPageURL = URL(string: "https://github.com/gh123man/OpenSnek/releases")!
 
     private let session: URLSession
 
@@ -122,7 +122,7 @@ struct ReleaseUpdateChecker: Sendable {
     func checkForUpdate(currentVersion: String) async throws -> ReleaseAvailability? {
         guard let current = ReleaseVersion.parse(currentVersion) else { return nil }
 
-        var request = URLRequest(url: URL(string: "https://api.github.com/repos/gh123man/open-snek/releases/latest")!)
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/gh123man/OpenSnek/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue("OpenSnek/\(currentVersion)", forHTTPHeaderField: "User-Agent")

@@ -36,7 +36,7 @@ More device support is welcome, whether that comes from new hardware captures or
 
 ## Download and Install
 
-1. Download the latest DMG from [GitHub Releases](https://github.com/gh123man/open-snek/releases).
+1. Download the latest DMG from [GitHub Releases](https://github.com/gh123man/OpenSnek/releases).
 2. Open the DMG.
 3. Drag `OpenSnek.app` into `Applications`.
 4. Launch `OpenSnek`.
