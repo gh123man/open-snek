@@ -189,7 +189,7 @@ Observed control labels on `0x00AB`:
 - `0x35`: wheel tilt right
 - `0x6A`: profile button
 - observed non-match: `0x60` does not read back like the Basilisk V3 35K top DPI-button block and is not currently shipped as a validated V3 Pro control
-- observed write behavior: slot `0x0F` accepts remap writes and restores cleanly to its default block; slot `0x6A` accepted remap writes during probe, but repeated write/readback cycles became unstable enough that Open Snek keeps it hidden for now
+- observed write behavior: slot `0x0F` accepts remap writes and restores cleanly to its default block; slot `0x6A` accepted remap writes during probe, but repeated write/readback cycles became unstable enough that OpenSnek keeps it hidden for now
 
 Validated slot ids on Basilisk V3 35K (`0x00CB`): `0x01..0x05`, `0x09`, `0x0A`, `0x0E`, `0x0F`, `0x34`, `0x35`, `0x60`, `0x6A`.
 Observed control labels on `0x00CB`:
@@ -219,10 +219,10 @@ Client note:
 - Legacy non-analog write command `0x02:0x0D` is still observed in ecosystem notes but is fallback-only on this device.
 - Basilisk V3 Pro (`0x00AB`) and Basilisk V3 35K (`0x00CB`) `0x02:0x8C` reads do not use the simpler Basilisk V3 X payload shape. Observed extended-layout slots decode from `response[11..<18]`; treating `response[10...]` as the block causes false positives and mislabels on extra controls.
 - Always validate the echoed `profile` and `slot` bytes before decoding a `0x02:0x8C` read. This device will otherwise yield stale-looking success frames that can be mistaken for additional slots.
-- Open Snek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
+- OpenSnek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
 - On the observed V3 Pro clutch slot (`0x0F`), the default block is not a simple mouse/keyboard payload; preserve `06 05 05 01 90 01 90` when restoring the native clutch behavior.
-- For the observed V3 Pro clutch payload `06 05 05 <xhi> <xlo> <yhi> <ylo>`, the trailing four bytes are configurable DPI values. Open Snek currently writes one user-facing DPI scalar and mirrors it to X/Y.
-- The same V3 Pro clutch block was also written/read back successfully on slot `0x04`, so Open Snek exposes `DPI Clutch` as a V3 Pro-only remap action for other writable USB slots.
+- For the observed V3 Pro clutch payload `06 05 05 <xhi> <xlo> <yhi> <ylo>`, the trailing four bytes are configurable DPI values. OpenSnek currently writes one user-facing DPI scalar and mirrors it to X/Y.
+- The same V3 Pro clutch block was also written/read back successfully on slot `0x04`, so OpenSnek exposes `DPI Clutch` as a V3 Pro-only remap action for other writable USB slots.
 - On the observed V3 Pro profile-button slot (`0x6A`), remap writes can land, but repeated `0x02:0x0C` / `0x02:0x8C` cycles eventually returned timeout/no-response frames during probing. Keep this slot out of shipped UI until that write/readback path is stable.
 - Treat button access as three separate categories during new-device bring-up:
   - `editable`: validated over `0x02:0x0C`
@@ -318,7 +318,7 @@ Observed examples:
 - `05 02 04 4c 04 4c ...` -> `1100 x 1100`
 
 Client notes:
-- current Open Snek support is gated to the validated Basilisk V3 Pro USB profile (`0x00AB`)
+- current OpenSnek support is gated to the validated Basilisk V3 Pro USB profile (`0x00AB`)
 - accept both callback buffer shapes seen on macOS HID stacks:
   - leading report id present: `05 02 ...`
   - report id already stripped: `02 ...`

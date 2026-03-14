@@ -91,7 +91,7 @@ struct ServiceMenuBarView: View {
                     .foregroundStyle(.secondary)
             }
             Divider()
-            actionRow("Show Open Snek", systemImage: "rectangle.on.rectangle") {
+            actionRow("Show OpenSnek", systemImage: "rectangle.on.rectangle") {
                 runtimeStore.openFullAppFromService()
             }
             actionRow("Settings…", systemImage: "gearshape") {
@@ -379,7 +379,7 @@ struct ServiceMenuBarStatusItemLabel: View {
         if let device = deviceStore.selectedDevice {
             return device.product_name
         }
-        return "Open Snek"
+        return "OpenSnek"
     }
 }
 

@@ -8,6 +8,9 @@ All notable changes to this project are documented in this file.
 - `OpenSnekProbe` now exposes USB lighting inspection/write commands for supported USB profiles, including per-zone fanout for multi-zone devices such as the Basilisk V3 Pro (`scroll_wheel = 0x01`, `logo = 0x04`, `underglow = 0x0A`) and payload logging for the exact `0x0F` matrix writes sent to each zone.
 - `OpenSnekProbe` now exposes Bluetooth lighting inspection/write commands for the Basilisk V3 Pro, including per-zone brightness/color reads and fanout writes across `scroll_wheel`, `logo`, and `underglow`.
 
+### Changed
+- The app’s user-facing brand and bundle name now use `OpenSnek` consistently, and launch-at-startup refreshes any stale login launch-agent configuration that still points at the legacy app bundle path.
+
 ### Fixed
 - The background menu bar service now suppresses its transient SwiftUI startup window before it becomes visible, which removes the brief window flash when the app starts or when `Menu bar icon` is turned on.
 - Battery icons in the menu bar widget and main device header now use the same adaptive SF Symbol fill based on the current percentage, instead of mixing coarse 25% buckets in one surface and a hardcoded non-charging icon in the other.
@@ -28,12 +31,12 @@ All notable changes to this project are documented in this file.
 - Fast DPI polling no longer downgrades a device from `Listening for first HID event` to `Polling fallback active`, which stops the compact `Connected` indicator from flapping between green and yellow while passive HID is armed but still waiting for its first live event.
 - The Swift BLE vendor parser now accepts the Basilisk V3 Pro Bluetooth notify framing variant (8-byte notify header plus short final payload fragments), which unlocks live DPI, battery, brightness, sleep-timeout, and button-remap traffic on the V3 Pro Bluetooth path instead of treating those replies as empty.
 - The Basilisk V3 Pro Bluetooth profile now subscribes to the validated passive HID DPI report stream (`05 05 02 ...`) on macOS, so on-device DPI-stage changes can drive immediate real-time UI updates instead of staying stuck on polling fallback.
-- Open Snek now detects when macOS blocks HID access for the active app/service host, surfaces that state in the main UI and Settings, and adds a Settings action to reset the app's TCC permissions so Input Monitoring can be re-tested without leaving the app.
-- The main window and menu bar now keep the device pill labeled `Connected`, stay green while Open Snek is listening for the first passive HID event, switch to a warning yellow only when real-time HID is actually unavailable and the app is stuck on polling fallback, and expose per-protocol hover details for control transport, telemetry, real-time HID, and Input Monitoring status.
+- OpenSnek now detects when macOS blocks HID access for the active app/service host, surfaces that state in the main UI and Settings, and adds a Settings action to reset the app's TCC permissions so Input Monitoring can be re-tested without leaving the app.
+- The main window and menu bar now keep the device pill labeled `Connected`, stay green while OpenSnek is listening for the first passive HID event, switch to a warning yellow only when real-time HID is actually unavailable and the app is stuck on polling fallback, and expose per-protocol hover details for control transport, telemetry, real-time HID, and Input Monitoring status.
 - Hovering the main transport pill now shows a fuller connection tooltip with the active transport, live telemetry state, control transport, and any relevant real-time HID/Input Monitoring detail.
 - When the full app attaches to the background service, it now does one eager device/state bootstrap through the service before settling into snapshot-only updates, which restores faster initial battery and selected-device hydration when the service already has live state cached.
-- On the validated Basilisk V3 X HyperSpeed Bluetooth path (`0x00BA`), Open Snek now listens for passive HID DPI input reports and applies those cached-state updates immediately, then disables Bluetooth fast DPI polling for that device after the first live passive event is observed.
-- On the validated Basilisk V3 Pro USB path (`0x00AB`), Open Snek now listens for the mouse's passive DPI input report and applies those updates to cached state immediately, removing the old 200 ms fast-poll lag for on-device DPI changes while keeping the slower full USB state poll for other controls.
+- On the validated Basilisk V3 X HyperSpeed Bluetooth path (`0x00BA`), OpenSnek now listens for passive HID DPI input reports and applies those cached-state updates immediately, then disables Bluetooth fast DPI polling for that device after the first live passive event is observed.
+- On the validated Basilisk V3 Pro USB path (`0x00AB`), OpenSnek now listens for the mouse's passive DPI input report and applies those updates to cached state immediately, removing the old 200 ms fast-poll lag for on-device DPI changes while keeping the slower full USB state poll for other controls.
 - Passive HID DPI updates no longer get overwritten by slower stale state refreshes, and repeatedly failing non-selected devices now back off instead of re-running full state polls every cycle.
 - A USB dongle that is attached without its paired mouse no longer burns a second full HID candidate sweep on every failed state read, which reduces contention with the live Bluetooth path and makes that idle-dongle state behave more gracefully.
 - Bluetooth HID discovery now drops stale HID-only entries when CoreBluetooth no longer reports an active vendor peripheral, reconnects re-enable fast DPI fallback until a fresh passive HID event is seen again, and selected devices stop showing cached state as live after a real disconnect.
@@ -57,7 +60,7 @@ All notable changes to this project are documented in this file.
 - Toggling `Launch menu bar service at startup` no longer blocks the UI or starts a second service/app instance immediately; it now only updates the launch-agent registration for the next login, while the separate `Enable menu bar service` toggle continues to control the current session.
 - Restored the clear full-window title bar styling after the title bar icon removal accidentally dropped the shared window chrome configurator along with the accessory view.
 - Removed the experimental main-window title bar icon, and the menu bar service `Settings…` action now uses SwiftUI's settings scene opener so it reliably opens the app settings window again.
-- The menu bar service now reuses an already-open full app window when you choose `Show Open Snek`, bringing the existing app to the foreground instead of spawning duplicate full app instances.
+- The menu bar service now reuses an already-open full app window when you choose `Show OpenSnek`, bringing the existing app to the foreground instead of spawning duplicate full app instances.
 - The menu bar service now publishes a real localhost IPC endpoint instead of trying to serialize an `NSXPCListenerEndpoint` into defaults, which restores shared backend ownership when the main window and background service are open together and prevents dual-process USB contention.
 - When the background service is enabled, the full app now follows a service-published snapshot feed instead of polling the service for steady-state device/state updates, so hardware polling stays service-owned and both UIs converge from the same live snapshot stream.
 - Remote UI clients now send a lightweight active-presence heartbeat to the service so the service keeps its faster interactive polling cadence while the full window is open, instead of dropping back to idle timing.
@@ -104,7 +107,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - Bluetooth fallback discovery no longer aliases every connected Razer BLE peripheral to the supported Basilisk V3 X HyperSpeed profile when HID permission is denied; unsupported BLE devices now stay generic/unsupported until an exact Bluetooth profile match is added.
-- Unsupported Razer USB devices no longer get hidden behind the generic unsupported screen; Open Snek now allows USB probing on unknown Razer mice, shows a warning that support is partial, and only exposes USB controls that responded during live capability probing. Unsupported Bluetooth devices remain gated to the explicit supported-device list.
+- Unsupported Razer USB devices no longer get hidden behind the generic unsupported screen; OpenSnek now allows USB probing on unknown Razer mice, shows a warning that support is partial, and only exposes USB controls that responded during live capability probing. Unsupported Bluetooth devices remain gated to the explicit supported-device list.
 - Bluetooth vendor exchanges now target the selected device by peripheral name instead of whichever connected Razer BLE peripheral CoreBluetooth returns first, fixing supported-device failures when a supported and unsupported Bluetooth device are connected at the same time.
 - Device switching now swaps immediately to the selected device's cached state and ignores stale async refresh/apply results from the previously selected device, reducing DPI/control lag when multiple mice are connected.
 - USB lighting apply/readback on Basilisk V3 35K now targets all three validated matrix LED zones (`0x01` scroll wheel, `0x04` logo, and `0x0A` underglow) instead of only the wheel zone.
@@ -114,7 +117,7 @@ All notable changes to this project are documented in this file.
 - Basilisk V3 35K button-slot hydration now rejects stale `0x02:0x8C` replies for the wrong echoed slot, and the shared 35K button layout now includes the validated wheel-tilt slots (`0x34`, `0x35`) with cleaned-up control labels.
 - The button-binding UI now hides fixed-only 35K controls, and USB button bindings expose an explicit `DPI Cycle` action that can be assigned to any writable button while the 35K DPI button restores to a working DPI-cycle default.
 - The USB lighting card now filters effect choices per device capability, keeps the original background treatment for `All Zones`, and only uses the multi-zone accent gradient when a specific static USB zone is selected.
-- Open Snek now reads the Basilisk V3 35K onboard profile summary on USB, exposes multi-profile UI only on devices that actually advertise multiple onboard profiles, and scopes USB button remap reads/writes to the selected stored profile instead of hard-coding profile 1.
+- OpenSnek now reads the Basilisk V3 35K onboard profile summary on USB, exposes multi-profile UI only on devices that actually advertise multiple onboard profiles, and scopes USB button remap reads/writes to the selected stored profile instead of hard-coding profile 1.
 - Device/profile docs now explicitly record the Basilisk V3 35K software-read-only controls: sensitivity clutch (`0x0F` / report-4 `0x51`) and profile button (`0x6A` / report-4 `0x50`), plus scroll-mode toggle (`0x0E`) as protocol-read-only.
 - Shared button metadata now also marks the Basilisk V3 X HyperSpeed Bluetooth Hypershift/sniper control (`slot 0x06`) as software-read-only so it appears in the unsupported-buttons footnote with the right explanation.
 - The non-functional onboard-profile switcher card has been removed from the macOS UI until an actual active-profile switching path is decoded for supported devices.
@@ -150,7 +153,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - Fixed a USB DPI-stage parsing regression introduced during the transport-layer split: stage-table reads were decoded one byte off, which corrupted stage values, broke on-mouse stage cycling, and could make the app collapse USB devices into the wrong stage count or single-stage mode.
-- Release DMGs now preserve the macOS asset catalog and app icon in exported `Open Snek.app` bundles.
+- Release DMGs now preserve the macOS asset catalog and app icon in exported `OpenSnek.app` bundles.
 - Release packaging now produces a styled drag-to-Applications DMG instead of a plain file-drop image.
 - USB apply flows no longer fail immediately on transient post-write telemetry drops; readback now retries with short backoff and falls back to projected cached state when writes succeeded but immediate readback is temporarily unavailable.
 - USB state reads now probe live DPI first and fail fast on non-responsive HID interfaces instead of running full telemetry sweeps on dead handles, removing long timeout storms that caused delayed/intermittent stage switching.
@@ -194,7 +197,7 @@ All notable changes to this project are documented in this file.
 - USB button-binding UI now exposes `DPI Cycle` slot `96` (slot `6` remains hidden), and slot `96` default restore uses the capture-backed DPI-cycle action payload.
 
 ### Changed
-- Replaced the macOS app icon artwork in `AppIcon.appiconset` with the new Open Snek icon and cropped out the black background letterboxing from the source image.
+- Replaced the macOS app icon artwork in `AppIcon.appiconset` with the new OpenSnek icon and cropped out the black background letterboxing from the source image.
 - `OpenSnek/scripts/build_macos_app.sh` now automatically uses `AppIcon.appiconset/icon_512x512@2x.png` as the default app icon source instead of falling back to the generic macOS icon.
 - `OpenSnek/scripts/build_macos_app.sh` now supports stable signing identities (`--sign-identity auto|adhoc|none|<identity>`) and auto-detects a local Apple signing cert when available, reducing TCC/Input Monitoring permission churn across rebuilds.
 - `OpenSnek/scripts/build_macos_app.sh` now supports `--sign-identity preserve` and auto-reuses an existing app bundle signature in `auto` mode when available, helping keep TCC grants stable across rebuilds.

@@ -9,7 +9,7 @@ public struct DeviceDiagnosticsFormatter {
         appContextLines: [String] = []
     ) -> String {
         var lines: [String] = []
-        lines.append("Open Snek Device Diagnostics")
+        lines.append("OpenSnek Device Diagnostics")
         lines.append("Generated: \(iso8601(generatedAt))")
         lines.append("")
 

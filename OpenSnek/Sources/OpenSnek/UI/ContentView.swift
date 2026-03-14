@@ -103,9 +103,9 @@ struct ContentView: View {
 
     private var permissionGuidanceDetailLines: [String] {
         [
-            "Open Input Monitoring settings and turn on Open Snek.",
+            "Open Input Monitoring settings and turn on OpenSnek.",
             "If it still looks stuck, use Reset Permissions and try again.",
-            "After changing the permission, quit and reopen Open Snek.",
+            "After changing the permission, quit and reopen OpenSnek.",
             "Current app host: \(runtimeStore.hidAccessStatus.hostLabel)"
         ]
     }
@@ -168,7 +168,7 @@ struct ContentView: View {
             notices.append(
                 NoticeItem(
                     title: "Allow Input Monitoring",
-                    message: "Open Snek can talk to \(selectedDevice.product_name), but macOS is still blocking the permission that lets instant on-device DPI changes show up right away.",
+                    message: "OpenSnek can talk to \(selectedDevice.product_name), but macOS is still blocking the permission that lets instant on-device DPI changes show up right away.",
                     detailLines: permissionGuidanceDetailLines,
                     tone: .permission,
                     actions: [
@@ -228,7 +228,7 @@ struct ContentView: View {
                 NoticeItem(
                     title: isInputMonitoringError(deviceStore.errorMessage) ? "Allow Input Monitoring" : usbCalloutTitle,
                     message: isInputMonitoringError(deviceStore.errorMessage)
-                        ? "Open Snek needs one more macOS permission before it can read all USB settings from this mouse."
+                        ? "OpenSnek needs one more macOS permission before it can read all USB settings from this mouse."
                         : usbCalloutMessage,
                     detailLines: detailLines,
                     tone: isInputMonitoringError(deviceStore.errorMessage) ? .permission : .warning,

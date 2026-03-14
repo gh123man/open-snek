@@ -109,4 +109,56 @@ final class BackgroundServiceCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(targets.map(\.processIdentifier), [302, 303])
     }
+
+    func testSynchronizeLaunchAgentUpdatesLegacyBundlePathWhenEnabled() async throws {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(true, forKey: BackgroundServiceCoordinator.launchAtStartupDefaultsKey)
+
+        let launchAgentsDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: launchAgentsDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: launchAgentsDirectory) }
+
+        let launchAgentURL = launchAgentsDirectory.appendingPathComponent("io.opensnek.OpenSnek.service.plist")
+        let legacyPlist = BackgroundServiceCoordinator.launchAgentPropertyList(
+            executablePath: "/Applications/Open Snek.app/Contents/MacOS/OpenSnek",
+            workingDirectoryPath: "/Applications/Open Snek.app/Contents/MacOS"
+        )
+        let legacyData = try PropertyListSerialization.data(
+            fromPropertyList: legacyPlist,
+            format: .xml,
+            options: 0
+        )
+        try legacyData.write(to: launchAgentURL, options: .atomic)
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(
+                defaults: UserDefaults(suiteName: suiteName)!,
+                launchAgentsDirectoryURL: launchAgentsDirectory
+            )
+        }
+
+        try await MainActor.run {
+            try coordinator.synchronizeLaunchAgentIfNeeded(
+                executablePath: "/Applications/OpenSnek.app/Contents/MacOS/OpenSnek",
+                workingDirectoryPath: "/Applications/OpenSnek.app/Contents/MacOS"
+            )
+        }
+
+        let plist = try XCTUnwrap(NSDictionary(contentsOf: launchAgentURL) as? [String: Any])
+        XCTAssertEqual(
+            plist["ProgramArguments"] as? [String],
+            [
+                "/Applications/OpenSnek.app/Contents/MacOS/OpenSnek",
+                "--service-mode",
+                "--login-start",
+            ]
+        )
+        XCTAssertEqual(plist["WorkingDirectory"] as? String, "/Applications/OpenSnek.app/Contents/MacOS")
+    }
 }

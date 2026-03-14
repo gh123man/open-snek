@@ -89,9 +89,9 @@ Validated in-session over USB:
 - working: button remap read/write/readback on the shared writable Basilisk slots, wheel-tilt (`0x34`, `0x35`), and the sensitivity clutch / DPI clutch (`0x0F`)
 - observed V3 Pro clutch default block on `0x0F`: `06 05 05 01 90 01 90`
 - observed V3 Pro clutch DPI parameterization: writing `06 05 05 03 20 03 20` read back cleanly as an 800-DPI clutch payload on slot `0x04`
-- observed V3 Pro clutch remap portability: the same block was written/read back successfully on slot `0x04`, so Open Snek treats `DPI Clutch` as a V3 Pro USB remap action and not only as the native clutch button's default
+- observed V3 Pro clutch remap portability: the same block was written/read back successfully on slot `0x04`, so OpenSnek treats `DPI Clutch` as a V3 Pro USB remap action and not only as the native clutch button's default
 - observed profile-button default block on `0x6A`: `12 01 01 00 00 00 00`
-- observed profile-button remap behavior on `0x6A`: right-click writes/readback can succeed, but repeated write/readback cycles later returned timeout/no-response frames; Open Snek keeps this slot hidden until the USB ACK/readback path is reliable
+- observed profile-button remap behavior on `0x6A`: right-click writes/readback can succeed, but repeated write/readback cycles later returned timeout/no-response frames; OpenSnek keeps this slot hidden until the USB ACK/readback path is reliable
 - observed non-match on `0x60`: it does not read back like the 35K top DPI-button block and is not exposed as a validated V3 Pro slot
 - client note: `0x02:0x8C` response layout on the observed extended slots matches the 35K-style offset (`response[11..<18]`) rather than the Basilisk V3 X shape
 - observed profile summary getter on `0x00AB`: `0x00:0x87` -> `<active,0x00,count=3>`; active-profile write path remains unresolved
@@ -100,7 +100,7 @@ Validated in-session over USB:
 
 Validated in-session over Bluetooth:
 - HID path (`--disable-vendor-gatt`): probe works, config command reads return `None`, writes return `False`
-- passive HID DPI report on the paired BT HID interface now drives immediate Open Snek DPI-state updates; observed/app-supported frame prefixes include `05 05 02 <x_hi> <x_lo> <y_hi> <y_lo> ...` and the macOS-normalized `05 02 ...` variant
+- passive HID DPI report on the paired BT HID interface now drives immediate OpenSnek DPI-state updates; observed/app-supported frame prefixes include `05 05 02 <x_hi> <x_lo> <y_hi> <y_lo> ...` and the macOS-normalized `05 02 ...` variant
 - Vendor GATT path (default-on): working for
   - idle-time raw read/write/readback
   - low-battery-threshold raw read/write/readback
@@ -126,14 +126,14 @@ Validated in-session over Bluetooth:
 - working read/write/readback: DPI stages + active stage (`0B84`/`0B04`), sleep timeout (`05 84 00 00` / `05 04 00 00`), per-zone lighting brightness (`10 85 01 <led>` / `10 05 01 <led>`), per-zone static color (`10 83 00 <led>` / `10 03 00 <led>`)
 - working read: battery raw (`05 81 00 01`), battery status (`05 80 00 01`)
 - working write ACKs on tested BLE button-remap slots: `0x01..0x05`, `0x09`, `0x0A`, `0x34`, `0x35`
-- observed V3 Pro Bluetooth button-layout shape now matches the shared Basilisk family on the tested slots, so Open Snek ships the core buttons plus wheel-tilt controls on the BT profile
+- observed V3 Pro Bluetooth button-layout shape now matches the shared Basilisk family on the tested slots, so OpenSnek ships the core buttons plus wheel-tilt controls on the BT profile
 - observed V3 Pro Bluetooth lighting zone catalog: `10 80 00 01` -> `04 01 0a`, matching the validated zone map `scroll_wheel`, `logo`, `underglow`
 - not yet decoded enough to ship: sensitivity clutch (`0x0F`) restore/remap payloads, profile button (`0x6A`) restore/remap payloads
 - legacy lighting frame-color readback on `10 84 00 00` still does not return a usable payload on the V3 Pro path; OpenSnek now treats that frame family as legacy-only and uses the validated zone-state keys instead
 
 Validation notes:
 - the required hardware XCTest gate (`OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests`) currently aborts under macOS TCC before CoreBluetooth can start in the unbundled test runner on this host
-- the same five-step DPI stability sequence was rerun successfully through the bundled Open Snek app/service host, and every step converged for three consecutive reads before restore
+- the same five-step DPI stability sequence was rerun successfully through the bundled OpenSnek app/service host, and every step converged for three consecutive reads before restore
 
 ## Validation Checklist
 

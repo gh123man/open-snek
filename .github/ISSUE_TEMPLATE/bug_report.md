@@ -24,7 +24,7 @@ What did you expect to happen, and what happened instead?
 
 Before filing:
 
-1. Open `Open Snek > Settings > Bug Reports`
+1. Open `OpenSnek > Settings > Bug Reports`
 2. If the issue is timing-related or intermittent, set log level to `Info` or `Debug` and reproduce it again first
 3. Click `Copy GitHub Issue Payload`
 4. Paste the full payload below

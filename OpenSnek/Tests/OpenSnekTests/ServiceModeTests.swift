@@ -112,7 +112,7 @@ final class ServiceModeTests: XCTestCase {
     func testHIDAccessStatusDeniedUsesExpectedDiagnosticsAndResetCommand() {
         let status = HIDAccessStatus(
             authorization: .denied,
-            hostLabel: "Open Snek (io.opensnek.OpenSnek)",
+            hostLabel: "OpenSnek (io.opensnek.OpenSnek)",
             bundleIdentifier: "io.opensnek.OpenSnek",
             detail: "Input Monitoring is required."
         )

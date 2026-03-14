@@ -204,7 +204,7 @@ extension BLEVendorTransportClient: CBCentralManagerDelegate, CBPeripheralDelega
         case .poweredOn:
             ensureConnectedAndReady()
         case .unauthorized:
-            fail("Bluetooth access unauthorized; allow Open Snek in System Settings > Privacy & Security > Bluetooth")
+            fail("Bluetooth access unauthorized; allow OpenSnek in System Settings > Privacy & Security > Bluetooth")
         case .poweredOff:
             fail("Bluetooth is powered off")
         case .unsupported:

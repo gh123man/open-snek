@@ -18,7 +18,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<'USAGE'
-Generate Open Snek macOS AppIcon.appiconset PNGs.
+Generate OpenSnek macOS AppIcon.appiconset PNGs.
 
 Usage:
   generate_appiconset.sh [--source /path/to/master.png] [--output /path/to/AppIcon.appiconset]

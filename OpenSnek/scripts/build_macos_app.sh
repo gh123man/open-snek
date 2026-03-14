@@ -94,7 +94,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
 DEFAULT_ICON_PNG="$PACKAGE_DIR/Branding/AppIcon-master.png"
 
 PRODUCT_NAME="OpenSnek"
-DISPLAY_NAME="Open Snek"
+DISPLAY_NAME="OpenSnek"
 APP_BUNDLE="$OUTPUT_DIR/$DISPLAY_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -326,7 +326,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Open Snek uses Bluetooth to discover and configure compatible Razer devices.</string>
+    <string>OpenSnek uses Bluetooth to discover and configure compatible Razer devices.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

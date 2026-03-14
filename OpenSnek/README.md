@@ -69,13 +69,13 @@ Device onboarding and capture interpretation live in:
 - Validated transports prefer passive HID DPI input reports, with fast DPI polling kept as a recovery path until passive reports are observed again.
 - Passive HID updates can supersede older full-state reads, so rapid on-device DPI cycling does not snap back to older values.
 - Device discovery now resolves profile metadata up front, including button layout and lighting-effect support per transport.
-- Open Snek can run either standalone or with an optional companion menu bar service. When the service is enabled, the widget and full app share one backend owner over a local XPC bridge.
+- OpenSnek can run either standalone or with an optional companion menu bar service. When the service is enabled, the widget and full app share one backend owner over a local XPC bridge.
 
 ## Connection Model
 
 - macOS HID discovery is the source of truth for whether a device is physically attached. `HIDDevicePresenceMonitor` listens for attach/remove events and the bridge refreshes the device list immediately when those changes arrive.
 - Telemetry health is separate from presence. A device can still be shown as physically present while reads are reconnecting, stale, or temporarily unavailable, and the UI disables editing controls until live state is healthy again.
-- `BridgeClient` registers passive HID DPI watch targets for validated transports. When a passive event is observed, Open Snek updates cached DPI state immediately and disables fast DPI polling for that device.
+- `BridgeClient` registers passive HID DPI watch targets for validated transports. When a passive event is observed, OpenSnek updates cached DPI state immediately and disables fast DPI polling for that device.
 - On reconnects or passive-listener registration changes, the bridge re-arms the passive listener and temporarily falls back to fast DPI polling until real-time HID reports resume.
 - `BackendSession` exposes the same `BackendStateUpdate` stream for both the in-process hardware backend and the background service transport, so `AppState` consumes one flow for device list changes, passive DPI updates, and full-state snapshots.
 - The diagnostics sheet reports three separate signals for the selected device: physical presence, telemetry status, and DPI update path (`Real-time HID events` vs `Polling fallback`).
@@ -159,7 +159,7 @@ Run the existing `.dist` app bundle without rebuilding (preserves signature/TCC 
 Output:
 
 ```text
-OpenSnek/.dist/Open Snek.app
+OpenSnek/.dist/OpenSnek.app
 ```
 
 ```bash
@@ -184,7 +184,7 @@ Service startup logs (when launch-at-startup is enabled from Settings):
 ## Permissions
 
 - If you see `IOHIDManagerOpen failed (-536870174)` in logs, macOS denied HID access (`kIOReturnNotPermitted`).
-- Grant access in `System Settings > Privacy & Security > Input Monitoring` for `Open Snek`.
+- Grant access in `System Settings > Privacy & Security > Input Monitoring` for `OpenSnek`.
 - Reset Bluetooth permission prompt if needed:
 
 ```bash

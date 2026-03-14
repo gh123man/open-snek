@@ -35,9 +35,9 @@ public enum ButtonSlotAccess: String, Codable, Hashable, Sendable {
         case .editable:
             return nil
         case .protocolReadOnly:
-            return "Open Snek can see this button, but it cannot change it yet."
+            return "OpenSnek can see this button, but it cannot change it yet."
         case .softwareReadOnly:
-            return "Open Snek can detect this button, but this mouse does not expose remapping for it yet."
+            return "OpenSnek can detect this button, but this mouse does not expose remapping for it yet."
         }
     }
 }
@@ -289,7 +289,7 @@ public enum DeviceProfiles {
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 6, friendlyName: "Hypershift / Sniper", defaultKind: .default),
             access: .softwareReadOnly,
-            note: "This button uses a separate device path, so Open Snek cannot reassign it yet."
+            note: "This button uses a separate device path, so OpenSnek cannot reassign it yet."
         ),
     ]
 
@@ -310,12 +310,12 @@ public enum DeviceProfiles {
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
             access: .softwareReadOnly,
-            note: "The V3 Pro Bluetooth path needs a capture-backed clutch action block before Open Snek can remap or restore this button safely."
+            note: "The V3 Pro Bluetooth path needs a capture-backed clutch action block before OpenSnek can remap or restore this button safely."
         ),
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
             access: .softwareReadOnly,
-            note: "The V3 Pro Bluetooth path still needs capture-backed profile-button defaults before Open Snek can expose this control."
+            note: "The V3 Pro Bluetooth path still needs capture-backed profile-button defaults before OpenSnek can expose this control."
         ),
     ]
 
@@ -349,17 +349,17 @@ public enum DeviceProfiles {
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 14, friendlyName: "Scroll Mode Toggle", defaultKind: .default),
             access: .protocolReadOnly,
-            note: "Open Snek can see this button, but the mouse does not let apps remap it yet."
+            note: "OpenSnek can see this button, but the mouse does not let apps remap it yet."
         ),
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
             access: .softwareReadOnly,
-            note: "This button is handled separately by the mouse, so Open Snek cannot reassign it yet."
+            note: "This button is handled separately by the mouse, so OpenSnek cannot reassign it yet."
         ),
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
             access: .softwareReadOnly,
-            note: "This button is handled separately by the mouse, so Open Snek cannot reassign it yet."
+            note: "This button is handled separately by the mouse, so OpenSnek cannot reassign it yet."
         ),
     ]
 
@@ -373,7 +373,7 @@ public enum DeviceProfiles {
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
             access: .protocolReadOnly,
-            note: "Observed remap writes can land on this button, but the V3 Pro's USB ACK/readback path is not stable enough to ship in Open Snek yet."
+            note: "Observed remap writes can land on this button, but the V3 Pro's USB ACK/readback path is not stable enough to ship in OpenSnek yet."
         ),
     ]
 

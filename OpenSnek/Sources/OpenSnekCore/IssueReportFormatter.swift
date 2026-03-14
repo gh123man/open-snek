@@ -25,7 +25,7 @@ public struct IssueReportFormatter {
         devices: [IssueReportDeviceEntry]
     ) -> String {
         var lines: [String] = []
-        lines.append("## Open Snek Diagnostics")
+        lines.append("## OpenSnek Diagnostics")
         lines.append("")
         lines.append("- Generated: \(iso8601(generatedAt))")
         lines.append("- App version: \(appVersion)")

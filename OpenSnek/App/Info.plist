@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>Open Snek</string>
+    <string>OpenSnek</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -25,7 +25,7 @@
     <key>LSMinimumSystemVersion</key>
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Open Snek uses Bluetooth to discover and configure compatible Razer devices.</string>
+    <string>OpenSnek uses Bluetooth to discover and configure compatible Razer devices.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

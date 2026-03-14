@@ -390,7 +390,7 @@ actor BridgeClient {
         if sorted.isEmpty, openResult == kIOReturnNotPermitted {
             throw BridgeError.commandFailed(
                 "HID access denied by macOS (kIOReturnNotPermitted). " +
-                "Enable Input Monitoring for Open Snek (or Terminal/Xcode when running via swift run/Xcode), " +
+                "Enable Input Monitoring for OpenSnek (or Terminal/Xcode when running via swift run/Xcode), " +
                 "or ensure a supported Bluetooth device is connected."
             )
         }
@@ -663,7 +663,7 @@ actor BridgeClient {
         guard !sessions.isEmpty else {
             if hidAccessDenied || managerAccessDenied {
                 throw BridgeError.commandFailed(
-                    "USB HID access denied by macOS. Enable Input Monitoring for Open Snek " +
+                    "USB HID access denied by macOS. Enable Input Monitoring for OpenSnek " +
                     "(or Terminal/Xcode when running via swift run/Xcode), then relaunch."
                 )
             }
@@ -866,7 +866,7 @@ actor BridgeClient {
             guard !orderedSessions.isEmpty else {
                 if hidAccessDenied {
                     throw BridgeError.commandFailed(
-                        "USB HID access denied by macOS. Enable Input Monitoring for Open Snek " +
+                        "USB HID access denied by macOS. Enable Input Monitoring for OpenSnek " +
                         "(or Terminal/Xcode when running via swift run/Xcode), then relaunch."
                     )
                 }

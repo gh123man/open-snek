@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Run Open Snek app bundle with TCC-friendly defaults.
+Run OpenSnek app bundle with TCC-friendly defaults.
 
 Behavior:
 - If the app bundle already exists, open it as-is (preserves code signature/TCC grants).
@@ -22,7 +22,7 @@ USAGE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_BUNDLE="$PACKAGE_DIR/.dist/Open Snek.app"
+APP_BUNDLE="$PACKAGE_DIR/.dist/OpenSnek.app"
 
 REBUILD=false
 CONFIGURATION="debug"

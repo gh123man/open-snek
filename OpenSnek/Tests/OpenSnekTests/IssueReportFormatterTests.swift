@@ -16,12 +16,12 @@ final class IssueReportFormatterTests: XCTestCase {
                 IssueReportDeviceEntry(
                     title: "Basilisk V3 35K [USB]",
                     summary: "Basilisk V3 35K (USB, 0x1532:0x00CB, profile basilisk_v3_35k)",
-                    diagnostics: "Open Snek Device Diagnostics\nGenerated: 1970-01-01T00:00:00.000Z"
+                    diagnostics: "OpenSnek Device Diagnostics\nGenerated: 1970-01-01T00:00:00.000Z"
                 )
             ]
         )
 
-        XCTAssertTrue(payload.contains("## Open Snek Diagnostics"))
+        XCTAssertTrue(payload.contains("## OpenSnek Diagnostics"))
         XCTAssertTrue(payload.contains("- App version: 1.2.3"))
         XCTAssertTrue(payload.contains("- Selected device: Basilisk V3 35K [USB]"))
         XCTAssertTrue(payload.contains("### Connected Devices"))

@@ -1,6 +1,6 @@
 # DMG Release Setup
 
-`OpenSnek` ships as a notarized GitHub Release DMG with a Finder install window (`Open Snek.app` plus `/Applications` drag target).
+`OpenSnek` ships as a notarized GitHub Release DMG with a Finder install window (`OpenSnek.app` plus `/Applications` drag target).
 
 ## One-time Apple setup
 
@@ -106,8 +106,8 @@ The workflow will:
 After a release build:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 "OpenSnek/.release/export/Open Snek.app"
-spctl -a -vv --type exec "OpenSnek/.release/export/Open Snek.app"
-xcrun stapler validate "OpenSnek/.release/export/Open Snek.app"
+codesign --verify --deep --strict --verbose=2 "OpenSnek/.release/export/OpenSnek.app"
+spctl -a -vv --type exec "OpenSnek/.release/export/OpenSnek.app"
+xcrun stapler validate "OpenSnek/.release/export/OpenSnek.app"
 xcrun stapler validate "OpenSnek/.release/artifacts/OpenSnek-<version>.dmg"
 ```

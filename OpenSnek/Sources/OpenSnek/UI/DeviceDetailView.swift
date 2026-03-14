@@ -363,7 +363,7 @@ struct GenericDeviceDetailView: View {
     }
 
     private var secondaryMessage: String {
-        "Open Snek will show the controls it can verify safely. Use Diagnostics in bug reports so unsupported devices are easier to map."
+        "OpenSnek will show the controls it can verify safely. Use Diagnostics in bug reports so unsupported devices are easier to map."
     }
 
     @ViewBuilder
@@ -397,7 +397,7 @@ struct DeviceUnavailableDetailView: View {
                         .foregroundStyle(.white.opacity(0.88))
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text("The controls stay locked until the device reconnects and Open Snek is receiving live updates again.")
+                    Text("The controls stay locked until the device reconnects and OpenSnek is receiving live updates again.")
                         .hintTextStyle()
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1359,7 +1359,7 @@ private struct UnsupportedButtonsFootnote: View {
                     .foregroundStyle(.white.opacity(0.8))
             }
 
-            Text("Open Snek can still use the rest of the device normally.")
+            Text("OpenSnek can still use the rest of the device normally.")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.60))
 

@@ -23,11 +23,17 @@ final class BackgroundServiceCoordinator {
 
     private let defaults: UserDefaults
     private let fileManager: FileManager
+    private let launchAgentsDirectoryURL: URL?
     private var serviceHost: BackgroundServiceHost?
 
-    init(defaults: UserDefaults = .standard, fileManager: FileManager = .default) {
+    init(
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default,
+        launchAgentsDirectoryURL: URL? = nil
+    ) {
         self.defaults = defaults
         self.fileManager = fileManager
+        self.launchAgentsDirectoryURL = launchAgentsDirectoryURL
         self.defaults.register(defaults: [
             Self.backgroundServiceEnabledDefaultsKey: true,
             Self.launchAtStartupDefaultsKey: false,
@@ -76,6 +82,36 @@ final class BackgroundServiceCoordinator {
         } else {
             try removeLaunchAgent()
         }
+    }
+
+    func synchronizeLaunchAgentIfNeeded() throws {
+        guard launchAtStartupEnabled else { return }
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        try synchronizeLaunchAgentIfNeeded(
+            executablePath: executableURL.path,
+            workingDirectoryPath: Bundle.main.bundleURL.deletingLastPathComponent().path
+        )
+    }
+
+    func synchronizeLaunchAgentIfNeeded(
+        executablePath: String,
+        workingDirectoryPath: String
+    ) throws {
+        guard launchAtStartupEnabled else { return }
+
+        let expectedPlist = Self.launchAgentPropertyList(
+            executablePath: executablePath,
+            workingDirectoryPath: workingDirectoryPath
+        )
+        if let currentPlist = currentLaunchAgentPropertyList(),
+           NSDictionary(dictionary: currentPlist).isEqual(to: expectedPlist) {
+            return
+        }
+
+        try installLaunchAgent(
+            executablePath: executablePath,
+            workingDirectoryPath: workingDirectoryPath
+        )
     }
 
     func makeBackendForCurrentMode() async throws -> any DeviceBackend {
@@ -291,22 +327,41 @@ final class BackgroundServiceCoordinator {
     }
 
     private var launchAgentURL: URL {
-        let libraryURL = fileManager.homeDirectoryForCurrentUser
+        let libraryURL = launchAgentsDirectoryURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("LaunchAgents", isDirectory: true)
         return libraryURL.appendingPathComponent("io.opensnek.OpenSnek.service.plist")
     }
 
     private func installLaunchAgent() throws {
+        try installLaunchAgent(
+            executablePath: executableURL.path,
+            workingDirectoryPath: Bundle.main.bundleURL.deletingLastPathComponent().path
+        )
+    }
+
+    private func installLaunchAgent(
+        executablePath: String,
+        workingDirectoryPath: String
+    ) throws {
         let launchAgentsDirectory = launchAgentURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: launchAgentsDirectory, withIntermediateDirectories: true, attributes: nil)
 
         let plist = Self.launchAgentPropertyList(
-            executablePath: executableURL.path,
-            workingDirectoryPath: Bundle.main.bundleURL.deletingLastPathComponent().path
+            executablePath: executablePath,
+            workingDirectoryPath: workingDirectoryPath
         )
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: launchAgentURL, options: .atomic)
+    }
+
+    private func currentLaunchAgentPropertyList() -> [String: Any]? {
+        guard fileManager.fileExists(atPath: launchAgentURL.path) else { return nil }
+        guard let data = try? Data(contentsOf: launchAgentURL) else { return nil }
+        guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return nil
+        }
+        return plist
     }
 
     private func removeLaunchAgent() throws {

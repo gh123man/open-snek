@@ -14,7 +14,7 @@ struct DeviceSidebarView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Text("Open Snek")
+                    Text("OpenSnek")
                         .font(.system(size: 19, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)

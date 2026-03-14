@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'USAGE'
-Build and launch Open Snek from the repo root.
+Build and launch OpenSnek from the repo root.
 
 Usage:
   ./run.sh [--no-build]

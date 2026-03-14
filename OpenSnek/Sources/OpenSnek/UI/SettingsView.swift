@@ -77,7 +77,7 @@ struct SettingsView: View {
                 ))
                 .disabled(!runtimeStore.backgroundServiceEnabled)
 
-                Text("When enabled, Open Snek keeps a compact menu bar icon running as a separate background instance. The full app can still be launched at any time.")
+                Text("When enabled, OpenSnek keeps a compact menu bar icon running as a separate background instance. The full app can still be launched at any time.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
 
@@ -175,13 +175,13 @@ struct SettingsView: View {
     private var permissionSummary: String {
         switch runtimeStore.hidAccessStatus.authorization {
         case .granted:
-            return "Input Monitoring is enabled, so Open Snek can attach real-time HID listeners for supported USB and Bluetooth devices."
+            return "Input Monitoring is enabled, so OpenSnek can attach real-time HID listeners for supported USB and Bluetooth devices."
         case .denied:
-            return "macOS still needs you to allow Input Monitoring for this Open Snek host before instant DPI updates and some USB reads can work normally."
+            return "macOS still needs you to allow Input Monitoring for this OpenSnek host before instant DPI updates and some USB reads can work normally."
         case .unknown:
-            return "Open Snek is still checking macOS HID permission state."
+            return "OpenSnek is still checking macOS HID permission state."
         case .unavailable:
-            return "Open Snek could not confirm the current HID permission state. Use the controls below to reopen the settings pane or reset the app's TCC grants."
+            return "OpenSnek could not confirm the current HID permission state. Use the controls below to reopen the settings pane or reset the app's TCC grants."
         }
     }
 

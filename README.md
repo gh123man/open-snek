@@ -2,7 +2,7 @@
   <img src="OpenSnek/App/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png" alt="open-snek app icon" width="200">
 </p>
 
-<h1 align="center">Open Snek</h1>
+<h1 align="center">OpenSnek</h1>
 
 <p align="center">
   Configure supported Razer mice on macOS without Synapse, Windows, or vendor lock-in.
@@ -10,7 +10,7 @@
 
 ![Screenshot](/docs/media/screenshot.png)
 
-Open Snek is an open source native macOS app for configuring supported Razer mice over USB or Bluetooth.
+OpenSnek is an open source native macOS app for configuring supported Razer mice over USB or Bluetooth.
 
 ## Highlights
 
@@ -38,14 +38,14 @@ More device support is welcome, whether that comes from new hardware captures or
 
 1. Download the latest DMG from [GitHub Releases](https://github.com/gh123man/open-snek/releases).
 2. Open the DMG.
-3. Drag `Open Snek.app` into `Applications`.
-4. Launch `Open Snek`.
+3. Drag `OpenSnek.app` into `Applications`.
+4. Launch `OpenSnek`.
 
 Official builds use the latest Xcode/macOS SDK. Minimum supported macOS version: macOS 14.
 
 If macOS asks for permissions:
 
-- For USB control, grant `Input Monitoring` to `Open Snek` in `System Settings > Privacy & Security`.
+- For USB control, grant `Input Monitoring` to `OpenSnek` in `System Settings > Privacy & Security`.
 - For Bluetooth control, allow Bluetooth access when prompted.
 
 ## Supported Devices
@@ -54,7 +54,7 @@ Support is transport-specific. A mouse may be supported over USB, Bluetooth, or 
 
 Current validated support:
 
-Status key: `Yes` = supported and validated, `Not yet` = the transport exists on the hardware but Open Snek does not support it yet, `No` = that transport is not available on the device.
+Status key: `Yes` = supported and validated, `Not yet` = the transport exists on the hardware but OpenSnek does not support it yet, `No` = that transport is not available on the device.
 
 | Device | USB | Bluetooth |
 |---|---|---|
@@ -64,7 +64,7 @@ Status key: `Yes` = supported and validated, `Not yet` = the transport exists on
 
 Not every feature is fully supported on every listed transport yet. Some controls and readback paths are still partial while capture, testing, and validation continue.
 
-Unsupported Razer mice still get a best-effort experience when possible. Open Snek will probe for controls that already match known behavior, show a light warning that the device is not fully supported, and avoid exposing UI for features that have not been mapped safely yet.
+Unsupported Razer mice still get a best-effort experience when possible. OpenSnek will probe for controls that already match known behavior, show a light warning that the device is not fully supported, and avoid exposing UI for features that have not been mapped safely yet.
 
 Support for more devices is welcome. New device support can land either through outside contributors or as more hardware becomes available for capture, testing, and validation.
 

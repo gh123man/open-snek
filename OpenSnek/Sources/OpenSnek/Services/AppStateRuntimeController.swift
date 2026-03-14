@@ -79,7 +79,7 @@ final class AppStateRuntimeController {
                 bundleIdentifier: runtimeStore.hidAccessStatus.bundleIdentifier
             )
             runtimeStore.permissionStatusMessage =
-                "Permissions reset for \(result.bundleIdentifier). Re-enable Input Monitoring, then relaunch Open Snek."
+                "Permissions reset for \(result.bundleIdentifier). Re-enable Input Monitoring, then relaunch OpenSnek."
             PermissionSupport.openInputMonitoringSettings()
         } catch {
             runtimeStore.permissionStatusMessage = "Permission reset failed: \(error.localizedDescription)"
@@ -251,6 +251,12 @@ final class AppStateRuntimeController {
     func start() async {
         guard !didStartRuntime else { return }
         didStartRuntime = true
+
+        do {
+            try environment.serviceCoordinator.synchronizeLaunchAgentIfNeeded()
+        } catch {
+            AppLog.warning("Service", "launch agent sync failed: \(error.localizedDescription)")
+        }
 
         if environment.launchRole.isService {
             do {
