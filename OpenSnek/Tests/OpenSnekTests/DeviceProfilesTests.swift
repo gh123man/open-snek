@@ -102,9 +102,11 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.passiveDPIInput?.subtype, 0x02)
         XCTAssertEqual(profile?.passiveDPIInput?.maxFeatureReportSize, 1)
         XCTAssertEqual(profile?.onboardProfileCount, 3)
+        XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01, 0x04, 0x0A])
+        XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel", "logo", "underglow"])
     }
 
-    func testBasiliskV3ProBluetoothHidesLightingControls() {
+    func testBasiliskV3ProBluetoothShowsLightingControls() {
         let bluetoothV3Pro = MouseDevice(
             id: "bt-v3-pro",
             vendor_id: 0x068E,
@@ -139,9 +141,17 @@ final class DeviceProfilesTests: XCTestCase {
             profile_id: .basiliskV3Pro
         )
 
-        XCTAssertFalse(bluetoothV3Pro.showsLightingControls)
+        XCTAssertTrue(bluetoothV3Pro.showsLightingControls)
         XCTAssertTrue(bluetoothV3X.showsLightingControls)
         XCTAssertTrue(usbV3Pro.showsLightingControls)
+    }
+
+    func testBasiliskV3ProBluetoothLightingTargetsResolveAllZones() throws {
+        let profile = try XCTUnwrap(DeviceProfiles.resolve(vendorID: 0x068E, productID: 0x00AC, transport: .bluetooth))
+        let targets = try XCTUnwrap(profile.lightingTargets())
+        XCTAssertEqual(targets.map(\.zoneID), ["scroll_wheel", "logo", "underglow"])
+        XCTAssertEqual(targets.map(\.ledID), [0x01, 0x04, 0x0A])
+        XCTAssertEqual(profile.lightingLEDIDs(), [0x01, 0x04, 0x0A])
     }
 
     func testResolveBluetoothFallbackProfileByName() {

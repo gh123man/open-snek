@@ -13,6 +13,16 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(Array(data), [0x34, 0x26, 0x00, 0x00, 0x0B, 0x04, 0x01, 0x00])
     }
 
+    func testLightingBrightnessKeyBuildersSupportPerZoneIDs() {
+        XCTAssertEqual(BLEVendorProtocol.Key.lightingBrightnessGet(ledID: 0x04).bytes, [0x10, 0x85, 0x01, 0x04])
+        XCTAssertEqual(BLEVendorProtocol.Key.lightingBrightnessSet(ledID: 0x0A).bytes, [0x10, 0x05, 0x01, 0x0A])
+    }
+
+    func testV3ProLightingZoneStateKeyBuilders() {
+        XCTAssertEqual(BLEVendorProtocol.Key.lightingZoneStateGet(ledID: 0x01).bytes, [0x10, 0x83, 0x00, 0x01])
+        XCTAssertEqual(BLEVendorProtocol.Key.lightingZoneStateSet(ledID: 0x04).bytes, [0x10, 0x03, 0x00, 0x04])
+    }
+
     func testParsePayloadFramesSuccess() {
         let header = Data([0x40, 0x03, 0, 0, 0, 0, 0, 0x02] + Array(repeating: 0, count: 12))
         let payloadFrame = Data([0xAA, 0xBB, 0xCC] + Array(repeating: 0, count: 17))
@@ -50,6 +60,11 @@ final class BLEVendorProtocolTests: XCTestCase {
         let parsed = BLEVendorProtocol.parsePayloadFrames(notifies: [header, payload], req: 0x32)
 
         XCTAssertEqual(parsed, payload)
+    }
+
+    func testParseLightingLEDIDsPreservesOrderAndDeduplicates() {
+        let ids = BLEVendorProtocol.parseLightingLEDIDs(blob: Data([0x04, 0x01, 0x0A, 0x04]))
+        XCTAssertEqual(ids, [0x04, 0x01, 0x0A])
     }
 
     func testParsePayloadFramesErrorStatusReturnsNil() {
@@ -234,6 +249,15 @@ final class BLEVendorProtocolTests: XCTestCase {
             )
         )
         XCTAssertEqual(args, [0x01, 0x01, 0x02, 0x02, 0x00, 0x02, 0x01, 0x02, 0x03, 0x10, 0x20, 0x30])
+    }
+
+    func testV3ProLightingZoneStatePayloadRoundTrip() {
+        let payload = BLEVendorProtocol.buildV3ProLightingZoneStatePayload(r: 0xFF, g: 0x40, b: 0x00)
+        XCTAssertEqual(Array(payload), [0x01, 0x00, 0x00, 0x01, 0xFF, 0x40, 0x00, 0x00, 0x00, 0x00])
+        XCTAssertEqual(
+            BLEVendorProtocol.parseV3ProLightingZoneStatePayload(payload),
+            RGBPatch(r: 0xFF, g: 0x40, b: 0x00)
+        )
     }
 
     func testParseVariableLengthDpiBlob() {

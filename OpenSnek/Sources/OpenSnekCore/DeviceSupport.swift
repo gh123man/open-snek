@@ -446,6 +446,7 @@ public enum DeviceProfiles {
         ),
         supportsAdvancedLightingEffects: false,
         supportedLightingEffects: [.staticColor],
+        usbLightingLEDIDs: [0x01],
         usbLightingZones: basiliskV3XUSBLightingZones,
         passiveDPIInput: PassiveDPIInputDescriptor(
             usagePage: 0x01,
@@ -470,6 +471,7 @@ public enum DeviceProfiles {
         ),
         supportsAdvancedLightingEffects: false,
         supportedLightingEffects: [.staticColor],
+        usbLightingLEDIDs: [0x01, 0x04, 0x0A],
         usbLightingZones: basiliskV335KUSBLightingZones,
         passiveDPIInput: PassiveDPIInputDescriptor(
             usagePage: 0x01,

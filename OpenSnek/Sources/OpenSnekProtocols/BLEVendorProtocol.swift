@@ -23,8 +23,9 @@ public enum BLEVendorProtocol {
 
         public static let dpiStagesGet = Key(b0: 0x0B, b1: 0x84, b2: 0x01, b3: 0x00)
         public static let dpiStagesSet = Key(b0: 0x0B, b1: 0x04, b2: 0x01, b3: 0x00)
-        public static let lightingGet = Key(b0: 0x10, b1: 0x85, b2: 0x01, b3: 0x01)
-        public static let lightingSet = Key(b0: 0x10, b1: 0x05, b2: 0x01, b3: 0x00)
+        public static let lightingZonesGet = Key(b0: 0x10, b1: 0x80, b2: 0x00, b3: 0x01)
+        public static let lightingGet = lightingBrightnessGet()
+        public static let lightingSet = lightingBrightnessSet()
         public static let lightingModeSet = Key(b0: 0x10, b1: 0x03, b2: 0x00, b3: 0x00)
         public static let lightingFrameGet = Key(b0: 0x10, b1: 0x84, b2: 0x00, b3: 0x00)
         public static let lightingFrameSet = Key(b0: 0x10, b1: 0x04, b2: 0x00, b3: 0x00)
@@ -35,6 +36,22 @@ public enum BLEVendorProtocol {
 
         public static func buttonBind(slot: UInt8) -> Key {
             Key(b0: 0x08, b1: 0x04, b2: 0x01, b3: slot)
+        }
+
+        public static func lightingBrightnessGet(ledID: UInt8 = 0x01) -> Key {
+            Key(b0: 0x10, b1: 0x85, b2: 0x01, b3: ledID)
+        }
+
+        public static func lightingBrightnessSet(ledID: UInt8 = 0x00) -> Key {
+            Key(b0: 0x10, b1: 0x05, b2: 0x01, b3: ledID)
+        }
+
+        public static func lightingZoneStateGet(ledID: UInt8) -> Key {
+            Key(b0: 0x10, b1: 0x83, b2: 0x00, b3: ledID)
+        }
+
+        public static func lightingZoneStateSet(ledID: UInt8) -> Key {
+            Key(b0: 0x10, b1: 0x03, b2: 0x00, b3: ledID)
         }
     }
 
@@ -278,6 +295,35 @@ public enum BLEVendorProtocol {
         case .pulseDual:
             return [0x01, ledID, 0x02, 0x02, 0x00, 0x02, UInt8(effect.primary.r), UInt8(effect.primary.g), UInt8(effect.primary.b), UInt8(effect.secondary.r), UInt8(effect.secondary.g), UInt8(effect.secondary.b)]
         }
+    }
+
+    public static func parseLightingLEDIDs(blob: Data) -> [UInt8]? {
+        guard !blob.isEmpty else { return nil }
+        var seen: Set<UInt8> = []
+        var ids: [UInt8] = []
+        for value in blob where !seen.contains(value) {
+            seen.insert(value)
+            ids.append(value)
+        }
+        return ids.isEmpty ? nil : ids
+    }
+
+    public static func buildV3ProLightingZoneStatePayload(r: Int, g: Int, b: Int) -> Data {
+        Data([
+            0x01, 0x00, 0x00, 0x01,
+            UInt8(max(0, min(255, r))),
+            UInt8(max(0, min(255, g))),
+            UInt8(max(0, min(255, b))),
+            0x00, 0x00, 0x00,
+        ])
+    }
+
+    public static func parseV3ProLightingZoneStatePayload(_ payload: Data) -> RGBPatch? {
+        guard payload.count >= 10 else { return nil }
+        guard payload[0] == 0x01, payload[1] == 0x00, payload[2] == 0x00, payload[3] == 0x01 else {
+            return nil
+        }
+        return RGBPatch(r: Int(payload[4]), g: Int(payload[5]), b: Int(payload[6]))
     }
 
     public static func resolveActiveStage(activeRaw: Int, stageIDs: [UInt8], count: Int) -> Int {

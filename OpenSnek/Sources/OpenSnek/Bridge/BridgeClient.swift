@@ -751,26 +751,25 @@ actor BridgeClient {
 
     func readLightingColor(device: MouseDevice) async throws -> RGBPatch? {
         guard device.transport == .bluetooth else { return nil }
-        let req = nextBTReq()
-        let header = BLEVendorProtocol.buildReadHeader(req: req, key: .lightingFrameGet)
-        let notifies = try await btExchange([header], timeout: 0.6, device: device)
-        guard let payload = BLEVendorProtocol.parsePayloadFrames(notifies: notifies, req: req) else {
-            let notifySummary = notifies
-                .map { $0.map { String(format: "%02x", $0) }.joined() }
-                .joined(separator: " | ")
-            AppLog.debug(
-                "Bridge",
-                "readLightingColor no-payload device=\(device.id) req=\(req) notifies=\(notifySummary)"
-            )
-            return nil
+        if isBluetoothV3ProLightingDevice(device) {
+            let ledIDs = bluetoothLightingLEDIDs(device: device)
+            var colors: [(UInt8, RGBPatch)] = []
+            for ledID in ledIDs {
+                if let color = try await btReadLightingColor(device: device, ledID: ledID) {
+                    colors.append((ledID, color))
+                }
+            }
+            guard let first = colors.first?.1 else { return nil }
+            if colors.contains(where: { $0.1 != first }) {
+                AppLog.debug(
+                    "Bridge",
+                    "readLightingColor zone-mismatch device=\(device.id) colors=\(formatLightingZoneColors(colors))"
+                )
+            }
+            return first
         }
-        let parsed = parseLightingRGB(payload: payload)
-        if let parsed {
-            AppLog.debug("Bridge", "readLightingColor device=\(device.id) rgb=(\(parsed.r),\(parsed.g),\(parsed.b))")
-        } else {
-            AppLog.debug("Bridge", "readLightingColor parse-failed device=\(device.id) payload=\(payload.map { String(format: "%02x", $0) }.joined())")
-        }
-        return parsed
+
+        return try await btReadLightingColor(device: device, ledID: 0x01)
     }
 
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
@@ -803,13 +802,20 @@ actor BridgeClient {
             }
 
             if let rgb = patch.ledRGB {
-                guard try await btSetLightingRGB(device: device, r: rgb.r, g: rgb.g, b: rgb.b) else {
+                guard try await btSetLightingRGB(
+                    device: device,
+                    r: rgb.r,
+                    g: rgb.g,
+                    b: rgb.b,
+                    ledIDs: patch.usbLightingZoneLEDIDs
+                ) else {
                     throw BridgeError.commandFailed("Failed to set Bluetooth RGB")
                 }
             }
 
             if let effect = patch.lightingEffect {
-                let applied = try await btApplyLightingEffectFallback(device: device, effect: effect)
+                let ledIDs = effect.kind == .staticColor ? patch.usbLightingZoneLEDIDs : nil
+                let applied = try await btApplyLightingEffectFallback(device: device, effect: effect, ledIDs: ledIDs)
                 if !applied {
                     AppLog.debug(
                         "Bridge",

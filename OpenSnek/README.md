@@ -223,6 +223,34 @@ swift run --package-path OpenSnek OpenSnekProbe usb-lighting-effect --kind stati
 
 The probe prints one `0x0F` payload per targeted LED ID, which is useful during bring-up when confirming that a whole-device write really fans out to every validated zone.
 
+### Inspect BLE lighting zones
+
+```bash
+swift run --package-path OpenSnek OpenSnekProbe bt-lighting-info --name "BSK V3 PRO"
+swift run --package-path OpenSnek OpenSnekProbe bt-lighting-read --zone all --name "BSK V3 PRO"
+```
+
+On the validated Basilisk V3 Pro Bluetooth path, `bt-lighting-info` reports the same three lighting zones as USB:
+
+- `scroll_wheel` -> `0x01`
+- `logo` -> `0x04`
+- `underglow` -> `0x0A`
+
+The current V3 Pro Bluetooth mapping is:
+
+- brightness read/write: `10 85 01 <led>` / `10 05 01 <led>`
+- static color read/write: `10 83 00 <led>` / `10 03 00 <led>`
+
+### Write BLE lighting across all zones
+
+```bash
+swift run --package-path OpenSnek OpenSnekProbe bt-lighting-brightness --value 96 --zone all --name "BSK V3 PRO"
+swift run --package-path OpenSnek OpenSnekProbe bt-lighting-color --color 00ff40 --zone all --name "BSK V3 PRO"
+swift run --package-path OpenSnek OpenSnekProbe bt-lighting-color --color ff6600 --zone logo --name "BSK V3 PRO"
+```
+
+The Bluetooth probe now prints one per-zone write for each targeted LED ID so you can confirm that an `all` write really fans out to every validated zone.
+
 ### Read current BLE DPI
 
 ```bash

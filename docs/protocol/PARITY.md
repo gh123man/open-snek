@@ -40,7 +40,7 @@ Legend:
 | Scroll LED brightness | `0F:84/04` (`VARSTORE`, `LED=0x01`) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated; BLE vendor key not mapped |
 | Scroll LED effects | `0F:02` (none/spectrum/wave/static/reactive/breath) | unknown vendor key | both scripts (HID path) | PARTIAL | USB validated on Basilisk V3 X; multi-zone IDs are also validated on Basilisk V3 Pro / 35K |
 | Button remapping | class `0x02`, `0x8C/0x0C` button-function block | vendor `08 04 01 <slot>` + 10-byte payload | BLE implemented + USB validated (`OpenSnek` + `OpenSnekProbe`) | PARTIAL | USB uses `profile,slot,hypershift` + 7-byte function block (`class,len,data[5]`); mouse + simple keyboard remaps validate on `0x00B9`, including default restore behavior and readback. BLE slot `0x06` remains rejected (`status 0x03`); macro/media catalogs still pending on both paths. |
-| Lighting/effects | class `0x0F` (OpenRazer documented) | mode (`10 03`) + scalar (`10 85`/`10 05`) + frame stream (`10 04`) | USB scroll LED effects + BLE mode/scalar/frame writes | PARTIAL | Capture review shows a shared BLE stream path for advanced effects, but OpenSnek keeps Bluetooth app controls static-only for now because the streamed profiles are software-driven and not yet good enough to ship. |
+| Lighting/effects | class `0x0F` (OpenRazer documented) | scalar brightness (`10 85`/`10 05`), legacy frame stream (`10 84`/`10 04`), and V3 Pro zone static state (`10 83`/`10 03`) | USB zone writes + BLE zone brightness/static-color writes | PARTIAL | OpenSnek now ships static-color Bluetooth lighting for the Basilisk V3 Pro by fanning out per-zone `10 03`/`10 05` writes across `0x01`, `0x04`, and `0x0A`. Advanced BLE effect streaming remains unshipped. |
 | Profiles | partially documented in ecosystem | unknown | none | UNKNOWN | Needs capture-backed mapping |
 
 ## Current Priorities
@@ -123,12 +123,13 @@ Validated in-session over Bluetooth:
 Validated in-session over Bluetooth:
 - vendor GATT path uses the same request headers and key catalog as the Basilisk V3 X HyperSpeed path, but the notify header is the shorter 8-byte variant and payload continuations may end with a short final fragment
 - passive HID DPI reports are present on the paired BT HID interface with the same `05 05 02 <x_hi> <x_lo> <y_hi> <y_lo> ...` shape used by the validated V3 X Bluetooth path; a live macOS callback capture on `0x00AC` observed `900`, `2000`, and `1100` DPI stage frames
-- working read/write/readback: DPI stages + active stage (`0B84`/`0B04`), sleep timeout (`05 84 00 00` / `05 04 00 00`), lighting brightness (`10 85 01 01` / `10 05 01 00`)
+- working read/write/readback: DPI stages + active stage (`0B84`/`0B04`), sleep timeout (`05 84 00 00` / `05 04 00 00`), per-zone lighting brightness (`10 85 01 <led>` / `10 05 01 <led>`), per-zone static color (`10 83 00 <led>` / `10 03 00 <led>`)
 - working read: battery raw (`05 81 00 01`), battery status (`05 80 00 01`)
 - working write ACKs on tested BLE button-remap slots: `0x01..0x05`, `0x09`, `0x0A`, `0x34`, `0x35`
 - observed V3 Pro Bluetooth button-layout shape now matches the shared Basilisk family on the tested slots, so Open Snek ships the core buttons plus wheel-tilt controls on the BT profile
+- observed V3 Pro Bluetooth lighting zone catalog: `10 80 00 01` -> `04 01 0a`, matching the validated zone map `scroll_wheel`, `logo`, `underglow`
 - not yet decoded enough to ship: sensitivity clutch (`0x0F`) restore/remap payloads, profile button (`0x6A`) restore/remap payloads
-- not yet decoded enough to trust: lighting frame-color readback on `10 84 00 00`; current runtime probes return no payload even though brightness works
+- legacy lighting frame-color readback on `10 84 00 00` still does not return a usable payload on the V3 Pro path; OpenSnek now treats that frame family as legacy-only and uses the validated zone-state keys instead
 
 Validation notes:
 - the required hardware XCTest gate (`OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests`) currently aborts under macOS TCC before CoreBluetooth can start in the unbundled test runner on this host

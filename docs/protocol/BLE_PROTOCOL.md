@@ -178,9 +178,12 @@ These are the keys currently used by the Swift app/probe and therefore covered b
 | Feature | Read key | Write key | Write payload length | Payload type |
 |---|---|---|---:|---|
 | DPI stage table | `0B 84 01 00` | `0B 04 01 00` | `0x26` | 38-byte table |
-| Lighting brightness | `10 85 01 01` | `10 05 01 00` | `0x01` | `u8` |
-| Lighting frame color | `10 84 00 00` | `10 04 00 00` | `0x08` | 8-byte frame |
-| Lighting mode selector | none | `10 03 00 00` | `0x04` | `u32 LE` |
+| Lighting zone catalog | `10 80 00 01` | none | none | LED ID list |
+| Lighting brightness (legacy/global) | `10 85 01 01` | `10 05 01 00` | `0x01` | `u8` |
+| Lighting brightness (V3 Pro zone) | `10 85 01 <led>` | `10 05 01 <led>` | `0x01` | `u8` |
+| Lighting frame color (legacy) | `10 84 00 00` | `10 04 00 00` | `0x08` | 8-byte frame |
+| Lighting zone static state (V3 Pro) | `10 83 00 <led>` | `10 03 00 <led>` | `0x0A` | 10-byte zone state |
+| Lighting mode selector (legacy) | none | `10 03 00 00` | `0x04` | `u32 LE` |
 | Sleep timeout | `05 84 00 00` | `05 04 00 00` | `0x02` | `u16 LE` |
 | Battery raw | `05 81 00 01` | none | none | `u8` |
 | Battery status | `05 80 00 01` | none | none | `u8` |
@@ -328,9 +331,11 @@ Current app policy:
 
 Those are client rules, not independent protocol guarantees, but they are what current Swift uses.
 
-### 6.3 Lighting Frame Payload
+### 6.3 Lighting Payloads
 
-The write payload for key `10 04 00 00` is always 8 bytes:
+#### 6.3.1 Legacy Frame Payload (`10 84` / `10 04`)
+
+The legacy static-color payload used by the Basilisk V3 X HyperSpeed Bluetooth path is 8 bytes:
 
 ```text
 04 00 00 00 [marker] [R] [G] [B]
@@ -355,7 +360,43 @@ Read payloads accepted by Swift:
 [marker] [R] [G] [B]
 ```
 
-`BridgeClient.parseLightingRGB` handles both shapes.
+#### 6.3.2 V3 Pro Zone-State Payload (`10 83` / `10 03`)
+
+The Basilisk V3 Pro Bluetooth path uses per-zone static state instead of the legacy frame stream.
+
+Validated LED IDs:
+- `0x01` scroll wheel
+- `0x04` logo
+- `0x0A` underglow
+
+Read key:
+- `10 83 00 <led>`
+
+Write key:
+- `10 03 00 <led>`
+
+Payload layout:
+
+```text
+01 00 00 01 [R] [G] [B] 00 00 00
+```
+
+Observed examples:
+- `01 00 00 01 bf 00 f2 00 00 00`
+- `01 00 00 01 00 00 ff 00 00 00`
+- `01 00 00 01 00 ff 00 00 00 00`
+
+OpenSnek now treats bytes `4...6` as `R/G/B` and fans out one `10 03 00 <led>` write per targeted zone.
+
+#### 6.3.3 V3 Pro Zone Brightness (`10 85` / `10 05`)
+
+The Basilisk V3 Pro Bluetooth path also exposes per-zone brightness:
+
+- read: `10 85 01 <led>`
+- write: `10 05 01 <led>`
+- payload: one brightness byte
+
+Observed reads on the validated device returned `ff` for `0x01`, `0x04`, and `0x0A`.
 
 ### 6.4 Lighting Mode Selector Payload
 

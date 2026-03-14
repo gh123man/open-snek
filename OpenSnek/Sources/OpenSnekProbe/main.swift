@@ -1,5 +1,6 @@
 import Foundation
 import OpenSnekCore
+import OpenSnekProtocols
 
 enum OpenSnekProbe {
     static func run() async throws {
@@ -38,6 +39,138 @@ enum OpenSnekProbe {
                 if parsed.sleepMs > 0 {
                     try await Task.sleep(nanoseconds: UInt64(parsed.sleepMs) * 1_000_000)
                 }
+            }
+        case "bt-info":
+            let bridge = ProbeBridge()
+            let summaries = await bridge.connectedPeripherals() ?? []
+            if summaries.isEmpty {
+                print("bt connected-peripherals: none")
+            } else {
+                for summary in summaries {
+                    print("bt peripheral name=\"\(summary.name ?? "")\" id=\(summary.identifier.uuidString)")
+                }
+            }
+        case "bt-raw-read":
+            let bridge = ProbeBridge()
+            let parsed = try parseBTRawReadArgs(Array(args.dropFirst()))
+            let result = try await bridge.rawRead(
+                key: parsed.key,
+                timeout: parsed.timeoutSeconds,
+                preferredPeripheralName: parsed.preferredPeripheralName
+            )
+            print("bt-raw-read req=0x\(String(format: "%02x", result.req)) key=\(hexString(parsed.key)) name=\"\(parsed.preferredPeripheralName ?? "")\"")
+            print(describeBTNotifyFrames(result.notifies))
+            if let payload = result.payload {
+                print("payload[\(payload.count)]: \(hexString(Array(payload)))")
+            } else {
+                print("payload: nil")
+            }
+        case "bt-raw-write":
+            let bridge = ProbeBridge()
+            let parsed = try parseBTRawWriteArgs(Array(args.dropFirst()))
+            let result = try await bridge.rawWrite(
+                key: parsed.key,
+                payload: Data(parsed.payload),
+                timeout: parsed.timeoutSeconds,
+                preferredPeripheralName: parsed.preferredPeripheralName
+            )
+            print("bt-raw-write req=0x\(String(format: "%02x", result.req)) key=\(hexString(parsed.key)) payload=\(hexString(parsed.payload)) name=\"\(parsed.preferredPeripheralName ?? "")\"")
+            print(describeBTNotifyFrames(result.notifies))
+            if let ack = result.ack {
+                print("ack status=0x\(String(format: "%02x", ack.status)) payloadLength=\(ack.payloadLength)")
+            } else {
+                print("ack: nil")
+            }
+        case "bt-lighting-info":
+            let bridge = ProbeBridge()
+            let parsed = try parseBTLightingZoneArgs(Array(args.dropFirst()))
+            let profile = await bridge.bluetoothLightingProfile(preferredPeripheralName: parsed.preferredPeripheralName)
+            let zoneChoices = await bridge.bluetoothLightingZoneChoices(preferredPeripheralName: parsed.preferredPeripheralName)
+            let supportedLEDIDs = try await bridge.bluetoothLightingLEDIDs(preferredPeripheralName: parsed.preferredPeripheralName)
+            print("bt profile=\"\(profile?.productName ?? "unknown")\" name=\"\(parsed.preferredPeripheralName ?? "")\"")
+            if supportedLEDIDs.isEmpty {
+                print("supported-led-ids: none")
+            } else {
+                print("supported-led-ids=\(hexLEDIDList(supportedLEDIDs))")
+            }
+            if let targets = try await bridge.bluetoothLightingTargets(preferredPeripheralName: parsed.preferredPeripheralName) {
+                for target in targets {
+                    print(describeBTLightingTarget(target))
+                }
+            }
+            guard let reads = try await bridge.readBluetoothLighting(
+                preferredPeripheralName: parsed.preferredPeripheralName,
+                zoneID: parsed.zoneID
+            ) else {
+                throw invalidBTLightingZone(zoneID: parsed.zoneID, choices: zoneChoices)
+            }
+            for read in reads {
+                print(describeBTLightingReadResult(read))
+            }
+        case "bt-lighting-read":
+            let bridge = ProbeBridge()
+            let parsed = try parseBTLightingZoneArgs(Array(args.dropFirst()))
+            let zoneChoices = await bridge.bluetoothLightingZoneChoices(preferredPeripheralName: parsed.preferredPeripheralName)
+            guard let reads = try await bridge.readBluetoothLighting(
+                preferredPeripheralName: parsed.preferredPeripheralName,
+                zoneID: parsed.zoneID
+            ) else {
+                throw invalidBTLightingZone(zoneID: parsed.zoneID, choices: zoneChoices)
+            }
+            for read in reads {
+                print(describeBTLightingReadResult(read))
+            }
+        case "bt-lighting-brightness":
+            let bridge = ProbeBridge()
+            let parsed = try parseBTLightingBrightnessArgs(Array(args.dropFirst()))
+            let zoneChoices = await bridge.bluetoothLightingZoneChoices(preferredPeripheralName: parsed.preferredPeripheralName)
+            guard let writes = try await bridge.writeBluetoothLightingBrightness(
+                value: parsed.value,
+                preferredPeripheralName: parsed.preferredPeripheralName,
+                zoneID: parsed.zoneID
+            ) else {
+                throw invalidBTLightingZone(zoneID: parsed.zoneID, choices: zoneChoices)
+            }
+            for write in writes {
+                print(describeBTLightingWriteResult(write, operation: "brightness"))
+            }
+            guard writes.allSatisfy(\.succeeded) else {
+                throw ProbeError.protocolError("One or more BT lighting brightness writes failed")
+            }
+            guard let reads = try await bridge.readBluetoothLighting(
+                preferredPeripheralName: parsed.preferredPeripheralName,
+                zoneID: parsed.zoneID
+            ) else {
+                throw invalidBTLightingZone(zoneID: parsed.zoneID, choices: zoneChoices)
+            }
+            for read in reads {
+                print(describeBTLightingReadResult(read))
+            }
+        case "bt-lighting-color":
+            let bridge = ProbeBridge()
+            let parsed = try parseBTLightingColorArgs(Array(args.dropFirst()))
+            let zoneChoices = await bridge.bluetoothLightingZoneChoices(preferredPeripheralName: parsed.preferredPeripheralName)
+            guard let writes = try await bridge.writeBluetoothLightingColor(
+                color: parsed.color,
+                preferredPeripheralName: parsed.preferredPeripheralName,
+                zoneID: parsed.zoneID
+            ) else {
+                throw invalidBTLightingZone(zoneID: parsed.zoneID, choices: zoneChoices)
+            }
+            for write in writes {
+                print(describeBTLightingWriteResult(write, operation: "color"))
+            }
+            guard writes.allSatisfy(\.succeeded) else {
+                throw ProbeError.protocolError("One or more BT lighting color writes failed")
+            }
+            guard let reads = try await bridge.readBluetoothLighting(
+                preferredPeripheralName: parsed.preferredPeripheralName,
+                zoneID: parsed.zoneID
+            ) else {
+                throw invalidBTLightingZone(zoneID: parsed.zoneID, choices: zoneChoices)
+            }
+            for read in reads {
+                print(describeBTLightingReadResult(read))
             }
         case "usb-info":
             let usb = try USBProbeClient(productID: try parseOptionalUSBPID(Array(args.dropFirst())))
@@ -250,6 +383,13 @@ enum OpenSnekProbe {
           OpenSnekProbe dpi-read
           OpenSnekProbe dpi-set --values 1600,6400 [--active 1] [--verify-retries 6] [--verify-delay-ms 120]
           OpenSnekProbe dpi-cycle --sequence 800,6400;1600,6400 --loops 10 [--active 1] [--sleep-ms 120]
+          OpenSnekProbe bt-info
+          OpenSnekProbe bt-raw-read --key 10840000 [--name "BSK V3 PRO"] [--timeout-ms 600]
+          OpenSnekProbe bt-raw-write --key 10040000 --payload 0400000000ff4010 [--name "BSK V3 PRO"] [--timeout-ms 900]
+          OpenSnekProbe bt-lighting-info [--zone all|scroll_wheel|logo|underglow] [--name "BSK V3 PRO"]
+          OpenSnekProbe bt-lighting-read [--zone all|scroll_wheel|logo|underglow] [--name "BSK V3 PRO"]
+          OpenSnekProbe bt-lighting-brightness --value 128 [--zone all|scroll_wheel|logo|underglow] [--name "BSK V3 PRO"]
+          OpenSnekProbe bt-lighting-color --color ff6600 [--zone all|scroll_wheel|logo|underglow] [--name "BSK V3 PRO"]
           OpenSnekProbe usb-info [--pid 0x00ab]
           OpenSnekProbe usb-lighting-info [--zone all|scroll_wheel|logo|underglow] [--pid 0x00ab]
           OpenSnekProbe usb-lighting-read [--zone all|scroll_wheel|logo|underglow] [--pid 0x00ab]
@@ -354,6 +494,67 @@ enum OpenSnekProbe {
         let maxReportsRaw = max(0, Int(flags["--max-reports"] ?? "0") ?? 0)
         let maxReports = maxReportsRaw > 0 ? maxReportsRaw : nil
         return (durationSeconds, maxReports, try parseOptionalUSBPID(args))
+    }
+
+    private static func parseBTRawReadArgs(_ args: [String]) throws -> (key: [UInt8], preferredPeripheralName: String?, timeoutSeconds: TimeInterval) {
+        let flags = parseFlags(args)
+        guard let keyRaw = flags["--key"] else {
+            throw ProbeError.usage("Missing --key\n\(usageText)")
+        }
+        let key = try parseHexBytes(keyRaw)
+        guard key.count == 4 else {
+            throw ProbeError.usage("Invalid --key '\(keyRaw)' (expected 8 hex chars)")
+        }
+        let timeoutSeconds = max(0.1, Double(flags["--timeout-ms"] ?? "600").map { $0 / 1000.0 } ?? 0.6)
+        let preferredPeripheralName = parsePeripheralName(flags["--name"])
+        return (key, preferredPeripheralName, timeoutSeconds)
+    }
+
+    private static func parseBTRawWriteArgs(_ args: [String]) throws -> (key: [UInt8], payload: [UInt8], preferredPeripheralName: String?, timeoutSeconds: TimeInterval) {
+        let flags = parseFlags(args)
+        guard let keyRaw = flags["--key"] else {
+            throw ProbeError.usage("Missing --key\n\(usageText)")
+        }
+        guard let payloadRaw = flags["--payload"] else {
+            throw ProbeError.usage("Missing --payload\n\(usageText)")
+        }
+        let key = try parseHexBytes(keyRaw)
+        guard key.count == 4 else {
+            throw ProbeError.usage("Invalid --key '\(keyRaw)' (expected 8 hex chars)")
+        }
+        let payload = try parseHexBytes(payloadRaw)
+        let timeoutSeconds = max(0.1, Double(flags["--timeout-ms"] ?? "900").map { $0 / 1000.0 } ?? 0.9)
+        let preferredPeripheralName = parsePeripheralName(flags["--name"])
+        return (key, payload, preferredPeripheralName, timeoutSeconds)
+    }
+
+    private static func parseBTLightingZoneArgs(_ args: [String]) throws -> (zoneID: String?, preferredPeripheralName: String?) {
+        let flags = parseFlags(args)
+        return (parseLightingZoneID(flags["--zone"]), parsePeripheralName(flags["--name"]))
+    }
+
+    private static func parseBTLightingBrightnessArgs(_ args: [String]) throws -> (value: Int, zoneID: String?, preferredPeripheralName: String?) {
+        let flags = parseFlags(args)
+        guard let valueRaw = flags["--value"], let value = Int(valueRaw) else {
+            throw ProbeError.usage("Missing --value\n\(usageText)")
+        }
+        return (
+            max(0, min(255, value)),
+            parseLightingZoneID(flags["--zone"]),
+            parsePeripheralName(flags["--name"])
+        )
+    }
+
+    private static func parseBTLightingColorArgs(_ args: [String]) throws -> (color: RGBPatch, zoneID: String?, preferredPeripheralName: String?) {
+        let flags = parseFlags(args)
+        guard let color = try parseRGBPatch(flags["--color"]) else {
+            throw ProbeError.usage("Missing or invalid --color\n\(usageText)")
+        }
+        return (
+            color,
+            parseLightingZoneID(flags["--zone"]),
+            parsePeripheralName(flags["--name"])
+        )
     }
 
     private static func parseUSBLightingZoneArgs(_ args: [String]) throws -> (zoneID: String?, productID: Int?) {
@@ -468,6 +669,12 @@ enum OpenSnekProbe {
         return normalized.isEmpty || normalized == "all" ? nil : normalized
     }
 
+    private static func parsePeripheralName(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private static func parseLightingEffectKind(_ raw: String) -> LightingEffectKind? {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "off":
@@ -570,9 +777,35 @@ enum OpenSnekProbe {
         ButtonBindingSupport.describeUSBFunctionBlock(block)
     }
 
+    private static func hexString(_ bytes: [UInt8]) -> String {
+        bytes.map { String(format: "%02x", $0) }.joined(separator: " ")
+    }
+
+    private static func describeBTNotifyFrames(_ frames: [Data]) -> String {
+        if frames.isEmpty {
+            return "notifies: none"
+        }
+        let lines = frames.enumerated().map { index, frame in
+            let header = BLEVendorProtocol.NotifyHeader(data: frame)
+            let headerDetail: String
+            if let header {
+                headerDetail = " req=0x\(String(format: "%02x", header.req)) status=0x\(String(format: "%02x", header.status)) len=\(header.payloadLength)"
+            } else {
+                headerDetail = ""
+            }
+            return "notify[\(index)] len=\(frame.count)\(headerDetail) \(hexString(Array(frame)))"
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private static func invalidUSBLightingZone(zoneID: String?, usb: USBProbeClient) -> ProbeError {
         let requested = zoneID ?? "all"
         return .usage("Invalid --zone '\(requested)' (available: \(usb.lightingZoneChoices().joined(separator: ",")))")
+    }
+
+    private static func invalidBTLightingZone(zoneID: String?, choices: [String]) -> ProbeError {
+        let requested = zoneID ?? "all"
+        return .usage("Invalid --zone '\(requested)' (available: \(choices.joined(separator: ",")))")
     }
 
     private static func describeUSBLightingReadResult(_ result: USBLightingReadResult) -> String {
@@ -584,6 +817,29 @@ enum OpenSnekProbe {
         let hex = result.args.map { String(format: "%02x", $0) }.joined(separator: " ")
         let status = result.succeeded ? "ok" : "error"
         return "write-\(operation) zone=\(result.target.zoneID) label=\"\(result.target.zoneLabel)\" led=0x\(String(format: "%02x", result.target.ledID)) args=\(hex) status=\(status)"
+    }
+
+    private static func hexLEDIDList(_ ledIDs: [UInt8]) -> String {
+        ledIDs.map { String(format: "0x%02x", $0) }.joined(separator: ",")
+    }
+
+    private static func describeBTLightingTarget(_ target: USBLightingTargetDescriptor) -> String {
+        "zone id=\(target.zoneID) label=\"\(target.zoneLabel)\" ledIDs=[0x\(String(format: "%02x", target.ledID))]"
+    }
+
+    private static func describeBTLightingReadResult(_ result: BTLightingReadResult) -> String {
+        let brightness = result.brightness.map(String.init) ?? "read_failed"
+        let color = result.color.map { color in
+            String(format: "%02x%02x%02x", color.r, color.g, color.b)
+        } ?? "read_failed"
+        return "lighting zone=\(result.target.zoneID) label=\"\(result.target.zoneLabel)\" led=0x\(String(format: "%02x", result.target.ledID)) brightness=\(brightness) color=\(color)"
+    }
+
+    private static func describeBTLightingWriteResult(_ result: BTLightingWriteResult, operation: String) -> String {
+        let key = result.key.map { String(format: "%02x", $0) }.joined(separator: " ")
+        let payload = result.payload.map { String(format: "%02x", $0) }.joined(separator: " ")
+        let status = result.succeeded ? "ok" : "error"
+        return "write-\(operation) zone=\(result.target.zoneID) label=\"\(result.target.zoneLabel)\" led=0x\(String(format: "%02x", result.target.ledID)) key=\(key) payload=\(payload) status=\(status)"
     }
 }
 

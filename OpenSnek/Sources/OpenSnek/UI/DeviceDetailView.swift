@@ -668,10 +668,13 @@ struct LightingCard: View {
         return 0.10 + (brightness * 0.22)
     }
 
+    private var showsStaticLightingZonePicker: Bool {
+        editorStore.editableLightingEffect == .staticColor &&
+            editorStore.visibleUSBLightingZones.count > 1
+    }
+
     private var zoneGradientColors: [Color] {
-        guard selected.transport == .usb,
-              editorStore.editableLightingEffect == .staticColor,
-              editorStore.visibleUSBLightingZones.count > 1,
+        guard showsStaticLightingZonePicker,
               editorStore.editableUSBLightingZoneID != "all"
         else {
             return [
@@ -698,6 +701,38 @@ struct LightingCard: View {
 
     private var brightnessPercent: Int {
         Int(round((Double(max(0, min(255, editorStore.editableLedBrightness))) / 255.0) * 100.0))
+    }
+
+    @ViewBuilder
+    private func staticLightingZonePicker(applyOnChange: Bool) -> some View {
+        if showsStaticLightingZonePicker {
+            HStack {
+                Text("Zone")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+                Spacer()
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { editorStore.editableUSBLightingZoneID },
+                        set: {
+                            editorStore.updateUSBLightingZoneID($0)
+                            if applyOnChange {
+                                editorStore.scheduleAutoApplyLightingEffect()
+                            }
+                        }
+                    )
+                ) {
+                    Text("All Zones").tag("all")
+                    ForEach(editorStore.visibleUSBLightingZones) { zone in
+                        Text(zone.label).tag(zone.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 220, alignment: .trailing)
+            }
+        }
     }
 
     var body: some View {
@@ -727,6 +762,8 @@ struct LightingCard: View {
             .padding(.vertical, 8)
 
             if !selected.supports_advanced_lighting_effects {
+                staticLightingZonePicker(applyOnChange: false)
+
                 LightingColorEditor(
                     title: "Color",
                     color: Binding(
@@ -814,34 +851,7 @@ struct LightingCard: View {
                 }
 
                 if editorStore.editableLightingEffect.usesPrimaryColor {
-                    if selected.transport == .usb,
-                       editorStore.editableLightingEffect == .staticColor,
-                       editorStore.visibleUSBLightingZones.count > 1 {
-                        HStack {
-                            Text("Static Zone")
-                                .font(.system(size: 13, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.82))
-                            Spacer()
-                            Picker(
-                                "",
-                                selection: Binding(
-                                    get: { editorStore.editableUSBLightingZoneID },
-                                    set: {
-                                        editorStore.updateUSBLightingZoneID($0)
-                                        editorStore.scheduleAutoApplyLightingEffect()
-                                    }
-                                )
-                            ) {
-                                Text("All Zones").tag("all")
-                                ForEach(editorStore.visibleUSBLightingZones) { zone in
-                                    Text(zone.label).tag(zone.id)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(width: 220, alignment: .trailing)
-                        }
-                    }
+                    staticLightingZonePicker(applyOnChange: true)
 
                     LightingColorEditor(
                         title: "Primary Color",

@@ -106,6 +106,20 @@ swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1600,6400 --act
 swift run --package-path OpenSnek OpenSnekProbe dpi-cycle --sequence '1200,6400;2600,6400' --loops 10 --active 2
 ```
 
+Bluetooth/TCC note:
+- `OpenSnekProbe` BT commands use CoreBluetooth and require macOS Bluetooth privacy approval for the current host process.
+- If a `swift run --package-path OpenSnek OpenSnekProbe ...` BT command aborts with `__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__`, fix macOS permission for the launching host before debugging protocol logic.
+- On this workspace, the direct probe path works after granting Bluetooth access to the Codex host; verify with:
+
+```bash
+swift run --package-path OpenSnek OpenSnekProbe bt-raw-read --name 'BSK V3 PRO' --key 10850101 --timeout-ms 1200
+```
+
+- Expected success shape on the Basilisk V3 Pro BT path:
+  - notify header `30 01 00 00 00 00 00 02`
+  - payload `ff`
+- If permission still looks stale, relaunch the host app (Codex / Terminal / Xcode) and retry before changing any BLE code.
+
 For stage-selection regressions, run this exact check:
 
 ```bash

@@ -173,9 +173,9 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(editableColor, persistedColor)
     }
 
-    func testBluetoothV3ProPersistedLightingDoesNotReapplyWhenLightingIsHidden() async throws {
+    func testBluetoothV3ProPersistedLightingReappliesUsingSavedZone() async throws {
         let device = MouseDevice(
-            id: "bt-v3-pro-lighting-hidden",
+            id: "bt-v3-pro-lighting-zone",
             vendor_id: 0x068E,
             product_id: 0x00AC,
             product_name: "Basilisk V3 Pro",
@@ -190,7 +190,8 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         )
         let persistedColor = RGBColor(r: 10, g: 20, b: 30)
         let preferenceStore = DevicePreferenceStore()
-        preferenceStore.persistLightingColor(persistedColor, device: device)
+        preferenceStore.persistLightingColor(persistedColor, device: device, zoneID: "logo")
+        preferenceStore.persistLightingZoneID("logo", device: device)
         defer { clearRefactorPreferences(for: device) }
 
         let backend = AppStateRefactorStubBackend(
@@ -213,13 +214,21 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         }
 
         await appState.deviceStore.refreshDevices()
-        try await Task.sleep(nanoseconds: 400_000_000)
+        try await waitForRefactorCondition {
+            await backend.applyCount() == 1
+        }
 
-        let applyCount = await backend.applyCount()
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.first)
         let editableLightingEffect = await MainActor.run { appState.editorStore.editableLightingEffect }
+        let editableZoneID = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
 
-        XCTAssertEqual(applyCount, 0)
+        XCTAssertEqual(patch.ledRGB?.r, persistedColor.r)
+        XCTAssertEqual(patch.ledRGB?.g, persistedColor.g)
+        XCTAssertEqual(patch.ledRGB?.b, persistedColor.b)
+        XCTAssertEqual(patch.usbLightingZoneLEDIDs, [0x04])
         XCTAssertEqual(editableLightingEffect, .staticColor)
+        XCTAssertEqual(editableZoneID, "logo")
     }
 
     func testUSBPersistedLightingColorReappliesOnFirstHydrationUsingSavedZone() async throws {
