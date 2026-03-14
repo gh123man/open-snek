@@ -18,6 +18,8 @@ OpenSnek is an open source native macOS app for configuring supported Razer mice
 - Very low idle and background overhead, so it stays out of the way when you are not using it
 - Optional menu bar control for quick, on-the-fly DPI adjustments  
   <img src="docs/media/menu-icon.png" alt="open-snek app icon" width="250">
+- Rebind all supported mouse buttons and write to onboard stoarge
+  <img src="docs/media/bindings.png" alt="open-snek app icon" width="300">
 
 ## Motivation
 
