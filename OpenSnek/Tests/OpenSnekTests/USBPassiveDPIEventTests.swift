@@ -218,6 +218,13 @@ final class USBPassiveDPIEventTests: XCTestCase {
             report: [0x05, 0x02, 0x04, 0x4C, 0x04, 0x4C, 0x00, 0x00],
             descriptor: descriptor
         )
+        let usb35KDescriptor = try! XCTUnwrap(
+            DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00CB, transport: .usb)?.passiveDPIInput
+        )
+        let usb35KObserved1600 = PassiveDPIParser.parse(
+            report: [0x05, 0x02, 0x06, 0x40, 0x06, 0x40, 0x00, 0x00],
+            descriptor: usb35KDescriptor
+        )
         let bluetoothDescriptor = try! XCTUnwrap(
             DeviceProfiles.resolve(vendorID: 0x068E, productID: 0x00BA, transport: .bluetooth)?.passiveDPIInput
         )
@@ -245,6 +252,7 @@ final class USBPassiveDPIEventTests: XCTestCase {
         XCTAssertEqual(staged2000, PassiveDPIReading(dpiX: 2000, dpiY: 2000))
         XCTAssertEqual(staged1100, PassiveDPIReading(dpiX: 1100, dpiY: 1100))
         XCTAssertEqual(shortObservedFrame, PassiveDPIReading(dpiX: 1100, dpiY: 1100))
+        XCTAssertEqual(usb35KObserved1600, PassiveDPIReading(dpiX: 1600, dpiY: 1600))
         XCTAssertEqual(bluetoothDuplicatedReportID, PassiveDPIReading(dpiX: 2000, dpiY: 2000))
         XCTAssertEqual(bluetoothSingleReportID, PassiveDPIReading(dpiX: 800, dpiY: 800))
         XCTAssertEqual(bluetoothV3ProObserved900, PassiveDPIReading(dpiX: 900, dpiY: 900))
