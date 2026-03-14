@@ -300,11 +300,11 @@ TxnID:    0x1F
 
 Client note: treat `active` as a stage-ID token and map it against entry `[0]` stage IDs. Do not assume a fixed zero-based index.
 
-#### Passive USB DPI Input Report (Observed on Basilisk V3 Pro `0x00AB`)
+#### Passive USB DPI Input Report (Observed on Basilisk V3 Pro `0x00AB`; matching interface tuple present on Basilisk V3 35K `0x00CB`)
 
 The 90-byte USB configuration protocol above remains a host-initiated HID `Feature` report exchange. It does not expose a generic subscription channel for device state.
 
-Separately, the observed Basilisk V3 Pro USB stack emits a spontaneous HID `Input` report on its auxiliary keyboard-style interface when the mouse DPI changes on-device:
+Separately, the observed Basilisk V3 Pro USB stack emits a spontaneous HID `Input` report on its auxiliary keyboard-style interface when the mouse DPI changes on-device. A locally attached Basilisk V3 35K exposes the same auxiliary HID interface tuple, so OpenSnek now arms the same passive listener there and keeps fast-poll fallback enabled until a live callback is actually observed on the current host:
 
 ```
 Interface: usage page 0x01, usage 0x06, max input report size 16, max feature report size 1
@@ -318,7 +318,7 @@ Observed examples:
 - `05 02 04 4c 04 4c ...` -> `1100 x 1100`
 
 Client notes:
-- current OpenSnek support is gated to the validated Basilisk V3 Pro USB profile (`0x00AB`)
+- OpenSnek now enables this passive HID listener on the Basilisk V3 Pro USB (`0x00AB`) and Basilisk V3 35K USB (`0x00CB`) profiles
 - accept both callback buffer shapes seen on macOS HID stacks:
   - leading report id present: `05 02 ...`
   - report id already stripped: `02 ...`
@@ -327,6 +327,7 @@ Client notes:
 - host/API caveat from local macOS probing on 2026-03-12:
   - `OpenSnekProbe usb-input-listen --pid 0x00ab` armed all five exposed USB HID interfaces (`0x01:0x02`, two `0x59:0x01`, and two `0x01:0x06`) and observed zero `IOHIDDeviceRegisterInputReportCallback` deliveries during live DPI-cycle attempts
   - `OpenSnekProbe usb-input-values --pid 0x00ab` likewise observed zero `IOHIDManagerRegisterInputValueCallback` deliveries during the same DPI-cycle probing window
+  - `OpenSnekProbe usb-input-listen --pid 0x00cb` on an attached Basilisk V3 35K exposed four HID interfaces, including the same two `0x01:0x06` candidates (`input=16/8`, `feature=1/0`) used for passive DPI listener matching
   - treat passive USB DPI callbacks as host-stack-dependent until a live callback is observed on the current machine; keep USB fast-DPI polling as the recovery path
 
 ---

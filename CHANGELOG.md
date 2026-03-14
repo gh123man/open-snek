@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-14]
+
+### Fixed
+- The Basilisk V3 35K USB profile (`0x00CB`) now enables the same passive HID DPI listener tuple used by the V3 Pro USB path, so the app can upgrade that device from polling fallback to real-time HID monitoring once macOS delivers live DPI callbacks.
+
 ## [2026-03-13]
 
 ### Added

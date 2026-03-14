@@ -73,11 +73,13 @@ CLI behavior has been updated to skip unsupported scroll controls with warnings 
 
 Validated in-session over USB:
 - working: serial, firmware, device mode read/write, poll-rate read/write, DPI/stages, battery, core USB telemetry
+- working: OpenSnek now arms the shared passive HID DPI listener on the observed `0x01:0x06` USB interfaces and upgrades to real-time HID updates once the host delivers a live callback
 - working: matrix brightness/effect writes on all validated LED IDs (`0x01` scroll wheel, `0x04` logo, `0x0A` underglow)
 - working: button remap read/write/readback on standard slots plus the additional wheel-tilt (`0x34`, `0x35`) and top DPI-button (`0x60`) slots
 - observed non-remappable controls on `0x00CB`: scroll-mode (`0x0E`, protocol-read-only), sensitivity clutch (`0x0F`, software-read-only via report-4 `0x51`), profile button (`0x6A`, software-read-only via report-4 `0x50`)
 - observed alternate USB DPI-button payload on slot `0x60`: `04 02 0F 7B 00 00 00`
 - shipped client behavior: normalize `0x60` to a user-facing `DPI Cycle` action and allow binding `DPI Cycle` to any writable USB slot
+- observed HID candidates on an attached `0x00CB`: `0x01:0x06` interfaces with `input=16/8` and `feature=1/0`, matching the tuple already used for the shipped V3 Pro USB passive DPI listener
 - client note: `0x02:0x8C` response layout is not identical to `0x00B9`; clients must validate echoed `profile`/`slot` bytes before choosing the 35K function-block offset
 - observed profile summary getter on `0x00CB`: `0x00:0x87` -> `<active,0x00,count>`; active-profile write path remains unresolved
 

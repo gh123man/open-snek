@@ -28,7 +28,10 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.supportedLightingEffects, [.off, .staticColor, .spectrum, .wave])
         XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01, 0x04, 0x0A])
         XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel", "logo", "underglow"])
-        XCTAssertNil(profile?.passiveDPIInput)
+        XCTAssertEqual(profile?.passiveDPIInput?.usagePage, 0x01)
+        XCTAssertEqual(profile?.passiveDPIInput?.usage, 0x06)
+        XCTAssertEqual(profile?.passiveDPIInput?.reportID, 0x05)
+        XCTAssertEqual(profile?.passiveDPIInput?.subtype, 0x02)
         XCTAssertEqual(profile?.onboardProfileCount, 5)
     }
 
