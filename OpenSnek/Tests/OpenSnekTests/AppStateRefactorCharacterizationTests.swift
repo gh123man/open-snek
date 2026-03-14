@@ -307,6 +307,56 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(applyCount, 0)
     }
 
+    func testUSBLightingZoneSwitchLoadsPersistedZoneSpecificColor() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-zone-switch-lighting-device",
+            transport: .usb,
+            serial: "USB-ZONE-SWITCH-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        let allColor = RGBColor(r: 10, g: 20, b: 30)
+        let logoColor = RGBColor(r: 40, g: 50, b: 60)
+        let underglowColor = RGBColor(r: 70, g: 80, b: 90)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(allColor, device: device)
+        preferenceStore.persistLightingColor(logoColor, device: device, zoneID: "logo")
+        preferenceStore.persistLightingColor(underglowColor, device: device, zoneID: "underglow")
+        preferenceStore.persistLightingZoneID("logo", device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(devices: [], stateByDeviceID: [:])
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([device], source: "refresh")
+        }
+
+        let initialColor = await MainActor.run { appState.editorStore.editableColor }
+        let initialZone = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+        XCTAssertEqual(initialZone, "logo")
+        XCTAssertEqual(initialColor, logoColor)
+
+        await MainActor.run {
+            appState.editorStore.updateUSBLightingZoneID("underglow")
+        }
+
+        let switchedZoneColor = await MainActor.run { appState.editorStore.editableColor }
+        let switchedZone = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+        XCTAssertEqual(switchedZone, "underglow")
+        XCTAssertEqual(switchedZoneColor, underglowColor)
+
+        await MainActor.run {
+            appState.editorStore.updateUSBLightingZoneID("all")
+        }
+
+        let allZonesColor = await MainActor.run { appState.editorStore.editableColor }
+        let allZones = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+        XCTAssertEqual(allZones, "all")
+        XCTAssertEqual(allZonesColor, allColor)
+    }
+
     func testUSBPersistedLightingEffectReappliesOnFirstHydration() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-effect-device",
@@ -813,8 +863,10 @@ private func clearRefactorPreferences(for device: MouseDevice) {
         "buttonBindings.\(legacyKey).profile1",
         "buttonBindings.\(legacyKey).profile2",
     ]
-    for prefix in prefixes {
-        defaults.removeObject(forKey: prefix)
+    for storedKey in defaults.dictionaryRepresentation().keys {
+        if prefixes.contains(where: { storedKey.hasPrefix($0) }) {
+            defaults.removeObject(forKey: storedKey)
+        }
     }
 }
 

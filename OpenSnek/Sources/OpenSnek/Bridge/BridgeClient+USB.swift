@@ -477,7 +477,7 @@ extension BridgeClient {
     }
 
     func usbLightingLEDIDs(for device: MouseDevice, override: [UInt8]? = nil) -> [UInt8] {
-        let ids = override ?? usbDeviceProfile(for: device)?.usbLightingLEDIDs ?? [0x01]
+        let ids = override ?? usbDeviceProfile(for: device)?.allUSBLightingLEDIDs ?? [0x01]
         return ids.isEmpty ? [0x01] : ids
     }
 

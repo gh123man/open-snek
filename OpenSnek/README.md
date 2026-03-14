@@ -200,6 +200,29 @@ swift run --package-path OpenSnek OpenSnekProbe usb-info --pid 0x00ab
 swift run --package-path OpenSnek OpenSnekProbe usb-button-read --slot 52 --pid 0x00ab
 ```
 
+### Inspect USB lighting zones
+
+```bash
+swift run --package-path OpenSnek OpenSnekProbe usb-lighting-info --pid 0x00ab
+swift run --package-path OpenSnek OpenSnekProbe usb-lighting-read --zone all --pid 0x00ab
+```
+
+On multi-zone USB profiles such as the Basilisk V3 Pro, `usb-lighting-info` reports the validated zone map:
+
+- `scroll_wheel` -> `0x01`
+- `logo` -> `0x04`
+- `underglow` -> `0x0A`
+
+### Write USB lighting across all zones
+
+```bash
+swift run --package-path OpenSnek OpenSnekProbe usb-lighting-brightness --value 96 --zone all --pid 0x00ab
+swift run --package-path OpenSnek OpenSnekProbe usb-lighting-effect --kind static --color 00ff40 --zone all --pid 0x00ab
+swift run --package-path OpenSnek OpenSnekProbe usb-lighting-effect --kind static --color ff6600 --zone logo --pid 0x00ab
+```
+
+The probe prints one `0x0F` payload per targeted LED ID, which is useful during bring-up when confirming that a whole-device write really fans out to every validated zone.
+
 ### Read current BLE DPI
 
 ```bash

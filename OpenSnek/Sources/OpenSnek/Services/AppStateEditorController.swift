@@ -186,12 +186,12 @@ final class AppStateEditorController {
         hydratedLightingStateByDeviceID.insert(deviceID)
     }
 
-    func persistLightingColor(_ color: RGBColor, device: MouseDevice) {
-        preferenceStore.persistLightingColor(color, device: device)
+    func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
+        preferenceStore.persistLightingColor(color, device: device, zoneID: zoneID)
     }
 
-    func loadPersistedLightingColor(device: MouseDevice) -> RGBColor? {
-        preferenceStore.loadPersistedLightingColor(device: device)
+    func loadPersistedLightingColor(device: MouseDevice, zoneID: String? = nil) -> RGBColor? {
+        preferenceStore.loadPersistedLightingColor(device: device, zoneID: zoneID)
     }
 
     func persistLightingZoneID(_ zoneID: String, device: MouseDevice) {
@@ -318,11 +318,11 @@ final class AppStateEditorController {
     func persistedLightingRestorePlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
         guard device.showsLightingControls else { return nil }
 
-        let persistedColor = loadPersistedLightingColor(device: device)
         let normalizedZoneID = normalizedLightingZoneID(
             for: device,
             preferredZoneID: loadPersistedLightingZoneID(device: device)
         )
+        let persistedColor = loadPersistedLightingColor(device: device, zoneID: normalizedZoneID)
 
         if device.supports_advanced_lighting_effects,
            let persistedEffect = loadPersistedLightingEffect(device: device) {
@@ -412,22 +412,15 @@ final class AppStateEditorController {
 
     private func normalizedLightingZoneID(for device: MouseDevice, preferredZoneID: String?) -> String {
         guard let preferredZoneID, preferredZoneID != "all" else { return "all" }
-        let validZoneIDs = Set(
-            DeviceProfiles
-                .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
-                .usbLightingZones
-                .map(\.id) ?? []
-        )
-        return validZoneIDs.contains(preferredZoneID) ? preferredZoneID : "all"
+        let profile = DeviceProfiles.resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)
+        return profile?.lightingZone(id: preferredZoneID) != nil ? preferredZoneID : "all"
     }
 
     private func usbLightingZoneLEDIDs(for device: MouseDevice, zoneID: String) -> [UInt8]? {
         guard zoneID != "all" else { return nil }
         return DeviceProfiles
             .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
-            .usbLightingZones
-            .first(where: { $0.id == zoneID })?
-            .ledIDs
+            .lightingLEDIDs(for: zoneID)
     }
 
     func syncUSBButtonProfileSelection(from state: MouseState) {
@@ -464,7 +457,17 @@ final class AppStateEditorController {
     }
 
     func updateUSBLightingZoneID(_ zoneID: String) {
-        editorStore.editableUSBLightingZoneID = zoneID
+        let resolvedZoneID: String
+        if let selectedDevice = deviceStore.selectedDevice {
+            resolvedZoneID = normalizedLightingZoneID(for: selectedDevice, preferredZoneID: zoneID)
+            if editorStore.editableLightingEffect == .staticColor,
+               let persistedColor = loadPersistedLightingColor(device: selectedDevice, zoneID: resolvedZoneID) {
+                editorStore.editableColor = persistedColor
+            }
+        } else {
+            resolvedZoneID = zoneID
+        }
+        editorStore.editableUSBLightingZoneID = resolvedZoneID
     }
 
     func updateUSBButtonProfile(_ profile: Int) {

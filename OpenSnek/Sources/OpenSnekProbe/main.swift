@@ -42,6 +42,74 @@ enum OpenSnekProbe {
         case "usb-info":
             let usb = try USBProbeClient(productID: try parseOptionalUSBPID(Array(args.dropFirst())))
             print("usb \(usb.describe())")
+        case "usb-lighting-info":
+            let parsed = try parseUSBLightingZoneArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient(productID: parsed.productID)
+            print("usb \(usb.describe())")
+            print("supported-effects=\(usb.supportedLightingEffects().map(\.rawValue).joined(separator: ","))")
+            let zones = usb.availableLightingZones()
+            if zones.isEmpty {
+                print("zones: all -> [0x01]")
+            } else {
+                for zone in zones {
+                    let ledIDs = zone.ledIDs.map { String(format: "0x%02x", $0) }.joined(separator: ",")
+                    print("zone id=\(zone.id) label=\"\(zone.label)\" ledIDs=[\(ledIDs)]")
+                }
+            }
+            guard let reads = try usb.readLightingBrightness(zoneID: parsed.zoneID) else {
+                throw invalidUSBLightingZone(zoneID: parsed.zoneID, usb: usb)
+            }
+            for read in reads {
+                print(describeUSBLightingReadResult(read))
+            }
+        case "usb-lighting-read":
+            let parsed = try parseUSBLightingZoneArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient(productID: parsed.productID)
+            print("usb \(usb.describe())")
+            guard let reads = try usb.readLightingBrightness(zoneID: parsed.zoneID) else {
+                throw invalidUSBLightingZone(zoneID: parsed.zoneID, usb: usb)
+            }
+            for read in reads {
+                print(describeUSBLightingReadResult(read))
+            }
+        case "usb-lighting-brightness":
+            let parsed = try parseUSBLightingBrightnessArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient(productID: parsed.productID)
+            print("usb \(usb.describe())")
+            guard let writes = try usb.writeLightingBrightness(value: parsed.value, zoneID: parsed.zoneID) else {
+                throw invalidUSBLightingZone(zoneID: parsed.zoneID, usb: usb)
+            }
+            for write in writes {
+                print(describeUSBLightingWriteResult(write, operation: "brightness"))
+            }
+            guard let reads = try usb.readLightingBrightness(zoneID: parsed.zoneID) else {
+                throw invalidUSBLightingZone(zoneID: parsed.zoneID, usb: usb)
+            }
+            for read in reads {
+                print(describeUSBLightingReadResult(read))
+            }
+            guard writes.allSatisfy(\.succeeded) else {
+                throw ProbeError.protocolError("One or more USB lighting brightness writes failed")
+            }
+        case "usb-lighting-effect":
+            let parsed = try parseUSBLightingEffectArgs(Array(args.dropFirst()))
+            let usb = try USBProbeClient(productID: parsed.productID)
+            print("usb \(usb.describe())")
+            let supportedEffects = usb.supportedLightingEffects()
+            guard supportedEffects.contains(parsed.effect.kind) else {
+                throw ProbeError.usage(
+                    "Unsupported --kind '\(parsed.effect.kind.rawValue)' for this device (supported: \(supportedEffects.map(\.rawValue).joined(separator: ",")))"
+                )
+            }
+            guard let writes = try usb.writeLightingEffect(effect: parsed.effect, zoneID: parsed.zoneID) else {
+                throw invalidUSBLightingZone(zoneID: parsed.zoneID, usb: usb)
+            }
+            for write in writes {
+                print(describeUSBLightingWriteResult(write, operation: parsed.effect.kind.rawValue))
+            }
+            guard writes.allSatisfy(\.succeeded) else {
+                throw ProbeError.protocolError("One or more USB lighting effect writes failed")
+            }
         case "usb-input-listen":
             let parsed = try parseUSBInputListenArgs(Array(args.dropFirst()))
             let probe = try USBInputReportProbe(productID: parsed.productID)
@@ -183,6 +251,10 @@ enum OpenSnekProbe {
           OpenSnekProbe dpi-set --values 1600,6400 [--active 1] [--verify-retries 6] [--verify-delay-ms 120]
           OpenSnekProbe dpi-cycle --sequence 800,6400;1600,6400 --loops 10 [--active 1] [--sleep-ms 120]
           OpenSnekProbe usb-info [--pid 0x00ab]
+          OpenSnekProbe usb-lighting-info [--zone all|scroll_wheel|logo|underglow] [--pid 0x00ab]
+          OpenSnekProbe usb-lighting-read [--zone all|scroll_wheel|logo|underglow] [--pid 0x00ab]
+          OpenSnekProbe usb-lighting-brightness --value 128 [--zone all|scroll_wheel|logo|underglow] [--pid 0x00ab]
+          OpenSnekProbe usb-lighting-effect --kind static [--color 00ff00] [--secondary ff00ff] [--direction left|right] [--speed 2] [--zone all|scroll_wheel|logo|underglow] [--pid 0x00ab]
           OpenSnekProbe usb-input-listen [--pid 0x00ab] [--duration 15] [--max-reports 0]
           OpenSnekProbe usb-input-values [--pid 0x00ab] [--duration 15] [--max-reports 0]
           OpenSnekProbe usb-button-read --slot 4 [--profile default|direct|both] [--pid 0x00ab]
@@ -192,6 +264,9 @@ enum OpenSnekProbe {
 
         USB button kinds:
           default dpi_cycle dpi_clutch left_click right_click middle_click scroll_up scroll_down mouse_back mouse_forward keyboard_simple clear_layer
+
+        USB lighting kinds:
+          off static spectrum wave reactive pulse_random pulse_single pulse_dual
         """
     }
 
@@ -281,6 +356,39 @@ enum OpenSnekProbe {
         return (durationSeconds, maxReports, try parseOptionalUSBPID(args))
     }
 
+    private static func parseUSBLightingZoneArgs(_ args: [String]) throws -> (zoneID: String?, productID: Int?) {
+        let flags = parseFlags(args)
+        return (parseLightingZoneID(flags["--zone"]), try parseOptionalUSBPID(args))
+    }
+
+    private static func parseUSBLightingBrightnessArgs(_ args: [String]) throws -> (value: Int, zoneID: String?, productID: Int?) {
+        let flags = parseFlags(args)
+        guard let valueRaw = flags["--value"], let value = Int(valueRaw) else {
+            throw ProbeError.usage("Missing --value\n\(usageText)")
+        }
+        return (max(0, min(255, value)), parseLightingZoneID(flags["--zone"]), try parseOptionalUSBPID(args))
+    }
+
+    private static func parseUSBLightingEffectArgs(_ args: [String]) throws -> (effect: LightingEffectPatch, zoneID: String?, productID: Int?) {
+        let flags = parseFlags(args)
+        guard let kindRaw = flags["--kind"], let kind = parseLightingEffectKind(kindRaw) else {
+            throw ProbeError.usage("Missing or invalid --kind\n\(usageText)")
+        }
+
+        let primary = try parseRGBPatch(flags["--color"]) ?? RGBPatch(r: 0, g: 255, b: 0)
+        let secondary = try parseRGBPatch(flags["--secondary"]) ?? RGBPatch(r: 0, g: 170, b: 255)
+        let direction = try parseLightingDirection(flags["--direction"] ?? "left")
+        let speed = max(1, min(4, Int(flags["--speed"] ?? "2") ?? 2))
+        let effect = LightingEffectPatch(
+            kind: kind,
+            primary: primary,
+            secondary: secondary,
+            waveDirection: direction,
+            reactiveSpeed: speed
+        )
+        return (effect, parseLightingZoneID(flags["--zone"]), try parseOptionalUSBPID(args))
+    }
+
     private static func parseUSBRawArgs(_ args: [String]) throws -> (classID: UInt8, cmdID: UInt8, size: UInt8, args: [UInt8], noTxnRescan: Bool, responseAttempts: Int, responseDelayUs: useconds_t, productID: Int?) {
         let flags = parseFlags(args)
         guard let classRaw = flags["--class"], let classID = parseUInt8(classRaw) else {
@@ -354,6 +462,55 @@ enum OpenSnekProbe {
         }
     }
 
+    private static func parseLightingZoneID(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty || normalized == "all" ? nil : normalized
+    }
+
+    private static func parseLightingEffectKind(_ raw: String) -> LightingEffectKind? {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "off":
+            return .off
+        case "static", "static_color", "staticcolor":
+            return .staticColor
+        case "spectrum":
+            return .spectrum
+        case "wave":
+            return .wave
+        case "reactive":
+            return .reactive
+        case "pulse_random", "pulserandom", "random":
+            return .pulseRandom
+        case "pulse_single", "pulsesingle", "single":
+            return .pulseSingle
+        case "pulse_dual", "pulsedual", "dual":
+            return .pulseDual
+        default:
+            return nil
+        }
+    }
+
+    private static func parseLightingDirection(_ raw: String) throws -> LightingWaveDirection {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "left", "1":
+            return .left
+        case "right", "2":
+            return .right
+        default:
+            throw ProbeError.usage("Invalid --direction '\(raw)' (expected left/right)")
+        }
+    }
+
+    private static func parseRGBPatch(_ raw: String?) throws -> RGBPatch? {
+        guard let raw else { return nil }
+        let bytes = try parseHexBytes(raw)
+        guard bytes.count == 3 else {
+            throw ProbeError.usage("Invalid RGB hex '\(raw)' (expected 6 hex chars)")
+        }
+        return RGBPatch(r: Int(bytes[0]), g: Int(bytes[1]), b: Int(bytes[2]))
+    }
+
     private static func parseHexBytes(_ raw: String) throws -> [UInt8] {
         let normalized = raw
             .replacingOccurrences(of: "0x", with: "", options: [.caseInsensitive])
@@ -411,6 +568,22 @@ enum OpenSnekProbe {
 
     private static func describeUSBFunctionBlock(_ block: [UInt8]) -> String {
         ButtonBindingSupport.describeUSBFunctionBlock(block)
+    }
+
+    private static func invalidUSBLightingZone(zoneID: String?, usb: USBProbeClient) -> ProbeError {
+        let requested = zoneID ?? "all"
+        return .usage("Invalid --zone '\(requested)' (available: \(usb.lightingZoneChoices().joined(separator: ",")))")
+    }
+
+    private static func describeUSBLightingReadResult(_ result: USBLightingReadResult) -> String {
+        let brightness = result.brightness.map(String.init) ?? "read_failed"
+        return "brightness zone=\(result.target.zoneID) label=\"\(result.target.zoneLabel)\" led=0x\(String(format: "%02x", result.target.ledID)) value=\(brightness)"
+    }
+
+    private static func describeUSBLightingWriteResult(_ result: USBLightingWriteResult, operation: String) -> String {
+        let hex = result.args.map { String(format: "%02x", $0) }.joined(separator: " ")
+        let status = result.succeeded ? "ok" : "error"
+        return "write-\(operation) zone=\(result.target.zoneID) label=\"\(result.target.zoneLabel)\" led=0x\(String(format: "%02x", result.target.ledID)) args=\(hex) status=\(status)"
     }
 }
 

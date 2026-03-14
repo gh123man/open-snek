@@ -8,16 +8,16 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         self.defaults = defaults
     }
 
-    public func persistLightingColor(_ color: RGBColor, device: MouseDevice) {
-        let key = "lightingColor.\(DevicePersistenceKeys.key(for: device))"
+    public func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
+        let key = lightingColorKey(device: device, zoneID: zoneID)
         defaults.set([color.r, color.g, color.b], forKey: key)
     }
 
-    public func loadPersistedLightingColor(device: MouseDevice) -> RGBColor? {
-        let key = "lightingColor.\(DevicePersistenceKeys.key(for: device))"
-        let legacyKey = "lightingColor.\(DevicePersistenceKeys.legacyKey(for: device))"
-        let values = (defaults.array(forKey: key) as? [Int])
-            ?? (defaults.array(forKey: legacyKey) as? [Int])
+    public func loadPersistedLightingColor(device: MouseDevice, zoneID: String? = nil) -> RGBColor? {
+        let values = lightingColorKeys(device: device, zoneID: zoneID)
+            .lazy
+            .compactMap { self.defaults.array(forKey: $0) as? [Int] }
+            .first
         guard let values, values.count == 3 else { return nil }
         return RGBColor(
             r: max(0, min(255, values[0])),
@@ -157,6 +157,33 @@ public final class DevicePreferenceStore: @unchecked Sendable {
             return nil
         }
         return defaults.data(forKey: currentBase) == nil ? legacyBase : currentBase
+    }
+
+    private func lightingColorKeys(device: MouseDevice, zoneID: String?) -> [String] {
+        let normalizedZoneID = normalizedLightingZoneID(zoneID)
+        var keys: [String] = []
+        if let normalizedZoneID {
+            keys.append(lightingColorKey(device: device, zoneID: normalizedZoneID))
+            keys.append(lightingColorKey(device: device, zoneID: normalizedZoneID, useLegacyKey: true))
+        }
+        keys.append(lightingColorKey(device: device, zoneID: nil))
+        keys.append(lightingColorKey(device: device, zoneID: nil, useLegacyKey: true))
+        return keys
+    }
+
+    private func lightingColorKey(device: MouseDevice, zoneID: String?, useLegacyKey: Bool = false) -> String {
+        let deviceKey = useLegacyKey ? DevicePersistenceKeys.legacyKey(for: device) : DevicePersistenceKeys.key(for: device)
+        guard let normalizedZoneID = normalizedLightingZoneID(zoneID) else {
+            return "lightingColor.\(deviceKey)"
+        }
+        return "lightingColor.\(deviceKey).zone.\(normalizedZoneID)"
+    }
+
+    private func normalizedLightingZoneID(_ zoneID: String?) -> String? {
+        guard let zoneID else { return nil }
+        let trimmed = zoneID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty, trimmed != "all" else { return nil }
+        return trimmed
     }
 }
 

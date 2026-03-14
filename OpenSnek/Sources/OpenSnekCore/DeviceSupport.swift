@@ -117,6 +117,22 @@ public struct USBLightingZoneDescriptor: Identifiable, Hashable, Codable, Sendab
     }
 }
 
+public struct USBLightingTargetDescriptor: Identifiable, Hashable, Codable, Sendable {
+    public let zoneID: String
+    public let zoneLabel: String
+    public let ledID: UInt8
+
+    public init(zoneID: String, zoneLabel: String, ledID: UInt8) {
+        self.zoneID = zoneID
+        self.zoneLabel = zoneLabel
+        self.ledID = ledID
+    }
+
+    public var id: String {
+        "\(zoneID):\(String(format: "%02X", ledID))"
+    }
+}
+
 public struct PassiveDPIInputDescriptor: Hashable, Codable, Sendable {
     public let usagePage: Int
     public let usage: Int
@@ -201,6 +217,47 @@ public struct DeviceProfile: Hashable, Sendable {
         guard transport == self.transport else { return false }
         let supportedVendor = vendorID == 0x1532 || vendorID == 0x068E
         return supportedVendor && supportedProducts.contains(productID)
+    }
+
+    public var allUSBLightingLEDIDs: [UInt8] {
+        let ids = usbLightingLEDIDs.isEmpty ? usbLightingZones.flatMap(\.ledIDs) : usbLightingLEDIDs
+        return ids.isEmpty ? [0x01] : ids
+    }
+
+    public func lightingZone(id zoneID: String) -> USBLightingZoneDescriptor? {
+        usbLightingZones.first(where: { $0.id == zoneID })
+    }
+
+    public func lightingTargets(for zoneID: String? = nil) -> [USBLightingTargetDescriptor]? {
+        let normalizedZoneID = zoneID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if normalizedZoneID == nil || normalizedZoneID == "" || normalizedZoneID == "all" {
+            if !usbLightingZones.isEmpty {
+                return usbLightingZones.flatMap { zone in
+                    zone.ledIDs.map { ledID in
+                        USBLightingTargetDescriptor(zoneID: zone.id, zoneLabel: zone.label, ledID: ledID)
+                    }
+                }
+            }
+            return allUSBLightingLEDIDs.map { ledID in
+                USBLightingTargetDescriptor(
+                    zoneID: String(format: "led_%02x", ledID),
+                    zoneLabel: String(format: "LED 0x%02X", ledID),
+                    ledID: ledID
+                )
+            }
+        }
+
+        guard let zone = lightingZone(id: normalizedZoneID ?? "") else { return nil }
+        return zone.ledIDs.map { ledID in
+            USBLightingTargetDescriptor(zoneID: zone.id, zoneLabel: zone.label, ledID: ledID)
+        }
+    }
+
+    public func lightingLEDIDs(for zoneID: String? = nil) -> [UInt8]? {
+        lightingTargets(for: zoneID)?.map(\.ledID)
     }
 }
 

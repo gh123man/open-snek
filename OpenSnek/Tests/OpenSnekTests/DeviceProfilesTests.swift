@@ -52,6 +52,24 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.onboardProfileCount, 3)
     }
 
+    func testBasiliskV3ProUSBLightingTargetsResolveAllZones() throws {
+        let profile = try XCTUnwrap(DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AB, transport: .usb))
+        let targets = try XCTUnwrap(profile.lightingTargets())
+        XCTAssertEqual(targets.map(\.zoneID), ["scroll_wheel", "logo", "underglow"])
+        XCTAssertEqual(targets.map(\.ledID), [0x01, 0x04, 0x0A])
+        XCTAssertEqual(profile.lightingLEDIDs(), [0x01, 0x04, 0x0A])
+    }
+
+    func testBasiliskV3ProUSBLightingTargetsResolveSpecificZone() throws {
+        let profile = try XCTUnwrap(DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AB, transport: .usb))
+        let targets = try XCTUnwrap(profile.lightingTargets(for: "logo"))
+        XCTAssertEqual(targets.map(\.zoneID), ["logo"])
+        XCTAssertEqual(targets.map(\.ledID), [0x04])
+        XCTAssertEqual(profile.lightingLEDIDs(for: "logo"), [0x04])
+        XCTAssertNil(profile.lightingTargets(for: "bogus"))
+        XCTAssertNil(profile.lightingLEDIDs(for: "bogus"))
+    }
+
     func testResolveBluetoothProfileForBasiliskV3X() {
         let profile = DeviceProfiles.resolve(vendorID: 0x068E, productID: 0x00BA, transport: .bluetooth)
         XCTAssertEqual(profile?.id, .basiliskV3XHyperspeed)

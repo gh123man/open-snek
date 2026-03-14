@@ -586,17 +586,23 @@ final class AppStateApplyController {
         usbLightingZoneID: String
     ) {
         if let rgb = patch.ledRGB {
+            let colorZoneID = usbLightingZoneID == "all" ? nil : usbLightingZoneID
             editorController.persistLightingColor(
                 RGBColor(r: rgb.r, g: rgb.g, b: rgb.b),
-                device: device
+                device: device,
+                zoneID: colorZoneID
             )
             editorController.persistLightingZoneID(usbLightingZoneID, device: device)
         }
         if let lightingEffect = patch.lightingEffect {
+            let colorZoneID = lightingEffect.kind == .staticColor && usbLightingZoneID != "all"
+                ? usbLightingZoneID
+                : nil
             editorController.persistLightingEffect(lightingEffect, device: device)
             editorController.persistLightingColor(
                 RGBColor(r: lightingEffect.primary.r, g: lightingEffect.primary.g, b: lightingEffect.primary.b),
-                device: device
+                device: device,
+                zoneID: colorZoneID
             )
             editorController.persistLightingZoneID(
                 lightingEffect.kind == .staticColor ? usbLightingZoneID : "all",

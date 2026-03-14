@@ -1454,7 +1454,7 @@ private func clearMultiDeviceLightingPreferences(for device: MouseDevice) {
     let defaults = UserDefaults.standard
     let key = DevicePersistenceKeys.key(for: device)
     let legacyKey = DevicePersistenceKeys.legacyKey(for: device)
-    let keys = [
+    let prefixes = [
         "lightingColor.\(key)",
         "lightingColor.\(legacyKey)",
         "lightingZone.\(key)",
@@ -1462,8 +1462,10 @@ private func clearMultiDeviceLightingPreferences(for device: MouseDevice) {
         "lightingEffect.\(key)",
         "lightingEffect.\(legacyKey)",
     ]
-    for key in keys {
-        defaults.removeObject(forKey: key)
+    for storedKey in defaults.dictionaryRepresentation().keys {
+        if prefixes.contains(where: { storedKey.hasPrefix($0) }) {
+            defaults.removeObject(forKey: storedKey)
+        }
     }
 }
 

@@ -28,6 +28,17 @@ struct DpiSnapshot: Equatable {
     var values: [Int] { Array(slots.prefix(count)) }
 }
 
+struct USBLightingReadResult: Sendable {
+    let target: USBLightingTargetDescriptor
+    let brightness: Int?
+}
+
+struct USBLightingWriteResult: Sendable {
+    let target: USBLightingTargetDescriptor
+    let args: [UInt8]
+    let succeeded: Bool
+}
+
 private struct USBProbeDeviceCandidate: @unchecked Sendable {
     let index: Int
     let device: IOHIDDevice
@@ -158,6 +169,7 @@ final class USBProbeClient {
     private let deviceID: String
     private let productID: Int
     private let profileID: DeviceProfileID?
+    private let profile: DeviceProfile?
 
     init(productID preferredProductID: Int? = nil) throws {
         let enumeration = try enumerateUSBProbeCandidates(preferredProductID: preferredProductID)
@@ -169,11 +181,74 @@ final class USBProbeClient {
         self.session = USBHIDControlSession(device: best.device, deviceID: best.deviceID)
         self.deviceID = best.deviceID
         self.productID = best.productID
-        self.profileID = DeviceProfiles.resolve(vendorID: 0x1532, productID: best.productID, transport: .usb)?.id
+        self.profile = DeviceProfiles.resolve(vendorID: 0x1532, productID: best.productID, transport: .usb)
+        self.profileID = profile?.id
     }
 
     func describe() -> String {
         "\(deviceID) pid=0x\(String(format: "%04x", productID))"
+    }
+
+    func supportedLightingEffects() -> [LightingEffectKind] {
+        profile?.supportedLightingEffects ?? LightingEffectKind.allCases
+    }
+
+    func availableLightingZones() -> [USBLightingZoneDescriptor] {
+        profile?.usbLightingZones ?? []
+    }
+
+    func lightingZoneChoices() -> [String] {
+        let zoneIDs = availableLightingZones().map(\.id)
+        return zoneIDs.isEmpty ? ["all"] : ["all"] + zoneIDs
+    }
+
+    func lightingTargets(zoneID: String? = nil) -> [USBLightingTargetDescriptor]? {
+        if let profile {
+            return profile.lightingTargets(for: zoneID)
+        }
+
+        let normalizedZoneID = zoneID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard normalizedZoneID == nil || normalizedZoneID == "" || normalizedZoneID == "all" else {
+            return nil
+        }
+        return [USBLightingTargetDescriptor(zoneID: "led_01", zoneLabel: "LED 0x01", ledID: 0x01)]
+    }
+
+    func readLightingBrightness(zoneID: String? = nil) throws -> [USBLightingReadResult]? {
+        guard let targets = lightingTargets(zoneID: zoneID) else { return nil }
+        return try targets.map { target in
+            USBLightingReadResult(
+                target: target,
+                brightness: try readLightingBrightness(ledID: target.ledID)
+            )
+        }
+    }
+
+    func writeLightingBrightness(value: Int, zoneID: String? = nil) throws -> [USBLightingWriteResult]? {
+        guard let targets = lightingTargets(zoneID: zoneID) else { return nil }
+        let brightness = UInt8(max(0, min(255, value)))
+        return try targets.map { target in
+            let args = [0x01, target.ledID, brightness]
+            return USBLightingWriteResult(
+                target: target,
+                args: args,
+                succeeded: try writeLightingCommand(cmdID: 0x04, args: args)
+            )
+        }
+    }
+
+    func writeLightingEffect(effect: LightingEffectPatch, zoneID: String? = nil) throws -> [USBLightingWriteResult]? {
+        guard let targets = lightingTargets(zoneID: zoneID) else { return nil }
+        return try targets.map { target in
+            let args = BLEVendorProtocol.buildScrollLEDEffectArgs(effect: effect, ledID: target.ledID)
+            return USBLightingWriteResult(
+                target: target,
+                args: args,
+                succeeded: try writeLightingCommand(cmdID: 0x02, args: args)
+            )
+        }
     }
 
     func readButtonFunction(profile: UInt8, slot: UInt8, hypershift: UInt8 = 0x00) throws -> [UInt8]? {
@@ -268,6 +343,31 @@ final class USBProbeClient {
             responseAttempts: responseAttempts,
             responseDelayUs: responseDelayUs
         )
+    }
+
+    private func readLightingBrightness(ledID: UInt8) throws -> Int? {
+        let args: [UInt8] = [0x01, ledID, 0x00]
+        guard let response = try session.perform(
+            classID: 0x0F,
+            cmdID: 0x84,
+            size: 0x03,
+            args: args
+        ), response[0] == 0x02, response.count > 10 else {
+            return nil
+        }
+        return Int(response[10])
+    }
+
+    private func writeLightingCommand(cmdID: UInt8, args: [UInt8]) throws -> Bool {
+        guard let response = try session.perform(
+            classID: 0x0F,
+            cmdID: cmdID,
+            size: UInt8(max(0, min(255, args.count))),
+            args: args
+        ) else {
+            return false
+        }
+        return response[0] == 0x02
     }
 }
 
