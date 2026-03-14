@@ -1,159 +1,77 @@
 # Codex Instructions
 
-## Project Overview
+Goal: shortest path from user request to the exact files, commands, and constraints needed to do the work.
 
-**open-snek** configures supported Razer mice without Razer Synapse.
+## Start Here
 
-Current project scope includes:
-- Python tooling (`tools/python/razer_usb.py`, `tools/python/razer_ble.py`, `tools/python/razer_poc.py`)
-- Swift macOS app (`OpenSnek`) and Swift BLE probe CLI (`OpenSnekProbe`)
+| Task | Open First | Usually Validate With |
+|---|---|---|
+| BLE protocol, BT probe, BT device bug | `docs/protocol/PROTOCOL.md` then `docs/protocol/BLE_PROTOCOL.md`; `OpenSnek/Sources/OpenSnekProtocols/BLEVendorProtocol.swift`; `OpenSnek/Sources/OpenSnekHardware/BLEVendorTransportClient.swift`; `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient+Bluetooth.swift`; `OpenSnek/Sources/OpenSnekProbe/{main.swift,ProbeTransport.swift}` | `swift test --package-path OpenSnek --filter BLEVendorProtocolTests`; build/run probe |
+| USB protocol, USB lighting, USB buttons | `docs/protocol/PROTOCOL.md` then `docs/protocol/USB_PROTOCOL.md`; `OpenSnek/Sources/OpenSnekProtocols/USBHIDProtocol.swift`; `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient+USB.swift`; `OpenSnek/Sources/OpenSnekCore/DeviceSupport.swift` | focused USB probe command; `DeviceProfilesTests`; `USBButtonHydrationTests` |
+| Device support, product IDs, zones, button layout | `OpenSnek/Sources/OpenSnekCore/{DeviceSupport.swift,Models.swift,ButtonBindingSupport.swift}`; `docs/protocol/PARITY.md` if shipped-status changes | `swift test --package-path OpenSnek --filter DeviceProfilesTests` |
+| App-state hydration, persistence, auto-apply | `OpenSnek/Sources/OpenSnek/Services/{AppState.swift,AppStateEditorController.swift,AppStateApplyController.swift,DeviceStore.swift,EditorStore.swift}`; `OpenSnek/Sources/OpenSnekAppSupport/DevicePreferenceStore.swift` | `swift test --package-path OpenSnek --filter AppStateRefactorCharacterizationTests` |
+| Background service, bridge transport, snapshots | `OpenSnek/Sources/OpenSnek/Services/{BackendSession.swift,BackgroundServiceCoordinator.swift,CrossProcessStateSync.swift}`; `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient.swift` | `swift test --package-path OpenSnek --filter BackgroundServiceTransportTests` or `RemoteServiceSnapshotTests` |
+| UI, menu bar, startup/lifecycle | `OpenSnek/Sources/OpenSnek/UI/*.swift`; `OpenSnek/Sources/OpenSnek/{AppLifecycleDelegate.swift,OpenSnekApp.swift}`; `RuntimeStore.swift` | `swift test --package-path OpenSnek --filter AppLifecycleDelegateTests` or `ServiceMenuBarPresentationTests` |
 
-## Canonical Documentation
+Protocol behavior changes require docs, tests, and `CHANGELOG.md` updates in the same change.
 
-Always read protocol docs before protocol changes:
-- `docs/protocol/PROTOCOL.md` (index)
-- `docs/protocol/USB_PROTOCOL.md`
-- `docs/protocol/BLE_PROTOCOL.md`
-- `docs/protocol/PARITY.md`
+## Canonical Sources
 
-When protocol behavior changes, update docs in the same change.
+- Swift app/probe code and protocol docs are canonical.
+- Python tooling (`tools/python/`) is useful for probing and comparison, but may lag; do not treat it as source of truth when it disagrees with Swift/docs.
+- Open `docs/protocol/PARITY.md` only when support status, shipped capability, or transport parity changes.
 
-## Key Files
+## Current Validated Devices
 
-| Path | Purpose |
-|---|---|
-| `tools/python/razer_poc.py` | Transport wrapper CLI |
-| `tools/python/razer_usb.py` | USB HID implementation |
-| `tools/python/razer_ble.py` | BLE vendor + fallback implementation |
-| `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient.swift` | Swift transport bridge actor |
-| `OpenSnek/Sources/OpenSnek/Bridge/BTVendorClient.swift` | CoreBluetooth vendor session manager |
-| `OpenSnek/Sources/OpenSnekProtocols/BLEVendorProtocol.swift` | BLE framing and payload helpers |
-| `OpenSnek/Sources/OpenSnek/Services/AppState.swift` | SwiftUI state model + apply scheduling |
-| `OpenSnek/Sources/OpenSnek/Services/AppLog.swift` | Runtime app logs |
-| `OpenSnek/Sources/OpenSnekProbe/main.swift` | BLE probe CLI (read/set/cycle + verify) |
+- Basilisk V3 X HyperSpeed: USB `0x00B9`, Bluetooth `0x00BA`
+- Basilisk V3 Pro: USB `0x00AB`, Bluetooth `0x00AC`
+- Basilisk V3 35K: USB `0x00CB`
 
-## Current Device Coverage
+## Repo Rules
 
-Validated device family:
-- Basilisk V3 X HyperSpeed
-  - USB/dongle PID `0x00B9` (VID `0x1532`)
-  - Bluetooth PID `0x00BA` (VID `0x068E`)
+1. BLE vendor exchanges stay serialized one-at-a-time per connection.
+2. Prefer focused reads, focused tests, and the smallest useful probe/build command instead of defaulting to full-package runs.
+3. Keep latest-wins/coalesced apply behavior for rapid UI edits.
+4. Treat malformed BLE DPI payloads as transient; ignore/retry instead of applying bad state.
+5. For BLE DPI stages, preserve stage IDs on write, resolve active stage from stage IDs, and do not reintroduce stage nudge/toggle writes.
+6. Keep `CHANGELOG.md` up to date for user-visible or protocol-visible changes.
+7. Regenerate `OpenSnek/OpenSnek.xcodeproj` only after changing `OpenSnek/project.yml`.
 
-## Working Areas
-
-- USB: DPI, stages, poll rate, battery, device metadata
-- BLE vendor GATT: DPI table read/write, active stage update, lighting raw/frame controls, button remap payloads
-- Swift app: auto-apply, state polling, stale-read defenses, runtime logging
-
-## Development Rules
-
-1. Read protocol docs first for protocol-facing edits.
-2. Keep BLE vendor operations sequential per connection.
-3. Prefer coalesced/latest-wins apply semantics for rapid UI edits.
-4. Treat malformed BLE DPI payloads as transient; ignore/retry instead of applying invalid state.
-5. Update docs and tests in the same change for behavior changes.
-6. For BLE DPI stages:
-   - parse by declared stage count even when read payload is short by one byte
-   - resolve active stage via stage-id mapping from payload entries
-   - preserve stage IDs on writes
-   - do not reintroduce stage “nudge/toggle” write sequences
-7. Keep `CHANGELOG.md` up to date for user-visible behavior changes, protocol handling changes, and reliability workflow changes.
-
-## Validation Workflow
-
-### Python
+## Quick Commands
 
 ```bash
-python3 tools/python/razer_poc.py --force-usb
-python3 tools/python/razer_poc.py --force-ble
-```
-
-### Swift App / Tests
-
-```bash
-./run.sh
-swift test --package-path OpenSnek
+swift build --package-path OpenSnek --product OpenSnekProbe
+swift run --package-path OpenSnek OpenSnekProbe dpi-read
+swift run --package-path OpenSnek OpenSnekProbe bt-lighting-info --name "BSK V3 PRO"
+swift run --package-path OpenSnek OpenSnekProbe usb-lighting-info --pid 0x00ab
 swift run --package-path OpenSnek OpenSnek
-./OpenSnek/scripts/run_macos_app.sh
-./OpenSnek/scripts/generate_xcodeproj.sh
-xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' build
-xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' test
-xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnekProbe -destination 'platform=macOS' build
 ```
 
-Notes:
-- Use `swift run` for quick local iteration.
-- Use `./run.sh` for the simplest root-level build-and-launch flow.
-- Use `./OpenSnek/scripts/run_macos_app.sh` when validating UI/input behavior (dock icon, foreground activation, text-entry/keybinding interactions).
-- Use Xcode project flows for signing/archive/distribution validation.
-- After changing `OpenSnek/project.yml`, regenerate `OpenSnek/OpenSnek.xcodeproj` via `./OpenSnek/scripts/generate_xcodeproj.sh`.
+Highest-value focused tests:
 
-### Swift Hardware Reliability Gate (required for BLE DPI/stage changes)
+```bash
+swift test --package-path OpenSnek --filter BLEVendorProtocolTests
+swift test --package-path OpenSnek --filter DeviceProfilesTests
+swift test --package-path OpenSnek --filter AppStateRefactorCharacterizationTests
+swift test --package-path OpenSnek --filter BackgroundServiceTransportTests
+```
+
+Hardware gate for BLE DPI/stage changes when a supported device is connected:
 
 ```bash
 OPEN_SNEK_HW=1 swift test --package-path OpenSnek --filter HardwareDpiReliabilityTests
 ```
 
-Policy:
-- Always run this gate when a supported mouse is detected and connected during validation.
-- Report explicit outcome in summaries: `pass`, `fail`, or `skipped` (with reason such as no Bluetooth device).
+## High-Value Gotchas
 
-### Swift Probe CLI (preferred for fast BLE DPI iteration)
+- Basilisk V3 Pro Bluetooth lighting is multi-zone. Static color uses per-zone `10 83` / `10 03`; brightness uses per-zone `10 85` / `10 05`. Do not assume legacy `10 84` / `10 04` works on that device.
+- Basilisk V3 Pro Bluetooth notify headers are 8 bytes. Older captures/tools may assume 20-byte headers.
+- If `swift run --package-path OpenSnek OpenSnekProbe ...` aborts with `__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__`, fix macOS Bluetooth permission for the launching host before debugging protocol logic.
+- `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient.swift` is a high-churn file. Check `git diff -- <file>` before editing and stage only intended hunks when the worktree is dirty.
 
-```bash
-swift run --package-path OpenSnek OpenSnekProbe dpi-read
-swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1600,6400 --active 2
-swift run --package-path OpenSnek OpenSnekProbe dpi-cycle --sequence '1200,6400;2600,6400' --loops 10 --active 2
-```
+## Deeper Docs
 
-Bluetooth/TCC note:
-- `OpenSnekProbe` BT commands use CoreBluetooth and require macOS Bluetooth privacy approval for the current host process.
-- If a `swift run --package-path OpenSnek OpenSnekProbe ...` BT command aborts with `__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__`, fix macOS permission for the launching host before debugging protocol logic.
-- On this workspace, the direct probe path works after granting Bluetooth access to the Codex host; verify with:
-
-```bash
-swift run --package-path OpenSnek OpenSnekProbe bt-raw-read --name 'BSK V3 PRO' --key 10850101 --timeout-ms 1200
-```
-
-- Expected success shape on the Basilisk V3 Pro BT path:
-  - notify header `30 01 00 00 00 00 00 02`
-  - payload `ff`
-- If permission still looks stale, relaunch the host app (Codex / Terminal / Xcode) and retry before changing any BLE code.
-
-For stage-selection regressions, run this exact check:
-
-```bash
-swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1000,2000,3000 --active 1 --verify-retries 8 --verify-delay-ms 120
-swift run --package-path OpenSnek OpenSnekProbe dpi-set --values 1000,2000,3000 --active 3 --verify-retries 8 --verify-delay-ms 120
-swift run --package-path OpenSnek OpenSnekProbe dpi-read
-```
-
-Expected final output: `active=3 count=3 values=[1000, 2000, 3000]`.
-
-### Runtime Logs
-
-App log path:
-
-```text
-~/Library/Logs/OpenSnek/open-snek.log
-```
-
-Useful regression grep:
-
-```bash
-tail -n 300 ~/Library/Logs/OpenSnek/open-snek.log | rg "btSetDpiStages|btGetDpiStages|stale-read masked|values=\\["
-```
-
-Fail patterns:
-- `btGetDpiStages` repeatedly returning mirrored last-slot values after multi-stage writes
-- stale-read masking persisting without convergence
-
-Pass pattern:
-- write ack followed by stable readback matching requested values and active stage
-
-## References
-
-- [OpenRazer](https://github.com/openrazer/openrazer)
-- [OpenRazer Protocol Wiki](https://github.com/openrazer/openrazer/wiki/Reverse-Engineering-USB-Protocol)
-- [razer-macos](https://github.com/1kc/razer-macos)
-- [RazerBlackWidowV3MiniBluetoothControllerApp](https://github.com/JiqiSun/RazerBlackWidowV3MiniBluetoothControllerApp)
+- `docs/development/README.md`
+- `docs/development/REPO_MAP.md`
+- `docs/development/VALIDATION.md`
+- `docs/protocol/PROTOCOL.md`
