@@ -18,17 +18,26 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         return hasVisibleWindows ? .noop : .reopenWindows
     }
 
+    nonisolated static func launchActivationPolicy(
+        launchRole: OpenSnekProcessRole
+    ) -> NSApplication.ActivationPolicy {
+        launchRole.isService ? .accessory : .regular
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(Self.launchActivationPolicy(launchRole: OpenSnekProcessRole.current))
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         AppLog.info("App", "launch version=\(version) build=\(build) logLevel=\(AppLog.currentLevel.shortLabel)")
 
         if OpenSnekProcessRole.current.isService {
-            NSApp.setActivationPolicy(.accessory)
             return
         }
 
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(Self.launchActivationPolicy(launchRole: .app))
         NSApp.activate(ignoringOtherApps: true)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {

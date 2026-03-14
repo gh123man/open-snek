@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [2026-03-13]
 
 ### Fixed
+- The background menu bar service now suppresses its transient SwiftUI startup window before it becomes visible, which removes the brief window flash when the app starts or when `Menu bar icon` is turned on.
 - Battery icons in the menu bar widget and main device header now use the same adaptive SF Symbol fill based on the current percentage, instead of mixing coarse 25% buckets in one surface and a hardcoded non-charging icon in the other.
 - Bluetooth battery status reads no longer treat a missing vendor charging value as `not charging`, and a fresh battery refresh with unknown charge state now clears any stale charging bolt instead of keeping an older `charging` result forever.
 - The Basilisk V3 Pro Bluetooth path no longer exposes lighting controls or auto-reapplies saved lighting state in the macOS app while that device's BLE lighting packets remain unverified.

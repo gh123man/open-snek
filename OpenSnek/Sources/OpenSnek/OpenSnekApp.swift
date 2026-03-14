@@ -50,21 +50,46 @@ struct OpenSnekApp: App {
     }
 }
 
-private struct ServiceWindowSuppressorView: View {
-    @State private var didCloseStartupWindow = false
+private struct ServiceWindowSuppressorView: NSViewRepresentable {
+    func makeNSView(context: Context) -> SuppressorView {
+        SuppressorView()
+    }
 
-    var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
-            .onAppear {
-                guard !didCloseStartupWindow else { return }
-                didCloseStartupWindow = true
-                DispatchQueue.main.async {
-                    NSApp.windows
-                        .filter { !($0 is NSPanel) && $0.standardWindowButton(.closeButton) != nil }
-                        .forEach { $0.close() }
-                }
+    func updateNSView(_ nsView: SuppressorView, context: Context) {}
+
+    final class SuppressorView: NSView {
+        private weak var suppressedWindow: NSWindow?
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            super.viewWillMove(toWindow: newWindow)
+            guard let newWindow else { return }
+            suppress(window: newWindow)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            suppress(window: window)
+        }
+
+        private func suppress(window: NSWindow) {
+            guard suppressedWindow !== window else { return }
+            suppressedWindow = window
+
+            // The service process uses a WindowGroup only to satisfy SwiftUI scene
+            // requirements. Hide that transient window before AppKit can present it.
+            window.alphaValue = 0
+            window.hasShadow = false
+            window.animationBehavior = .none
+            window.ignoresMouseEvents = true
+            window.orderOut(nil)
+
+            DispatchQueue.main.async { [weak window] in
+                guard let window else { return }
+                window.orderOut(nil)
+                window.close()
             }
+        }
     }
 }
 
