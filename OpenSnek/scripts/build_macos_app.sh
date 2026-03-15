@@ -14,6 +14,7 @@ Options:
   --bundle-id <id>                  CFBundleIdentifier (default: io.opensnek.OpenSnek)
   --version <semver>                CFBundleShortVersionString (default: 0.1.0)
   --build-number <value>            CFBundleVersion (default: 1)
+  --build-channel <dev|release>     OpenSnek build channel metadata (default: derived from configuration)
   --icon <png-or-icns-path>         Optional app icon source
   --sign-identity <value>           Signing identity: auto|preserve|adhoc|none|<codesign identity>
   --open                            Open app after build
@@ -23,6 +24,7 @@ Environment overrides:
   OPEN_SNEK_BUNDLE_ID
   OPEN_SNEK_VERSION
   OPEN_SNEK_BUILD_NUMBER
+  OPEN_SNEK_BUILD_CHANNEL
   OPEN_SNEK_APP_ICON
   OPEN_SNEK_SIGN_IDENTITY
 USAGE
@@ -33,6 +35,7 @@ OUTPUT_DIR=""
 BUNDLE_ID="${OPEN_SNEK_BUNDLE_ID:-io.opensnek.OpenSnek}"
 VERSION="${OPEN_SNEK_VERSION:-0.1.0}"
 BUILD_NUMBER="${OPEN_SNEK_BUILD_NUMBER:-1}"
+BUILD_CHANNEL="${OPEN_SNEK_BUILD_CHANNEL:-}"
 ICON_SOURCE="${OPEN_SNEK_APP_ICON:-}"
 SIGN_IDENTITY="${OPEN_SNEK_SIGN_IDENTITY:-auto}"
 OPEN_AFTER_BUILD=false
@@ -57,6 +60,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-number)
       BUILD_NUMBER="${2:-}"
+      shift 2
+      ;;
+    --build-channel)
+      BUILD_CHANNEL="${2:-}"
       shift 2
       ;;
     --icon)
@@ -85,6 +92,19 @@ done
 
 if [[ "$CONFIGURATION" != "debug" && "$CONFIGURATION" != "release" ]]; then
   echo "Invalid configuration: $CONFIGURATION" >&2
+  exit 1
+fi
+
+if [[ -z "$BUILD_CHANNEL" ]]; then
+  if [[ "$CONFIGURATION" == "debug" ]]; then
+    BUILD_CHANNEL="dev"
+  else
+    BUILD_CHANNEL="release"
+  fi
+fi
+
+if [[ "$BUILD_CHANNEL" != "dev" && "$BUILD_CHANNEL" != "release" ]]; then
+  echo "Invalid build channel: $BUILD_CHANNEL" >&2
   exit 1
 fi
 
@@ -321,6 +341,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
     <string>$BUILD_NUMBER</string>
+    <key>OpenSnekBuildChannel</key>
+    <string>$BUILD_CHANNEL</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
