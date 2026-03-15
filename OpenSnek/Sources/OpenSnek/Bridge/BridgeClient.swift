@@ -7,6 +7,7 @@ import OpenSnekProtocols
 actor BridgeClient {
     typealias USBDpiStageSnapshot = (active: Int, values: [Int], stageIDs: [UInt8])
     private static let bluetoothPassiveResetSilenceInterval: TimeInterval = 1.0
+    private static let bluetoothPassiveHeartbeatHealthyInterval: TimeInterval = 1.5
 
     var deviceSessions: [String: USBHIDControlSession] = [:]
     var deviceSessionCandidates: [String: [USBHIDControlSession]] = [:]
@@ -611,11 +612,15 @@ actor BridgeClient {
         }
 
         guard let lastObservedAt else { return true }
-        if let lastHeartbeatAt,
-           now.timeIntervalSince(lastHeartbeatAt) <= bluetoothPassiveResetSilenceInterval {
+        if isBluetoothPassiveHeartbeatHealthy(lastHeartbeatAt: lastHeartbeatAt, now: now) {
             return false
         }
         return now.timeIntervalSince(lastObservedAt) > bluetoothPassiveResetSilenceInterval
+    }
+
+    nonisolated static func isBluetoothPassiveHeartbeatHealthy(lastHeartbeatAt: Date?, now: Date) -> Bool {
+        guard let lastHeartbeatAt else { return false }
+        return now.timeIntervalSince(lastHeartbeatAt) <= bluetoothPassiveHeartbeatHealthyInterval
     }
 
     nonisolated static func reconciledObservedPassiveDpiDeviceIDs(

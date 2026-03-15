@@ -276,7 +276,7 @@ final class USBPassiveDPIEventTests: XCTestCase {
             ),
             active: 3,
             values: [800, 900, 1000, 1100, 1200],
-            lastHeartbeatAt: now.addingTimeInterval(-1.2),
+            lastHeartbeatAt: now.addingTimeInterval(-1.6),
             lastObservedAt: now.addingTimeInterval(-1.2),
             now: now
         )
@@ -324,6 +324,39 @@ final class USBPassiveDPIEventTests: XCTestCase {
         XCTAssertFalse(shouldKeepRealtime)
         XCTAssertFalse(shouldKeepRealtimeOnHeartbeat)
         XCTAssertFalse(shouldKeepRealtimeDuringRecentSilence)
+    }
+
+    func testBluetoothHeartbeatHealthDisablesWatchdogResetEvenWithMissedDpiChange() {
+        let device = makePassiveTestDevice(id: "bt-watchdog-heartbeat-healthy", transport: .bluetooth)
+        let now = Date(timeIntervalSince1970: 1_773_600_014)
+
+        XCTAssertTrue(
+            BridgeClient.isBluetoothPassiveHeartbeatHealthy(
+                lastHeartbeatAt: now.addingTimeInterval(-1.4),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldResetBluetoothPassiveObservation(
+                previousState: makePassiveTestState(
+                    device: device,
+                    dpiValues: [800, 900, 1000, 1100, 1200],
+                    activeStage: 1,
+                    dpiValue: 900
+                ),
+                active: 4,
+                values: [800, 900, 1000, 1100, 1200],
+                lastHeartbeatAt: now.addingTimeInterval(-1.4),
+                lastObservedAt: now.addingTimeInterval(-1.4),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.isBluetoothPassiveHeartbeatHealthy(
+                lastHeartbeatAt: now.addingTimeInterval(-1.6),
+                now: now
+            )
+        )
     }
 
     func testCompletedPollingReadIsMaskedWhenNewerCachedStateLandsDuringRead() {
