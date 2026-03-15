@@ -104,9 +104,18 @@ This directory stores BLE protocol captures used to derive and validate `tools/p
 
 ## Capture guide
 
-install btvs
-run btvs (will open wireshark)
-paste in filter `btatt && btatt.handle != 0x002b && btatt.handle != 0x001b` to filter out all HID traffic
-open synapse 
-perform actions
-file -> exprot specified packets
+To record a new BLE capture:
+
+1. Install BTVS.
+2. Launch BTVS. It will open Wireshark.
+3. Apply this display filter to hide the noisy HID traffic and keep the ATT exchange visible:
+
+```text
+btatt && btatt.handle != 0x002b && btatt.handle != 0x001b
+```
+
+4. Open Synapse.
+5. Perform the smallest action sequence that reproduces the behavior you want to capture.
+6. In Wireshark, export only the relevant packets:
+   `File -> Export Specified Packets`
+7. Save the capture under `captures/ble/` with a short action-based name, then add a short note to this README describing what the trace validates.
