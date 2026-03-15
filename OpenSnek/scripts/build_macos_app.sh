@@ -5,17 +5,20 @@ usage() {
   cat <<'USAGE'
 Build a local macOS .app bundle for OpenSnek.
 
+This uses the canonical Xcode app target, then copies the built app into
+`OpenSnek/.dist/OpenSnek.app` so local launches can reuse a stable bundle path
+for TCC/Input Monitoring.
+
 Usage:
   build_macos_app.sh [options]
 
 Options:
   --configuration <debug|release>   Build configuration (default: debug)
   --output <dir>                    Output directory for .app (default: OpenSnek/.dist)
-  --bundle-id <id>                  CFBundleIdentifier (default: io.opensnek.OpenSnek)
-  --version <semver>                CFBundleShortVersionString (default: 0.1.0)
-  --build-number <value>            CFBundleVersion (default: 1)
+  --bundle-id <id>                  CFBundleIdentifier override (default: io.opensnek.OpenSnek)
+  --version <semver>                CFBundleShortVersionString override (default: project setting)
+  --build-number <value>            CFBundleVersion override (default: 1)
   --build-channel <dev|release>     OpenSnek build channel metadata (default: derived from configuration)
-  --icon <png-or-icns-path>         Optional app icon source
   --sign-identity <value>           Signing identity: auto|preserve|adhoc|none|<codesign identity>
   --open                            Open app after build
   -h, --help                        Show this help
@@ -25,7 +28,6 @@ Environment overrides:
   OPEN_SNEK_VERSION
   OPEN_SNEK_BUILD_NUMBER
   OPEN_SNEK_BUILD_CHANNEL
-  OPEN_SNEK_APP_ICON
   OPEN_SNEK_SIGN_IDENTITY
 USAGE
 }
@@ -33,10 +35,9 @@ USAGE
 CONFIGURATION="debug"
 OUTPUT_DIR=""
 BUNDLE_ID="${OPEN_SNEK_BUNDLE_ID:-io.opensnek.OpenSnek}"
-VERSION="${OPEN_SNEK_VERSION:-0.1.0}"
+VERSION="${OPEN_SNEK_VERSION:-}"
 BUILD_NUMBER="${OPEN_SNEK_BUILD_NUMBER:-1}"
 BUILD_CHANNEL="${OPEN_SNEK_BUILD_CHANNEL:-}"
-ICON_SOURCE="${OPEN_SNEK_APP_ICON:-}"
 SIGN_IDENTITY="${OPEN_SNEK_SIGN_IDENTITY:-auto}"
 OPEN_AFTER_BUILD=false
 
@@ -64,10 +65,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-channel)
       BUILD_CHANNEL="${2:-}"
-      shift 2
-      ;;
-    --icon)
-      ICON_SOURCE="${2:-}"
       shift 2
       ;;
     --sign-identity)
@@ -108,58 +105,17 @@ if [[ "$BUILD_CHANNEL" != "dev" && "$BUILD_CHANNEL" != "release" ]]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
-DEFAULT_ICON_PNG="$PACKAGE_DIR/Branding/AppIcon-master.png"
-
-PRODUCT_NAME="OpenSnek"
-DISPLAY_NAME="OpenSnek"
-APP_BUNDLE="$OUTPUT_DIR/$DISPLAY_NAME.app"
-CONTENTS_DIR="$APP_BUNDLE/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
-ICONSET_DIR="$OUTPUT_DIR/AppIcon.iconset"
-ICON_FILE="$RESOURCES_DIR/AppIcon.icns"
-SYSTEM_ICON_ICNS="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns"
-
-mkdir -p "$OUTPUT_DIR"
-
-echo "[open-snek] Building $PRODUCT_NAME ($CONFIGURATION)..."
-swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product "$PRODUCT_NAME"
-BIN_DIR="$(swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --show-bin-path)"
-BIN_PATH="$BIN_DIR/$PRODUCT_NAME"
-
-if [[ ! -x "$BIN_PATH" ]]; then
-  echo "Build output missing executable: $BIN_PATH" >&2
-  exit 1
-fi
-
-build_icns_from_png() {
-  local src_png="$1"
-  local dest_icns="$2"
-
-  if ! command -v iconutil >/dev/null 2>&1 || ! command -v sips >/dev/null 2>&1; then
-    echo "[open-snek] iconutil/sips unavailable; skipping icon generation"
-    return 1
+require_cmd() {
+  local name="$1"
+  if ! command -v "$name" >/dev/null 2>&1; then
+    echo "Missing required command: $name" >&2
+    exit 1
   fi
+}
 
-  rm -rf "$ICONSET_DIR"
-  mkdir -p "$ICONSET_DIR"
-
-  sips -s format png -z 16 16 "$src_png" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null
-  sips -s format png -z 32 32 "$src_png" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null
-  sips -s format png -z 32 32 "$src_png" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null
-  sips -s format png -z 64 64 "$src_png" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null
-  sips -s format png -z 128 128 "$src_png" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null
-  sips -s format png -z 256 256 "$src_png" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null
-  sips -s format png -z 256 256 "$src_png" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null
-  sips -s format png -z 512 512 "$src_png" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
-  sips -s format png -z 512 512 "$src_png" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null
-  sips -s format png -z 1024 1024 "$src_png" --out "$ICONSET_DIR/icon_512x512@2x.png" >/dev/null
-
-  iconutil -c icns "$ICONSET_DIR" -o "$dest_icns"
-  return 0
+detect_project_marketing_version() {
+  local spec_file="$1"
+  awk '/MARKETING_VERSION:/{print $2; exit}' "$spec_file"
 }
 
 detect_preferred_sign_identity() {
@@ -183,7 +139,6 @@ detect_preferred_sign_identity() {
   fi
 
   printf '%s\n' "$preferred"
-  return 0
 }
 
 identity_is_available() {
@@ -240,11 +195,32 @@ resolve_sign_identity() {
   esac
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
+PROJECT_FILE="$PACKAGE_DIR/OpenSnek.xcodeproj"
+SPEC_FILE="$PACKAGE_DIR/project.yml"
+PRODUCT_NAME="OpenSnek"
+DISPLAY_NAME="OpenSnek"
+APP_BUNDLE="$OUTPUT_DIR/$DISPLAY_NAME.app"
+DERIVED_DATA_PATH="$OUTPUT_DIR/.derived-data"
+
+require_cmd xcodebuild
+require_cmd ditto
+
+if [[ -z "$VERSION" ]]; then
+  VERSION="$(detect_project_marketing_version "$SPEC_FILE")"
+fi
+VERSION="${VERSION:-0.1.0}"
+
+mkdir -p "$OUTPUT_DIR"
+
 EXISTING_SIGN_IDENTITY=""
 if [[ -d "$APP_BUNDLE" ]]; then
   EXISTING_SIGN_IDENTITY="$(detect_existing_sign_identity "$APP_BUNDLE" || true)"
 fi
 RESOLVED_SIGN_IDENTITY="$(resolve_sign_identity "$SIGN_IDENTITY" "$EXISTING_SIGN_IDENTITY")"
+
 if [[ "$SIGN_IDENTITY" == "preserve" ]]; then
   if [[ -n "$EXISTING_SIGN_IDENTITY" ]]; then
     if [[ "$RESOLVED_SIGN_IDENTITY" == "$EXISTING_SIGN_IDENTITY" ]]; then
@@ -267,93 +243,33 @@ if [[ "$SIGN_IDENTITY" == "auto" && "$EXISTING_SIGN_IDENTITY" == "adhoc" ]]; the
   echo "[open-snek] Existing app is ad-hoc signed; auto mode will try a real signing identity for stable TCC grants"
 fi
 
+XCODE_CONFIGURATION="$(tr '[:lower:]' '[:upper:]' <<< "${CONFIGURATION:0:1}")${CONFIGURATION:1}"
+
+echo "[open-snek] Building $PRODUCT_NAME ($CONFIGURATION) via Xcode target..."
+rm -rf "$DERIVED_DATA_PATH"
+xcodebuild \
+  -project "$PROJECT_FILE" \
+  -scheme OpenSnek \
+  -configuration "$XCODE_CONFIGURATION" \
+  -destination "platform=macOS" \
+  -derivedDataPath "$DERIVED_DATA_PATH" \
+  build \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY="" \
+  MARKETING_VERSION="$VERSION" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+  PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+  OPEN_SNEK_BUILD_CHANNEL="$BUILD_CHANNEL" >/tmp/open_snek_xcodebuild.log
+
+BUILT_APP="$DERIVED_DATA_PATH/Build/Products/$XCODE_CONFIGURATION/OpenSnek.app"
+if [[ ! -d "$BUILT_APP" ]]; then
+  echo "Built app not found: $BUILT_APP" >&2
+  exit 1
+fi
+
 rm -rf "$APP_BUNDLE"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-
-cp "$BIN_PATH" "$MACOS_DIR/$PRODUCT_NAME"
-chmod +x "$MACOS_DIR/$PRODUCT_NAME"
-
-shopt -s nullglob
-for bundle in "$BIN_DIR"/*.bundle; do
-  cp -R "$bundle" "$RESOURCES_DIR/"
-done
-shopt -u nullglob
-
-if [[ -d "$PACKAGE_DIR/App/Resources" ]]; then
-  shopt -s nullglob
-  for resource in "$PACKAGE_DIR"/App/Resources/*; do
-    if [[ -f "$resource" ]]; then
-      cp "$resource" "$RESOURCES_DIR/"
-    fi
-  done
-  shopt -u nullglob
-fi
-
-ICON_INPUT="$ICON_SOURCE"
-if [[ -n "$ICON_INPUT" && ! -f "$ICON_INPUT" ]]; then
-  echo "Icon source not found: $ICON_INPUT" >&2
-  exit 1
-fi
-
-if [[ -z "$ICON_INPUT" ]]; then
-  if [[ -f "$DEFAULT_ICON_PNG" ]]; then
-    ICON_INPUT="$DEFAULT_ICON_PNG"
-  fi
-fi
-
-if [[ -z "$ICON_INPUT" ]]; then
-  if [[ -f "$SYSTEM_ICON_ICNS" ]]; then
-    cp "$SYSTEM_ICON_ICNS" "$ICON_FILE"
-  fi
-elif [[ "$ICON_INPUT" == *.icns ]]; then
-  cp "$ICON_INPUT" "$ICON_FILE"
-elif [[ "$ICON_INPUT" == *.png ]]; then
-  if ! build_icns_from_png "$ICON_INPUT" "$ICON_FILE"; then
-    if [[ -f "$SYSTEM_ICON_ICNS" ]]; then
-      cp "$SYSTEM_ICON_ICNS" "$ICON_FILE"
-    fi
-  fi
-else
-  echo "Unsupported icon format (use .png or .icns): $ICON_INPUT" >&2
-  exit 1
-fi
-
-cat > "$CONTENTS_DIR/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDisplayName</key>
-    <string>$DISPLAY_NAME</string>
-    <key>CFBundleExecutable</key>
-    <string>$PRODUCT_NAME</string>
-    <key>CFBundleIdentifier</key>
-    <string>$BUNDLE_ID</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$DISPLAY_NAME</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$VERSION</string>
-    <key>CFBundleVersion</key>
-    <string>$BUILD_NUMBER</string>
-    <key>OpenSnekBuildChannel</key>
-    <string>$BUILD_CHANNEL</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.utilities</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>OpenSnek uses Bluetooth to discover and configure compatible Razer devices.</string>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
+ditto "$BUILT_APP" "$APP_BUNDLE"
 
 if command -v codesign >/dev/null 2>&1; then
   ADHOC_REQ="=designated => identifier \"$BUNDLE_ID\""

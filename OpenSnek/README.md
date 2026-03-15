@@ -138,6 +138,8 @@ Bundle build only:
 ./OpenSnek/scripts/build_macos_app.sh --configuration release
 ```
 
+This now builds the real Xcode `OpenSnek.app` target and stages that app bundle into `OpenSnek/.dist/` for local launch/TCC reuse.
+
 DMG release build and notarization:
 
 ```bash
@@ -150,7 +152,7 @@ Release automation and GitHub secret setup:
 docs/release/DMG_RELEASE.md
 ```
 
-Run the existing `.dist` app bundle without rebuilding (preserves signature/TCC grants by default):
+Run the existing staged `.dist` app bundle without rebuilding (preserves the stable bundle path and its TCC/Input Monitoring grants by default):
 
 ```bash
 ./OpenSnek/scripts/run_macos_app.sh
