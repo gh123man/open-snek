@@ -4,6 +4,8 @@ import OpenSnekCore
 
 @MainActor
 final class AppStateRuntimeController {
+    private static let serviceIdleFallbackFastDpiInterval: TimeInterval = 0.5
+
     private let environment: AppEnvironment
     private unowned let deviceStore: DeviceStore
     private unowned let runtimeStore: RuntimeStore
@@ -120,6 +122,16 @@ final class AppStateRuntimeController {
         pollingProfile(at: Date())
     }
 
+    func effectiveFastDpiInterval(at now: Date) -> TimeInterval? {
+        let profile = pollingProfile(at: now)
+        if let fastInterval = profile.fastDpiInterval {
+            return fastInterval
+        }
+
+        guard profile == .serviceIdle else { return nil }
+        return activeFastPollingDeviceIDs(at: now).isEmpty ? nil : Self.serviceIdleFallbackFastDpiInterval
+    }
+
     func pollingProfile(at now: Date) -> PollingProfile {
         if !environment.launchRole.isService {
             return .foreground
@@ -140,14 +152,19 @@ final class AppStateRuntimeController {
         let liveIDs = Set(deviceStore.devices.map(\.id))
         var ordered: [String] = []
         var seen: Set<String> = []
+        let remoteSelectedDeviceIDs = activeRemoteSelectedDeviceIDs(at: now)
+        let shouldIncludeLocalSelection = !environment.launchRole.isService ||
+            remoteSelectedDeviceIDs.isEmpty ||
+            isLocallyInteractive(at: now)
 
-        for deviceID in localFastPollingDeviceIDs(at: now) {
-            guard liveIDs.contains(deviceID) else { continue }
-            guard seen.insert(deviceID).inserted else { continue }
-            ordered.append(deviceID)
+        if shouldIncludeLocalSelection {
+            for deviceID in localFastPollingDeviceIDs(at: now) {
+                guard liveIDs.contains(deviceID) else { continue }
+                guard seen.insert(deviceID).inserted else { continue }
+                ordered.append(deviceID)
+            }
         }
 
-        let remoteSelectedDeviceIDs = activeRemoteSelectedDeviceIDs(at: now)
         for deviceID in remoteSelectedDeviceIDs {
             guard liveIDs.contains(deviceID) else { continue }
             guard seen.insert(deviceID).inserted else { continue }
@@ -210,8 +227,18 @@ final class AppStateRuntimeController {
         case .snapshot(let snapshot):
             guard environment.usesRemoteServiceUpdates else { return }
             deviceController.applyRemoteServiceSnapshot(snapshot)
+        case .dpiTransportStatus(let deviceID, let status, let updatedAt):
+            deviceController.applyBackendDpiTransportStatusUpdate(
+                deviceID: deviceID,
+                status: status,
+                updatedAt: updatedAt
+            )
         case .deviceState(let deviceID, let updatedState, let updatedAt):
-            deviceController.applyBackendDeviceStateUpdate(deviceID: deviceID, state: updatedState, updatedAt: updatedAt)
+            deviceController.applyBackendDeviceStateUpdate(
+                deviceID: deviceID,
+                state: updatedState,
+                updatedAt: updatedAt
+            )
         }
     }
 
@@ -444,6 +471,7 @@ final class AppStateRuntimeController {
         RuntimeWakeSchedule.nextSleepInterval(
             now: now,
             profile: pollingProfile(at: now),
+            fastDpiInterval: effectiveFastDpiInterval(at: now),
             usesRemoteServiceUpdates: environment.usesRemoteServiceUpdates,
             lastDevicePresencePollAt: lastDevicePresencePollAt,
             lastRefreshStatePollAt: lastRefreshStatePollAt,
@@ -482,7 +510,7 @@ final class AppStateRuntimeController {
             await deviceController.refreshAllDeviceStates()
         }
 
-        if let fastInterval = profile.fastDpiInterval,
+        if let fastInterval = effectiveFastDpiInterval(at: now),
            now.timeIntervalSince(lastFastDpiPollAt) >= fastInterval {
             lastFastDpiPollAt = now
             await deviceController.refreshDpiFast()
@@ -526,10 +554,28 @@ final class AppStateRuntimeController {
     private func localFastPollingDeviceIDs(at now: Date) -> [String] {
         guard let selectedDeviceID = deviceStore.selectedDeviceID else { return [] }
         if environment.launchRole.isService {
-            let localInteractive = compactMenuPresented || (compactInteractionUntil.map { now < $0 } ?? false)
-            return localInteractive ? [selectedDeviceID] : []
+            let localInteractive = isLocallyInteractive(at: now)
+            if localInteractive {
+                return [selectedDeviceID]
+            }
+
+            guard let selectedDevice = deviceStore.devices.first(where: { $0.id == selectedDeviceID }) else {
+                return []
+            }
+            switch deviceController.dpiUpdateTransportStatus(for: selectedDevice) {
+            case .streamActive, .pollingFallback:
+                return [selectedDeviceID]
+            case .realTimeHID:
+                return [selectedDeviceID]
+            case .unknown, .listening, .unsupported:
+                return []
+            }
         }
         return environment.usesRemoteServiceUpdates ? [] : [selectedDeviceID]
+    }
+
+    private func isLocallyInteractive(at now: Date) -> Bool {
+        compactMenuPresented || (compactInteractionUntil.map { now < $0 } ?? false)
     }
 
     private func pruneExpiredRemoteClientPresence(now: Date) {

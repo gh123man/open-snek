@@ -138,6 +138,7 @@ public struct PassiveDPIInputDescriptor: Hashable, Codable, Sendable {
     public let usage: Int
     public let reportID: UInt8
     public let subtype: UInt8
+    public let heartbeatSubtype: UInt8?
     public let minInputReportSize: Int
     public let maxFeatureReportSize: Int?
 
@@ -146,6 +147,7 @@ public struct PassiveDPIInputDescriptor: Hashable, Codable, Sendable {
         usage: Int,
         reportID: UInt8,
         subtype: UInt8,
+        heartbeatSubtype: UInt8? = nil,
         minInputReportSize: Int,
         maxFeatureReportSize: Int? = nil
     ) {
@@ -153,6 +155,7 @@ public struct PassiveDPIInputDescriptor: Hashable, Codable, Sendable {
         self.usage = usage
         self.reportID = reportID
         self.subtype = subtype
+        self.heartbeatSubtype = heartbeatSubtype
         self.minInputReportSize = max(1, minInputReportSize)
         self.maxFeatureReportSize = maxFeatureReportSize
     }
@@ -390,6 +393,13 @@ public enum DeviceProfiles {
         supportedLightingEffects: basiliskV3XUSBLightingEffects,
         usbLightingLEDIDs: [0x01],
         usbLightingZones: basiliskV3XUSBLightingZones,
+        passiveDPIInput: PassiveDPIInputDescriptor(
+            usagePage: 0x01,
+            usage: 0x06,
+            reportID: 0x05,
+            subtype: 0x02,
+            minInputReportSize: 5
+        ),
         onboardProfileCount: 1
     )
 
@@ -460,6 +470,7 @@ public enum DeviceProfiles {
             usage: 0x02,
             reportID: 0x05,
             subtype: 0x02,
+            heartbeatSubtype: 0x10,
             minInputReportSize: 7,
             maxFeatureReportSize: 1
         ),
@@ -485,6 +496,7 @@ public enum DeviceProfiles {
             usage: 0x02,
             reportID: 0x05,
             subtype: 0x02,
+            heartbeatSubtype: 0x10,
             minInputReportSize: 7,
             maxFeatureReportSize: 1
         ),

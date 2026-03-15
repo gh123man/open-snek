@@ -94,6 +94,7 @@ struct HIDAccessStatus: Codable, Equatable, Sendable {
 enum BackendStateUpdate: Sendable {
     case deviceList([MouseDevice], updatedAt: Date)
     case deviceState(deviceID: String, state: MouseState, updatedAt: Date)
+    case dpiTransportStatus(deviceID: String, status: DpiUpdateTransportStatus, updatedAt: Date)
     case snapshot(SharedServiceSnapshot)
 }
 
@@ -373,6 +374,13 @@ final actor LocalBridgeBackend: DeviceBackend {
         }
         Task { [weak self] in
             guard let self else { return }
+            let stream = await self.client.passiveDpiHeartbeatStream()
+            for await event in stream {
+                await self.handlePassiveDpiHeartbeat(event)
+            }
+        }
+        Task { [weak self] in
+            guard let self else { return }
             let stream = await self.client.devicePresenceEventStream()
             for await event in stream {
                 await self.handleDevicePresenceEvent(event)
@@ -432,9 +440,15 @@ final actor LocalBridgeBackend: DeviceBackend {
 
     func readDpiStagesFast(device: MouseDevice) async throws -> DpiFastSnapshot? {
         let readStartedAt = Date()
+        let shouldUseFastPolling = await client.shouldUseFastDPIPolling(device: device)
         if let cachedAt = cachedFastAtByDeviceID[device.id],
            let cached = cachedFastByDeviceID[device.id],
-           readStartedAt.timeIntervalSince(cachedAt) < 0.2 {
+           Self.shouldReuseCachedFastSnapshot(
+            device: device,
+            cachedAt: cachedAt,
+            now: readStartedAt,
+            shouldUseFastDPIPolling: shouldUseFastPolling
+           ) {
             return cached
         }
         guard let snapshot = try await client.readDpiStagesFast(device: device) else { return nil }
@@ -526,6 +540,25 @@ final actor LocalBridgeBackend: DeviceBackend {
             return false
         }
         return true
+    }
+
+    nonisolated static func shouldReuseCachedFastSnapshot(
+        device: MouseDevice,
+        cachedAt: Date,
+        now: Date,
+        shouldUseFastDPIPolling: Bool
+    ) -> Bool {
+        let maxAge: TimeInterval
+        if device.transport == .bluetooth, !shouldUseFastDPIPolling {
+            // While passive BT DPI events are flowing, prefer the latest cached state
+            // and defer vendor reads until the stream has been quiet for roughly one
+            // correction interval.
+            maxAge = 0.9
+        } else {
+            maxAge = 0.2
+        }
+
+        return now.timeIntervalSince(cachedAt) < maxAge
     }
 
     nonisolated static func completedReadWasSuperseded(startedAt: Date, latestCachedAt: Date?) -> Bool {
@@ -670,6 +703,16 @@ final actor LocalBridgeBackend: DeviceBackend {
 
         publishStateUpdate(.deviceState(deviceID: event.deviceID, state: updated, updatedAt: event.observedAt))
         publishSnapshotIfService()
+    }
+
+    private func handlePassiveDpiHeartbeat(_ event: PassiveDPIHeartbeatEvent) {
+        publishStateUpdate(
+            .dpiTransportStatus(
+                deviceID: event.deviceID,
+                status: .streamActive,
+                updatedAt: event.observedAt
+            )
+        )
     }
 
     private func publishStateUpdate(_ update: BackendStateUpdate) {

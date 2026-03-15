@@ -53,6 +53,7 @@ enum DeviceConnectionState: Equatable {
 enum DpiUpdateTransportStatus: String, Codable, Equatable, Sendable {
     case unknown
     case listening
+    case streamActive
     case pollingFallback
     case realTimeHID
     case unsupported
@@ -63,6 +64,8 @@ enum DpiUpdateTransportStatus: String, Codable, Equatable, Sendable {
             "Checking"
         case .listening:
             "Listening for first HID event"
+        case .streamActive:
+            "HID stream active"
         case .pollingFallback:
             "Polling fallback active"
         case .realTimeHID:
@@ -119,6 +122,7 @@ enum RuntimeWakeSchedule {
     static func nextSleepInterval(
         now: Date,
         profile: PollingProfile,
+        fastDpiInterval: TimeInterval?,
         usesRemoteServiceUpdates: Bool,
         lastDevicePresencePollAt: Date,
         lastRefreshStatePollAt: Date,
@@ -134,7 +138,7 @@ enum RuntimeWakeSchedule {
         } else {
             intervals.append(max(0, profile.devicePresenceInterval - now.timeIntervalSince(lastDevicePresencePollAt)))
             intervals.append(max(0, profile.refreshStateInterval - now.timeIntervalSince(lastRefreshStatePollAt)))
-            if let fastInterval = profile.fastDpiInterval {
+            if let fastInterval = fastDpiInterval {
                 intervals.append(max(0, fastInterval - now.timeIntervalSince(lastFastDpiPollAt)))
             }
         }

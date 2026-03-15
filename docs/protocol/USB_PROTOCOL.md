@@ -303,11 +303,11 @@ TxnID:    0x1F
 
 Client note: treat `active` as a stage-ID token and map it against entry `[0]` stage IDs. Do not assume a fixed zero-based index.
 
-#### Passive USB DPI Input Report (Observed on Basilisk V3 Pro `0x00AB`; matching interface tuple present on Basilisk V3 35K `0x00CB`)
+#### Passive USB DPI Input Report (Observed on Basilisk V3 X HyperSpeed `0x00B9`, Basilisk V3 Pro `0x00AB`; matching interface tuple present on Basilisk V3 35K `0x00CB`)
 
 The 90-byte USB configuration protocol above remains a host-initiated HID `Feature` report exchange. It does not expose a generic subscription channel for device state.
 
-Separately, the observed Basilisk V3 Pro USB stack emits a spontaneous HID `Input` report on its auxiliary keyboard-style interface when the mouse DPI changes on-device. A locally attached Basilisk V3 35K exposes the same auxiliary HID interface tuple, so OpenSnek now arms the same passive listener there and keeps fast-poll fallback enabled until a live callback is actually observed on the current host:
+Separately, the observed Basilisk V3 X HyperSpeed and Basilisk V3 Pro USB stacks emit a spontaneous HID `Input` report on an auxiliary keyboard-style interface when the mouse DPI changes on-device. A locally attached Basilisk V3 35K exposes the same auxiliary HID interface tuple, so OpenSnek now arms the same passive listener there and keeps fast-poll fallback enabled until a live callback is actually observed on the current host:
 
 ```
 Interface: usage page 0x01, usage 0x06, max input report size 16, max feature report size 1
@@ -321,7 +321,7 @@ Observed examples:
 - `05 02 04 4c 04 4c ...` -> `1100 x 1100`
 
 Client notes:
-- OpenSnek now enables this passive HID listener on the Basilisk V3 Pro USB (`0x00AB`) and Basilisk V3 35K USB (`0x00CB`) profiles
+- OpenSnek now enables this passive HID listener on the Basilisk V3 X HyperSpeed USB (`0x00B9`), Basilisk V3 Pro USB (`0x00AB`), and Basilisk V3 35K USB (`0x00CB`) profiles
 - accept both callback buffer shapes seen on macOS HID stacks:
   - leading report id present: `05 02 ...`
   - report id already stripped: `02 ...`

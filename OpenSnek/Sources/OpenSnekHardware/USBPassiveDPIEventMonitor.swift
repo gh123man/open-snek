@@ -26,34 +26,78 @@ public struct PassiveDPIEvent: Hashable, Sendable {
     }
 }
 
+public struct PassiveDPIHeartbeatEvent: Sendable {
+    public let deviceID: String
+    public let observedAt: Date
+
+    public init(
+        deviceID: String,
+        observedAt: Date
+    ) {
+        self.deviceID = deviceID
+        self.observedAt = observedAt
+    }
+}
+
+public enum PassiveDPIInputClassification: Hashable, Sendable {
+    case dpi(PassiveDPIReading)
+    case heartbeat
+    case other
+}
+
 public enum PassiveDPIParser {
+    public static func classify(
+        report: [UInt8],
+        descriptor: PassiveDPIInputDescriptor
+    ) -> PassiveDPIInputClassification {
+        let allowedSubtypes = [descriptor.subtype, descriptor.heartbeatSubtype].compactMap { $0 }
+        guard report.count >= descriptor.minInputReportSize,
+              let payloadStart = payloadStartIndex(
+                  in: report,
+                  descriptor: descriptor,
+                  allowedSubtypes: allowedSubtypes
+              ) else {
+            return .other
+        }
+
+        let subtype = report[payloadStart]
+        if subtype == descriptor.subtype {
+            guard report.count > payloadStart + 4 else { return .other }
+
+            let dpiX = (Int(report[payloadStart + 1]) << 8) | Int(report[payloadStart + 2])
+            let dpiY = (Int(report[payloadStart + 3]) << 8) | Int(report[payloadStart + 4])
+            guard (100...30_000).contains(dpiX), (100...30_000).contains(dpiY) else { return .other }
+            return .dpi(PassiveDPIReading(dpiX: dpiX, dpiY: dpiY))
+        }
+
+        if let heartbeatSubtype = descriptor.heartbeatSubtype, subtype == heartbeatSubtype {
+            return .heartbeat
+        }
+
+        return .other
+    }
+
     public static func parse(
         report: [UInt8],
         descriptor: PassiveDPIInputDescriptor
     ) -> PassiveDPIReading? {
-        guard report.count >= descriptor.minInputReportSize else { return nil }
-
-        let payloadStart = payloadStartIndex(in: report, descriptor: descriptor)
-        guard let payloadStart, report.count > payloadStart + 4 else { return nil }
-
-        let dpiX = (Int(report[payloadStart + 1]) << 8) | Int(report[payloadStart + 2])
-        let dpiY = (Int(report[payloadStart + 3]) << 8) | Int(report[payloadStart + 4])
-        guard (100...30_000).contains(dpiX), (100...30_000).contains(dpiY) else { return nil }
-        return PassiveDPIReading(dpiX: dpiX, dpiY: dpiY)
+        guard case .dpi(let reading) = classify(report: report, descriptor: descriptor) else { return nil }
+        return reading
     }
 
     private static func payloadStartIndex(
         in report: [UInt8],
-        descriptor: PassiveDPIInputDescriptor
+        descriptor: PassiveDPIInputDescriptor,
+        allowedSubtypes: [UInt8]
     ) -> Int? {
-        if report.first == descriptor.subtype {
+        if let first = report.first, allowedSubtypes.contains(first) {
             return 0
         }
 
         var index = 0
         while index < report.count, report[index] == descriptor.reportID {
             let candidate = index + 1
-            if candidate < report.count, report[candidate] == descriptor.subtype {
+            if candidate < report.count, allowedSubtypes.contains(report[candidate]) {
                 return candidate
             }
             index += 1
@@ -66,11 +110,13 @@ public enum PassiveDPIParser {
 public final class PassiveDPIEventMonitor: @unchecked Sendable {
     public struct WatchTarget: @unchecked Sendable {
         public let deviceID: String
+        public let targetID: String
         public let device: IOHIDDevice
         public let descriptor: PassiveDPIInputDescriptor
 
-        public init(deviceID: String, device: IOHIDDevice, descriptor: PassiveDPIInputDescriptor) {
+        public init(deviceID: String, targetID: String, device: IOHIDDevice, descriptor: PassiveDPIInputDescriptor) {
             self.deviceID = deviceID
+            self.targetID = targetID
             self.device = device
             self.descriptor = descriptor
         }
@@ -80,23 +126,30 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         let deviceID: String
         let descriptor: PassiveDPIInputDescriptor
         let emit: @Sendable (PassiveDPIEvent) -> Void
+        let emitHeartbeat: @Sendable (PassiveDPIHeartbeatEvent) -> Void
 
-        init(deviceID: String, descriptor: PassiveDPIInputDescriptor, emit: @escaping @Sendable (PassiveDPIEvent) -> Void) {
+        init(
+            deviceID: String,
+            descriptor: PassiveDPIInputDescriptor,
+            emit: @escaping @Sendable (PassiveDPIEvent) -> Void,
+            emitHeartbeat: @escaping @Sendable (PassiveDPIHeartbeatEvent) -> Void
+        ) {
             self.deviceID = deviceID
             self.descriptor = descriptor
             self.emit = emit
+            self.emitHeartbeat = emitHeartbeat
         }
     }
 
     private struct RegistrationKey: Hashable {
         let deviceID: String
-        let devicePointer: UInt
+        let targetID: String
     }
 
     private struct Registration {
         let deviceID: String
+        let targetID: String
         let device: IOHIDDevice
-        let devicePointer: UInt
         let descriptor: PassiveDPIInputDescriptor
         let buffer: UnsafeMutablePointer<UInt8>
         let bufferLength: CFIndex
@@ -104,6 +157,7 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
     }
 
     public var onEvent: (@Sendable (PassiveDPIEvent) -> Void)?
+    public var onHeartbeat: (@Sendable (PassiveDPIHeartbeatEvent) -> Void)?
 
     private let queue = DispatchQueue(label: "open.snek.hid.passive-dpi")
     private let runLoopStateLock = NSLock()
@@ -188,7 +242,7 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         for target in targets {
             let key = RegistrationKey(
                 deviceID: target.deviceID,
-                devicePointer: Self.devicePointer(for: target.device)
+                targetID: target.targetID
             )
             desiredByKey[key] = target
         }
@@ -207,7 +261,8 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         var activeDeviceIDs: Set<String> = []
         for (key, target) in desiredByKey {
             if let existing = registrationsByKey[key],
-               existing.descriptor == target.descriptor {
+               existing.descriptor == target.descriptor,
+               !Self.deviceReferenceChanged(existing.device, target.device) {
                 activeDeviceIDs.insert(target.deviceID)
                 continue
             }
@@ -237,6 +292,8 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
             descriptor: target.descriptor
         ) { [weak self] event in
             self?.onEvent?(event)
+        } emitHeartbeat: { [weak self] event in
+            self?.onHeartbeat?(event)
         }
         let context = UnsafeMutableRawPointer(Unmanaged.passRetained(contextBox).toOpaque())
 
@@ -251,8 +308,8 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
 
         registrationsByKey[key] = Registration(
             deviceID: target.deviceID,
+            targetID: target.targetID,
             device: target.device,
-            devicePointer: Self.devicePointer(for: target.device),
             descriptor: target.descriptor,
             buffer: buffer,
             bufferLength: CFIndex(reportLength),
@@ -274,22 +331,34 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         Unmanaged<CallbackContext>.fromOpaque(registration.context).release()
     }
 
+    private static func deviceReferenceChanged(_ lhs: IOHIDDevice, _ rhs: IOHIDDevice) -> Bool {
+        Unmanaged.passUnretained(lhs).toOpaque() != Unmanaged.passUnretained(rhs).toOpaque()
+    }
+
     private static let inputReportCallback: IOHIDReportCallback = { context, result, _, reportType, _, report, reportLength in
         guard result == kIOReturnSuccess, reportType == kIOHIDReportTypeInput, let context else { return }
         let callbackContext = Unmanaged<CallbackContext>.fromOpaque(context).takeUnretainedValue()
         let bytes = Array(UnsafeBufferPointer(start: report, count: max(0, reportLength)))
-        guard let reading = PassiveDPIParser.parse(report: bytes, descriptor: callbackContext.descriptor) else { return }
-        callbackContext.emit(
-            PassiveDPIEvent(
-                deviceID: callbackContext.deviceID,
-                dpiX: reading.dpiX,
-                dpiY: reading.dpiY,
-                observedAt: Date()
+        let observedAt = Date()
+        switch PassiveDPIParser.classify(report: bytes, descriptor: callbackContext.descriptor) {
+        case .dpi(let reading):
+            callbackContext.emit(
+                PassiveDPIEvent(
+                    deviceID: callbackContext.deviceID,
+                    dpiX: reading.dpiX,
+                    dpiY: reading.dpiY,
+                    observedAt: observedAt
+                )
             )
-        )
-    }
-
-    private static func devicePointer(for device: IOHIDDevice) -> UInt {
-        UInt(bitPattern: Unmanaged.passUnretained(device).toOpaque())
+        case .heartbeat:
+            callbackContext.emitHeartbeat(
+                PassiveDPIHeartbeatEvent(
+                    deviceID: callbackContext.deviceID,
+                    observedAt: observedAt
+                )
+            )
+        case .other:
+            break
+        }
     }
 }

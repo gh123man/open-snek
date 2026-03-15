@@ -62,6 +62,7 @@ Legend:
 
 Validated in-session over USB:
 - working: serial, firmware, device mode read/write, poll-rate read/write, idle-time read/write, low-battery-threshold read/write, DPI/stages, battery
+- working: OpenSnek now arms the shared passive HID DPI listener on the observed `0x01:0x06` USB interfaces and upgrades to real-time HID updates once the host delivers a live callback
 - working: scroll LED brightness + effects (none/spectrum/wave/static/reactive/breath single/dual/random)
 - working: button remap read/write on class `0x02` (`0x8C`/`0x0C`) for tested slots (`0x01..0x05`, `0x09`, `0x0A`, `0x60`) with readback confirmation via `OpenSnekProbe` and hardware XCTest harness
 - observed non-remappable control on `0x00B9`: Hypershift / Boss-sniper slot `0x06` returns status `0x03` on `0x02:0x8C` reads and is outside the validated USB button-function path

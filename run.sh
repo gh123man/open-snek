@@ -16,6 +16,25 @@ Options:
 USAGE
 }
 
+terminate_existing_opensnek() {
+  if ! pgrep -x OpenSnek >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "[open-snek] Stopping existing OpenSnek processes"
+  pkill -x OpenSnek >/dev/null 2>&1 || true
+
+  for _ in {1..20}; do
+    if ! pgrep -x OpenSnek >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.1
+  done
+
+  echo "[open-snek] Forcing OpenSnek shutdown"
+  pkill -9 -x OpenSnek >/dev/null 2>&1 || true
+}
+
 if [[ $# -gt 1 ]]; then
   usage >&2
   exit 1
@@ -23,9 +42,11 @@ fi
 
 case "${1:-}" in
   "")
+    terminate_existing_opensnek
     exec "$SCRIPT_DIR/OpenSnek/scripts/run_macos_app.sh" --rebuild
     ;;
   --no-build)
+    terminate_existing_opensnek
     exec "$SCRIPT_DIR/OpenSnek/scripts/run_macos_app.sh"
     ;;
   -h|--help)
