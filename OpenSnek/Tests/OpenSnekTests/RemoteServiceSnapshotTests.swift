@@ -348,7 +348,16 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let backend = RemoteBootstrapServiceBackend()
-        let host = try BackgroundServiceHost(backend: backend, defaults: defaults)
+        let (subscriptionStream, subscriptionContinuation) = AsyncStream.makeStream(of: Void.self)
+        defer { subscriptionContinuation.finish() }
+
+        let host = try BackgroundServiceHost(
+            backend: backend,
+            defaults: defaults,
+            remoteClientPresenceHandler: { _ in
+                subscriptionContinuation.yield(())
+            }
+        )
         try await host.start()
         defer { host.stop() }
 
@@ -364,6 +373,10 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         }
         await appState.runtimeStore.start()
 
+        var subscriptionIterator = subscriptionStream.makeAsyncIterator()
+        _ = await subscriptionIterator.next()
+        let bootstrappedUpdatedAt = await MainActor.run { appState.deviceStore.lastUpdated ?? Date() }
+
         let updatedState = makeSnapshotState(
             device: RemoteBootstrapServiceBackend.device,
             connection: "bluetooth",
@@ -377,7 +390,7 @@ final class RemoteServiceSnapshotTests: XCTestCase {
                 SharedServiceSnapshot(
                     devices: [RemoteBootstrapServiceBackend.device],
                     stateByDeviceID: [RemoteBootstrapServiceBackend.device.id: updatedState],
-                    lastUpdatedByDeviceID: [RemoteBootstrapServiceBackend.device.id: Date(timeIntervalSince1970: 1_774_100_000)]
+                    lastUpdatedByDeviceID: [RemoteBootstrapServiceBackend.device.id: bootstrappedUpdatedAt.addingTimeInterval(1)]
                 )
             )
         )
