@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 import OpenSnekCore
-import OpenSnekHardware
+@testable import OpenSnekHardware
 @testable import OpenSnek
 
 final class USBPassiveDPIEventTests: XCTestCase {
@@ -13,6 +13,35 @@ final class USBPassiveDPIEventTests: XCTestCase {
         }
 
         XCTAssertTrue(active.isEmpty)
+    }
+
+    func testPassiveMonitorReusesRegistrationForStableDeviceIdentity() {
+        let descriptor = PassiveDPIInputDescriptor(
+            usagePage: 0x01,
+            usage: 0x02,
+            reportID: 0x05,
+            subtype: 0x02,
+            heartbeatSubtype: 0x10,
+            minInputReportSize: 7,
+            maxFeatureReportSize: 1
+        )
+
+        XCTAssertTrue(
+            PassiveDPIEventMonitor.shouldReuseRegistration(
+                existingDescriptor: descriptor,
+                existingDeviceIdentityToken: "registry:42",
+                targetDescriptor: descriptor,
+                targetDeviceIdentityToken: "registry:42"
+            )
+        )
+        XCTAssertFalse(
+            PassiveDPIEventMonitor.shouldReuseRegistration(
+                existingDescriptor: descriptor,
+                existingDeviceIdentityToken: "registry:42",
+                targetDescriptor: descriptor,
+                targetDeviceIdentityToken: "registry:99"
+            )
+        )
     }
 
     func testPassiveDpiFastPollingFallsBackUntilRealEventIsObserved() {
@@ -372,6 +401,51 @@ final class USBPassiveDPIEventTests: XCTestCase {
         )
     }
 
+    func testBluetoothExpectedReadMasksOnlyMatchingPreviousState() {
+        let expected: BridgeClient.BluetoothExpectedDpiState = (
+            active: 3,
+            values: [800, 900, 1000, 1100, 1200],
+            previousActive: 1,
+            previousValues: [800, 900, 1000, 1100, 1200],
+            expiresAt: Date(timeIntervalSince1970: 1_773_600_020),
+            remainingMasks: 4
+        )
+
+        XCTAssertTrue(
+            BridgeClient.shouldMaskBluetoothExpectedRead(
+                parsedActive: 1,
+                parsedValues: [800, 900, 1000, 1100, 1200],
+                expected: expected
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldMaskBluetoothExpectedRead(
+                parsedActive: 4,
+                parsedValues: [800, 900, 1000, 1100, 1200],
+                expected: expected
+            )
+        )
+    }
+
+    func testBluetoothExpectedReadDoesNotMaskWhenPreviousStateIsUnknown() {
+        let expected: BridgeClient.BluetoothExpectedDpiState = (
+            active: 2,
+            values: [800, 900, 1000, 1100, 1200],
+            previousActive: nil,
+            previousValues: nil,
+            expiresAt: Date(timeIntervalSince1970: 1_773_600_021),
+            remainingMasks: 4
+        )
+
+        XCTAssertFalse(
+            BridgeClient.shouldMaskBluetoothExpectedRead(
+                parsedActive: 1,
+                parsedValues: [800, 900, 1000, 1100, 1200],
+                expected: expected
+            )
+        )
+    }
+
     func testCompletedPollingReadIsMaskedWhenNewerCachedStateLandsDuringRead() {
         let start = Date(timeIntervalSince1970: 1_773_600_020)
 
@@ -561,6 +635,37 @@ final class USBPassiveDPIEventTests: XCTestCase {
         )
 
         XCTAssertNil(merged)
+    }
+
+    func testPassiveUSBFallbackSeedStateBootstrapsHidOnlyMonitoring() {
+        let device = makePassiveTestDevice(id: "usb-passive-seed", transport: .usb)
+        let event = PassiveDPIEvent(deviceID: device.id, dpiX: 1100, dpiY: 1100, observedAt: Date())
+
+        let seeded = LocalBridgeBackend.seededStateForPassiveDpiEvent(device: device, event: event)
+
+        XCTAssertEqual(seeded.device.id, device.id)
+        XCTAssertEqual(seeded.connection, "USB")
+        XCTAssertEqual(seeded.dpi?.x, 1100)
+        XCTAssertEqual(seeded.dpi_stages.active_stage, 0)
+        XCTAssertEqual(seeded.dpi_stages.values, [1100])
+        XCTAssertEqual(seeded.onboard_profile_count, device.onboard_profile_count)
+        XCTAssertTrue(seeded.capabilities.dpi_stages)
+        XCTAssertTrue(seeded.capabilities.poll_rate)
+    }
+
+    func testPassiveUSBFallbackSeedStateKeepsSingleObservedStageFreshAcrossHidOnlyEvents() {
+        let device = makePassiveTestDevice(id: "usb-passive-seed-refresh", transport: .usb)
+        let firstEvent = PassiveDPIEvent(deviceID: device.id, dpiX: 1100, dpiY: 1100, observedAt: Date())
+        let seeded = LocalBridgeBackend.seededStateForPassiveDpiEvent(device: device, event: firstEvent)
+
+        let merged = mergedStateFromPassiveDpiEvent(
+            previous: seeded,
+            event: PassiveDPIEvent(deviceID: device.id, dpiX: 1600, dpiY: 1600, observedAt: Date())
+        )
+
+        XCTAssertEqual(merged?.dpi?.x, 1600)
+        XCTAssertEqual(merged?.dpi_stages.active_stage, 0)
+        XCTAssertEqual(merged?.dpi_stages.values, [1600])
     }
 
     func testBluetoothPassiveDpiExpectationUsesUniqueMatchedStage() {

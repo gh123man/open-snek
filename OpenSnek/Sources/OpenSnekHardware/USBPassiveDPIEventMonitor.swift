@@ -112,12 +112,20 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         public let deviceID: String
         public let targetID: String
         public let device: IOHIDDevice
+        public let deviceIdentityToken: String
         public let descriptor: PassiveDPIInputDescriptor
 
-        public init(deviceID: String, targetID: String, device: IOHIDDevice, descriptor: PassiveDPIInputDescriptor) {
+        public init(
+            deviceID: String,
+            targetID: String,
+            device: IOHIDDevice,
+            deviceIdentityToken: String,
+            descriptor: PassiveDPIInputDescriptor
+        ) {
             self.deviceID = deviceID
             self.targetID = targetID
             self.device = device
+            self.deviceIdentityToken = deviceIdentityToken
             self.descriptor = descriptor
         }
     }
@@ -150,6 +158,7 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         let deviceID: String
         let targetID: String
         let device: IOHIDDevice
+        let deviceIdentityToken: String
         let descriptor: PassiveDPIInputDescriptor
         let buffer: UnsafeMutablePointer<UInt8>
         let bufferLength: CFIndex
@@ -158,7 +167,6 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
 
     public var onEvent: (@Sendable (PassiveDPIEvent) -> Void)?
     public var onHeartbeat: (@Sendable (PassiveDPIHeartbeatEvent) -> Void)?
-
     private let queue = DispatchQueue(label: "open.snek.hid.passive-dpi")
     private let runLoopStateLock = NSLock()
     private var runLoop: CFRunLoop?
@@ -261,8 +269,12 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         var activeDeviceIDs: Set<String> = []
         for (key, target) in desiredByKey {
             if let existing = registrationsByKey[key],
-               existing.descriptor == target.descriptor,
-               !Self.deviceReferenceChanged(existing.device, target.device) {
+               Self.shouldReuseRegistration(
+                existingDescriptor: existing.descriptor,
+                existingDeviceIdentityToken: existing.deviceIdentityToken,
+                targetDescriptor: target.descriptor,
+                targetDeviceIdentityToken: target.deviceIdentityToken
+               ) {
                 activeDeviceIDs.insert(target.deviceID)
                 continue
             }
@@ -277,12 +289,16 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
     }
 
     private func addRegistration(target: WatchTarget, key: RegistrationKey) -> Bool {
-        let openResult = IOHIDDeviceOpen(target.device, IOOptionBits(kIOHIDOptionsTypeNone))
+        // Recreate the HID device on the passive-monitor thread before opening it.
+        // Reusing the discovery-thread wrapper across run loops can leave BLE
+        // passive listeners stuck on startup heartbeat traffic with no later DPI callbacks.
+        let registrationDevice = Self.registrationDevice(from: target.device) ?? target.device
+        let openResult = IOHIDDeviceOpen(registrationDevice, IOOptionBits(kIOHIDOptionsTypeNone))
         guard openResult == kIOReturnSuccess else { return false }
 
         let reportLength = max(
             target.descriptor.minInputReportSize,
-            USBHIDSupport.intProperty(target.device, key: kIOHIDMaxInputReportSizeKey as CFString) ?? target.descriptor.minInputReportSize
+            USBHIDSupport.intProperty(registrationDevice, key: kIOHIDMaxInputReportSizeKey as CFString) ?? target.descriptor.minInputReportSize
         )
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: reportLength)
         buffer.initialize(repeating: 0, count: reportLength)
@@ -297,9 +313,9 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         }
         let context = UnsafeMutableRawPointer(Unmanaged.passRetained(contextBox).toOpaque())
 
-        IOHIDDeviceScheduleWithRunLoop(target.device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDDeviceScheduleWithRunLoop(registrationDevice, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
         IOHIDDeviceRegisterInputReportCallback(
-            target.device,
+            registrationDevice,
             buffer,
             CFIndex(reportLength),
             Self.inputReportCallback,
@@ -309,7 +325,8 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         registrationsByKey[key] = Registration(
             deviceID: target.deviceID,
             targetID: target.targetID,
-            device: target.device,
+            device: registrationDevice,
+            deviceIdentityToken: target.deviceIdentityToken,
             descriptor: target.descriptor,
             buffer: buffer,
             bufferLength: CFIndex(reportLength),
@@ -331,8 +348,14 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         Unmanaged<CallbackContext>.fromOpaque(registration.context).release()
     }
 
-    private static func deviceReferenceChanged(_ lhs: IOHIDDevice, _ rhs: IOHIDDevice) -> Bool {
-        Unmanaged.passUnretained(lhs).toOpaque() != Unmanaged.passUnretained(rhs).toOpaque()
+    static func shouldReuseRegistration(
+        existingDescriptor: PassiveDPIInputDescriptor,
+        existingDeviceIdentityToken: String,
+        targetDescriptor: PassiveDPIInputDescriptor,
+        targetDeviceIdentityToken: String
+    ) -> Bool {
+        existingDescriptor == targetDescriptor &&
+            existingDeviceIdentityToken == targetDeviceIdentityToken
     }
 
     private static let inputReportCallback: IOHIDReportCallback = { context, result, _, reportType, _, report, reportLength in
@@ -360,5 +383,11 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         case .other:
             break
         }
+    }
+
+    private static func registrationDevice(from device: IOHIDDevice) -> IOHIDDevice? {
+        let service = IOHIDDeviceGetService(device)
+        guard service != 0 else { return nil }
+        return IOHIDDeviceCreate(kCFAllocatorDefault, service)
     }
 }

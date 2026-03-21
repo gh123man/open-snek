@@ -31,6 +31,46 @@ protocol DeviceBackend: AnyObject, Sendable {
     func debugUSBReadButtonBinding(device: MouseDevice, slot: Int, profile: Int) async throws -> [UInt8]?
 }
 
+protocol HIDAccessRefreshControllingBackend: DeviceBackend {
+    func hidAccessStatus(forceRefresh: Bool) async -> HIDAccessStatus
+}
+
+final actor BootstrapPendingBackend: DeviceBackend {
+    nonisolated static let shared = BootstrapPendingBackend()
+
+    nonisolated var usesRemoteServiceTransport: Bool { false }
+
+    func listDevices() async throws -> [MouseDevice] { [] }
+
+    func readState(device _: MouseDevice) async throws -> MouseState {
+        throw BridgeError.commandFailed("Backend is still starting")
+    }
+
+    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? { nil }
+
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool { true }
+
+    func dpiUpdateTransportStatus(device _: MouseDevice) async -> DpiUpdateTransportStatus { .unknown }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        .unknown(detail: "Backend is still starting.")
+    }
+
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { _ in }
+    }
+
+    func updateRemoteClientPresence(sourceProcessID _: Int32, selectedDeviceID _: String?) async {}
+
+    func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState {
+        throw BridgeError.commandFailed("Backend is still starting")
+    }
+
+    func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { nil }
+
+    func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? { nil }
+}
+
 extension DeviceBackend {
     func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus {
         let usesFastPolling = await shouldUseFastDPIPolling(device: device)
@@ -120,10 +160,23 @@ func mergedStateFromPassiveDpiEvent(
 ) -> MouseState? {
     guard let previous, let stageValues = previous.dpi_stages.values, !stageValues.isEmpty else { return nil }
 
-    let matchingIndices = stageValues.enumerated().compactMap { index, value in
-        value == event.dpiX ? index : nil
+    let resolvedStageValues: [Int]
+    let resolvedActiveStage: Int?
+    if stageValues.count == 1,
+       stageValues[0] == previous.dpi?.x,
+       stageValues[0] != event.dpiX {
+        // A HID-only bootstrap path only knows the most recently observed DPI.
+        // Keep that single-slot fallback state fresh until a full read seeds the
+        // actual stage list.
+        resolvedStageValues = [event.dpiX]
+        resolvedActiveStage = 0
+    } else {
+        resolvedStageValues = stageValues
+        let matchingIndices = stageValues.enumerated().compactMap { index, value in
+            value == event.dpiX ? index : nil
+        }
+        resolvedActiveStage = matchingIndices.count == 1 ? matchingIndices[0] : previous.dpi_stages.active_stage
     }
-    let resolvedActiveStage = matchingIndices.count == 1 ? matchingIndices[0] : previous.dpi_stages.active_stage
 
     return MouseState(
         device: previous.device,
@@ -131,7 +184,7 @@ func mergedStateFromPassiveDpiEvent(
         battery_percent: previous.battery_percent,
         charging: previous.charging,
         dpi: DpiPair(x: event.dpiX, y: event.dpiY),
-        dpi_stages: DpiStages(active_stage: resolvedActiveStage, values: stageValues),
+        dpi_stages: DpiStages(active_stage: resolvedActiveStage, values: resolvedStageValues),
         poll_rate: previous.poll_rate,
         sleep_timeout: previous.sleep_timeout,
         device_mode: previous.device_mode,
@@ -379,7 +432,7 @@ private enum BackgroundServiceTransport {
     }
 }
 
-final actor LocalBridgeBackend: DeviceBackend {
+final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
     static let shared = LocalBridgeBackend()
 
     private let client = BridgeClient()
@@ -511,7 +564,11 @@ final actor LocalBridgeBackend: DeviceBackend {
     }
 
     func hidAccessStatus() async -> HIDAccessStatus {
-        await client.hidAccessStatus()
+        await hidAccessStatus(forceRefresh: true)
+    }
+
+    func hidAccessStatus(forceRefresh: Bool) async -> HIDAccessStatus {
+        await client.hidAccessStatus(forceRefresh: forceRefresh)
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
@@ -597,6 +654,59 @@ final actor LocalBridgeBackend: DeviceBackend {
     nonisolated static func completedReadWasSuperseded(startedAt: Date, latestCachedAt: Date?) -> Bool {
         guard let latestCachedAt else { return false }
         return latestCachedAt > startedAt
+    }
+
+    nonisolated static func seededStateForPassiveDpiEvent(
+        device: MouseDevice,
+        event: PassiveDPIEvent,
+        fastSnapshot: DpiFastSnapshot? = nil
+    ) -> MouseState {
+        let knownStageValues = fastSnapshot?.values.isEmpty == false
+            ? fastSnapshot?.values
+            : [event.dpiX]
+        let matchingIndices = (knownStageValues ?? []).enumerated().compactMap { index, value in
+            value == event.dpiX ? index : nil
+        }
+        let resolvedActiveStage: Int?
+        if matchingIndices.count == 1 {
+            resolvedActiveStage = matchingIndices[0]
+        } else if let fastSnapshot {
+            resolvedActiveStage = max(0, min(fastSnapshot.values.count - 1, fastSnapshot.active))
+        } else {
+            resolvedActiveStage = 0
+        }
+
+        return MouseState(
+            device: DeviceSummary(
+                id: device.id,
+                product_name: device.product_name,
+                serial: device.serial,
+                transport: device.transport,
+                firmware: device.firmware
+            ),
+            connection: device.connectionLabel,
+            battery_percent: nil,
+            charging: nil,
+            dpi: DpiPair(x: event.dpiX, y: event.dpiY),
+            dpi_stages: DpiStages(active_stage: resolvedActiveStage, values: knownStageValues),
+            poll_rate: nil,
+            sleep_timeout: nil,
+            device_mode: nil,
+            low_battery_threshold_raw: nil,
+            scroll_mode: nil,
+            scroll_acceleration: nil,
+            scroll_smart_reel: nil,
+            active_onboard_profile: nil,
+            onboard_profile_count: device.onboard_profile_count,
+            led_value: nil,
+            capabilities: Capabilities(
+                dpi_stages: true,
+                poll_rate: device.transport == .usb,
+                power_management: true,
+                button_remap: device.button_layout != nil,
+                lighting: device.showsLightingControls
+            )
+        )
     }
 
     private func handleDevicePresenceEvent(_ event: HIDDevicePresenceEvent) {
@@ -718,8 +828,23 @@ final actor LocalBridgeBackend: DeviceBackend {
     }
 
     private func handlePassiveDpiEvent(_ event: PassiveDPIEvent) {
+        let previousState: MouseState?
+        if let cached = cachedStateByDeviceID[event.deviceID] {
+            previousState = cached
+        } else if let reconnectSeed = reconnectSeedStateByDeviceID[event.deviceID] {
+            previousState = reconnectSeed
+        } else if let device = cachedDevices.first(where: { $0.id == event.deviceID }) {
+            previousState = Self.seededStateForPassiveDpiEvent(
+                device: device,
+                event: event,
+                fastSnapshot: cachedFastByDeviceID[event.deviceID]
+            )
+        } else {
+            previousState = nil
+        }
+
         guard let updated = mergedStateFromPassiveDpiEvent(
-            previous: cachedStateByDeviceID[event.deviceID],
+            previous: previousState,
             event: event
         ) else {
             return
@@ -886,7 +1011,12 @@ private actor BackgroundServiceRequestHandler {
             let device = try decodePayload(MouseDevice.self, from: request.payload)
             payload = try BackendCodec.encode(await backend.dpiUpdateTransportStatus(device: device))
         case .hidAccessStatus:
-            payload = try BackendCodec.encode(await backend.hidAccessStatus())
+            let forceRefresh = (try? decodePayload(Bool.self, from: request.payload)) ?? true
+            if let backend = backend as? any HIDAccessRefreshControllingBackend {
+                payload = try BackendCodec.encode(await backend.hidAccessStatus(forceRefresh: forceRefresh))
+            } else {
+                payload = try BackendCodec.encode(await backend.hidAccessStatus())
+            }
         case .apply:
             let applyRequest = try decodePayload(ApplyRequest.self, from: request.payload)
             payload = try BackendCodec.encode(try await backend.apply(device: applyRequest.device, patch: applyRequest.patch))
@@ -917,7 +1047,7 @@ private actor BackgroundServiceRequestHandler {
     }
 }
 
-final actor IPCDeviceBackend: DeviceBackend {
+final actor IPCDeviceBackend: HIDAccessRefreshControllingBackend {
     private let host: NWEndpoint.Host = .ipv4(.loopback)
     private let port: NWEndpoint.Port
     private var latestRemoteClientPresence: CrossProcessClientPresence
@@ -974,9 +1104,13 @@ final actor IPCDeviceBackend: DeviceBackend {
     }
 
     func hidAccessStatus() async -> HIDAccessStatus {
+        await hidAccessStatus(forceRefresh: true)
+    }
+
+    func hidAccessStatus(forceRefresh: Bool) async -> HIDAccessStatus {
         (try? await request(
             method: .hidAccessStatus,
-            payload: nil,
+            payload: try BackendCodec.encode(forceRefresh),
             responseType: HIDAccessStatus.self
         )) ?? HIDAccessStatus.unavailable(detail: "Failed to query HID access status from background service.")
     }
@@ -1062,6 +1196,8 @@ private actor BackgroundServiceClientSubscription {
     private let port: NWEndpoint.Port
     private var latestPresence: CrossProcessClientPresence
     private var connection: NWConnection?
+    private var isReady = false
+    private var readinessWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         host: NWEndpoint.Host,
@@ -1073,8 +1209,8 @@ private actor BackgroundServiceClientSubscription {
         latestPresence = initialPresence
     }
 
-    func makeStream() -> AsyncStream<BackendStateUpdate> {
-        AsyncStream { continuation in
+    func makeStream() async -> AsyncStream<BackendStateUpdate> {
+        let stream = AsyncStream { continuation in
             let task = Task {
                 await self.run(continuation: continuation)
             }
@@ -1085,6 +1221,8 @@ private actor BackgroundServiceClientSubscription {
                 }
             }
         }
+        await waitUntilReady()
+        return stream
     }
 
     func updatePresence(_ presence: CrossProcessClientPresence) async {
@@ -1103,6 +1241,7 @@ private actor BackgroundServiceClientSubscription {
     func stop() {
         connection?.cancel()
         connection = nil
+        resumeReadinessWaiters()
     }
 
     private func run(continuation: AsyncStream<BackendStateUpdate>.Continuation) async {
@@ -1138,6 +1277,8 @@ private actor BackgroundServiceClientSubscription {
                     NSLocalizedDescriptionKey: error
                 ])
             }
+            isReady = true
+            resumeReadinessWaiters()
 
             while !Task.isCancelled {
                 let frame = try await BackgroundServiceTransport.receiveFrame(from: connection)
@@ -1153,6 +1294,7 @@ private actor BackgroundServiceClientSubscription {
                 }
             }
         } catch {
+            resumeReadinessWaiters()
             if !Task.isCancelled,
                !isConnectionClosed(error) {
                 AppLog.warning("Service", "background service subscription failed: \(error.localizedDescription)")
@@ -1175,6 +1317,21 @@ private actor BackgroundServiceClientSubscription {
             }
         }
         return false
+    }
+
+    private func waitUntilReady() async {
+        guard !isReady else { return }
+        await withCheckedContinuation { continuation in
+            readinessWaiters.append(continuation)
+        }
+    }
+
+    private func resumeReadinessWaiters() {
+        let waiters = readinessWaiters
+        readinessWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }
 

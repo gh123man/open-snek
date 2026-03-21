@@ -370,7 +370,13 @@ extension BridgeClient {
                 let parsedValues = Array(parsed.values.prefix(expected.values.count))
                 if parsed.active == expected.active && parsedValues == expected.values {
                     btExpectedDpiByDeviceID[device.id] = nil
-                } else if Date() < expected.expiresAt, expected.remainingMasks > 0 {
+                } else if Date() < expected.expiresAt,
+                          expected.remainingMasks > 0,
+                          Self.shouldMaskBluetoothExpectedRead(
+                            parsedActive: parsed.active,
+                            parsedValues: parsed.values,
+                            expected: expected
+                          ) {
                     expected.remainingMasks -= 1
                     btExpectedDpiByDeviceID[device.id] = expected
                     AppLog.debug(
@@ -446,6 +452,7 @@ extension BridgeClient {
         let ok = btAckSuccess(notifies: notifies, req: req)
         AppLog.debug("Bridge", "btSetDpiStages device=\(device.id) reqActive=\(active) reqValues=\(values) count=\(count) ok=\(ok)")
         if ok {
+            let previousSnapshot = btDpiSnapshotByDeviceID[device.id]
             let expectedActive = max(0, min(count - 1, active))
             let expectedValues = Array(mergedSlots.prefix(count))
             btDpiSnapshotByDeviceID[device.id] = (
@@ -458,6 +465,8 @@ extension BridgeClient {
             btExpectedDpiByDeviceID[device.id] = (
                 active: expectedActive,
                 values: expectedValues,
+                previousActive: previousSnapshot?.active,
+                previousValues: previousSnapshot.map { Array($0.slots.prefix($0.count)) },
                 expiresAt: Date().addingTimeInterval(1.2),
                 remainingMasks: 4
             )

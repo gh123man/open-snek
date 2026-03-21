@@ -201,7 +201,7 @@ final class DeviceStore {
 
     func refreshDevices() async {
         await runtimeController.ensureBackendStateUpdatesStarted()
-        await runtimeController.refreshHIDAccessStatus()
+        await runtimeController.refreshHIDAccessStatus(forceRefresh: false)
         await deviceController.refreshDevices()
     }
 

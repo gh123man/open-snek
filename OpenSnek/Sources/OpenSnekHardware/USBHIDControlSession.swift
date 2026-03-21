@@ -1,4 +1,5 @@
 import Foundation
+import IOKit
 import IOKit.hid
 import OpenSnekProtocols
 
@@ -34,6 +35,23 @@ public enum USBHIDSupport {
             score += 25
         }
         return score
+    }
+
+    public static func registryEntryID(_ device: IOHIDDevice) -> UInt64? {
+        let service = IOHIDDeviceGetService(device)
+        guard service != 0 else { return nil }
+
+        var entryID: UInt64 = 0
+        let result = IORegistryEntryGetRegistryEntryID(service, &entryID)
+        guard result == KERN_SUCCESS else { return nil }
+        return entryID
+    }
+
+    public static func deviceIdentityToken(_ device: IOHIDDevice) -> String {
+        if let entryID = registryEntryID(device) {
+            return "registry:\(entryID)"
+        }
+        return "pointer:\(UInt(bitPattern: Unmanaged.passUnretained(device).toOpaque()))"
     }
 }
 

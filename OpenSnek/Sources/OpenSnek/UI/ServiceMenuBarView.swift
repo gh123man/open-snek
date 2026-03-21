@@ -335,7 +335,9 @@ struct ServiceMenuBarView: View {
     }
 
     private func refreshCompactMenuDiagnostics() async {
-        await runtimeStore.refreshHIDAccessStatus()
+        // Reopening the compact menu should not tear down the shared HID discovery
+        // manager; that can interrupt a passive stream when polling is disabled.
+        await runtimeStore.refreshHIDAccessStatus(forceRefresh: false)
         guard let device = deviceStore.selectedDevice else { return }
         await deviceStore.refreshConnectionDiagnostics(for: device)
     }

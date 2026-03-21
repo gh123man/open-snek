@@ -3,6 +3,8 @@ import OpenSnekCore
 
 @MainActor
 final class AppStateDeviceController {
+    private static let bluetoothPassiveHeartbeatConnectedInterval: TimeInterval = 1.5
+
     private let environment: AppEnvironment
     private unowned let deviceStore: DeviceStore
     private weak var editorControllerStorage: AppStateEditorController?
@@ -509,12 +511,16 @@ final class AppStateDeviceController {
             return .reconnecting
         }
 
+        let now = Date()
         guard let updatedAt = lastUpdatedTimestamp(for: device) else {
             return .reconnecting
         }
 
-        let age = Date().timeIntervalSince(updatedAt)
+        let age = now.timeIntervalSince(updatedAt)
         if age > max(4.5, runtimeController.currentPollingProfile.refreshStateInterval * 1.7) {
+            if shouldTreatActivePassiveHIDAsConnected(device: device, now: now) {
+                return .connected
+            }
             return .reconnecting
         }
 
@@ -1069,7 +1075,22 @@ final class AppStateDeviceController {
         let previous = dpiUpdateTransportStatusByDeviceID[deviceID]
         guard previous != status else { return }
         dpiUpdateTransportStatusByDeviceID[deviceID] = status
+        AppLog.debug(
+            "AppState",
+            "dpiTransportStatus device=\(deviceID) previous=\(previous?.rawValue ?? "nil") next=\(status?.rawValue ?? "nil")"
+        )
         deviceStore.invalidateConnectionDiagnostics()
+    }
+
+    private func shouldTreatActivePassiveHIDAsConnected(device: MouseDevice, now: Date) -> Bool {
+        guard device.transport == .bluetooth else { return false }
+        guard resolvedProfile(for: device)?.passiveDPIInput != nil else { return false }
+
+        let transportStatus = dpiUpdateTransportStatusByDeviceID[device.id]
+        guard transportStatus == .streamActive || transportStatus == .realTimeHID else { return false }
+
+        guard let lastHeartbeatAt = lastPassiveHeartbeatAtByDeviceID[device.id] else { return false }
+        return now.timeIntervalSince(lastHeartbeatAt) <= Self.bluetoothPassiveHeartbeatConnectedInterval
     }
 
     private static func shouldApplyBackendDpiTransportStatusUpdate(

@@ -56,6 +56,18 @@ final class ServiceModeTests: XCTestCase {
         XCTAssertEqual(profile, .foreground)
     }
 
+    @MainActor
+    func testWindowedAppDefersLocalBackendStartupWhileServiceModeIsEnabled() {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set(true, forKey: BackgroundServiceCoordinator.backgroundServiceEnabledDefaultsKey)
+        let coordinator = BackgroundServiceCoordinator(defaults: defaults)
+        let appState = AppState(launchRole: .app, serviceCoordinator: coordinator, autoStart: false)
+
+        XCTAssertTrue(appState.environment.backend is BootstrapPendingBackend)
+        XCTAssertFalse(appState.runtimeController.isBackendReady)
+    }
+
     func testRuntimeWakeScheduleBacksOffToIdlePresenceDeadline() {
         let now = Date(timeIntervalSince1970: 1_773_400_000)
 
@@ -127,6 +139,19 @@ final class ServiceModeTests: XCTestCase {
             PermissionSupport.permissionResetCommand(bundleIdentifier: status.bundleIdentifier),
             "tccutil reset All io.opensnek.OpenSnek"
         )
+    }
+
+    @MainActor
+    func testNonDestructiveHIDAccessRefreshCanReuseExistingBackendState() async {
+        let backend = HIDAccessRefreshRecordingBackend()
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+
+        await appState.runtimeStore.refreshHIDAccessStatus(forceRefresh: false)
+        let recordedForceRefreshes = await backend.recordedForceRefreshes()
+
+        XCTAssertEqual(recordedForceRefreshes, [false])
+        XCTAssertEqual(appState.runtimeStore.hidAccessStatus.authorization, .granted)
+        XCTAssertEqual(appState.runtimeStore.hidAccessStatus.detail, "reused")
     }
 
     @MainActor
@@ -324,6 +349,7 @@ final class ServiceModeTests: XCTestCase {
         XCTAssertEqual(appState.runtimeStore.pollingProfile(at: queryNow), .serviceInteractive)
         XCTAssertEqual(appState.runtimeStore.activeFastPollingDeviceIDs(at: queryNow), [device.id])
     }
+
 }
 
 private actor ServiceModeTransportBackend: DeviceBackend {
@@ -342,11 +368,11 @@ private actor ServiceModeTransportBackend: DeviceBackend {
     }
 
     func listDevices() async throws -> [MouseDevice] {
-        [device]
+        return [device]
     }
 
     func readState(device _: MouseDevice) async throws -> MouseState {
-        MouseState(
+        return MouseState(
             device: DeviceSummary(
                 id: device.id,
                 product_name: device.product_name,
@@ -374,7 +400,7 @@ private actor ServiceModeTransportBackend: DeviceBackend {
     }
 
     func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
-        DpiFastSnapshot(active: 1, values: [800, 1600, 3200])
+        return DpiFastSnapshot(active: 1, values: [800, 1600, 3200])
     }
 
     func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
@@ -382,7 +408,7 @@ private actor ServiceModeTransportBackend: DeviceBackend {
     }
 
     func dpiUpdateTransportStatus(device _: MouseDevice) async -> DpiUpdateTransportStatus {
-        transportStatus
+        return transportStatus
     }
 
     func hidAccessStatus() async -> HIDAccessStatus {
@@ -405,6 +431,71 @@ private actor ServiceModeTransportBackend: DeviceBackend {
 
     func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? {
         nil
+    }
+}
+
+private actor HIDAccessRefreshRecordingBackend: HIDAccessRefreshControllingBackend {
+    nonisolated var usesRemoteServiceTransport: Bool { false }
+
+    private var requestedForceRefreshes: [Bool] = []
+
+    func listDevices() async throws -> [MouseDevice] {
+        []
+    }
+
+    func readState(device _: MouseDevice) async throws -> MouseState {
+        throw CancellationError()
+    }
+
+    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
+        nil
+    }
+
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
+        false
+    }
+
+    func dpiUpdateTransportStatus(device _: MouseDevice) async -> DpiUpdateTransportStatus {
+        .unknown
+    }
+
+    func hidAccessStatus() async -> HIDAccessStatus {
+        await hidAccessStatus(forceRefresh: true)
+    }
+
+    func hidAccessStatus(forceRefresh: Bool) async -> HIDAccessStatus {
+        requestedForceRefreshes.append(forceRefresh)
+        return HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host",
+            bundleIdentifier: "io.opensnek.tests",
+            detail: forceRefresh ? "forced" : "reused"
+        )
+    }
+
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func updateRemoteClientPresence(sourceProcessID _: Int32, selectedDeviceID _: String?) async {
+    }
+
+    func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState {
+        throw CancellationError()
+    }
+
+    func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? {
+        nil
+    }
+
+    func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? {
+        nil
+    }
+
+    func recordedForceRefreshes() -> [Bool] {
+        requestedForceRefreshes
     }
 }
 

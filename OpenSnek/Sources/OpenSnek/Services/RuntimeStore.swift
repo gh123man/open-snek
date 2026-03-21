@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OpenSnekAppSupport
 
 @MainActor
 @Observable
@@ -84,8 +85,8 @@ final class RuntimeStore {
         runtimeController.activeFastPollingDeviceIDs(at: now)
     }
 
-    func refreshHIDAccessStatus() async {
-        await runtimeController.refreshHIDAccessStatus()
+    func refreshHIDAccessStatus(forceRefresh: Bool = false) async {
+        await runtimeController.refreshHIDAccessStatus(forceRefresh: forceRefresh)
     }
 
     func resetAllPermissions() async {
@@ -108,5 +109,11 @@ final class RuntimeStore {
 
     func terminateServiceProcess() {
         runtimeController.terminateServiceProcess()
+    }
+
+    func developerTransportSettingsDidChange() {
+        Task {
+            await runtimeController.developerTransportSettingsDidChange()
+        }
     }
 }

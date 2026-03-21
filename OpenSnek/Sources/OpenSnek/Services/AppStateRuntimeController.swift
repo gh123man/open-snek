@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OpenSnekAppSupport
 import OpenSnekCore
 
 @MainActor
@@ -79,8 +80,12 @@ final class AppStateRuntimeController {
         isBackendReady = ready
     }
 
-    func refreshHIDAccessStatus() async {
-        runtimeStore.hidAccessStatus = await environment.backend.hidAccessStatus()
+    func refreshHIDAccessStatus(forceRefresh: Bool = false) async {
+        if let backend = environment.backend as? any HIDAccessRefreshControllingBackend {
+            runtimeStore.hidAccessStatus = await backend.hidAccessStatus(forceRefresh: forceRefresh)
+        } else {
+            runtimeStore.hidAccessStatus = await environment.backend.hidAccessStatus()
+        }
     }
 
     func resetAllPermissions() async {
@@ -100,7 +105,7 @@ final class AppStateRuntimeController {
             runtimeStore.permissionStatusMessage = "Permission reset failed: \(error.localizedDescription)"
         }
 
-        await refreshHIDAccessStatus()
+        await refreshHIDAccessStatus(forceRefresh: true)
     }
 
     func setCompactInteraction(until date: Date?) {
@@ -137,6 +142,7 @@ final class AppStateRuntimeController {
     }
 
     func effectiveFastDpiInterval(at now: Date) -> TimeInterval? {
+        guard DeveloperRuntimeOptions.pollingEnabled() else { return nil }
         let activeFastPollingDeviceIDs = activeFastPollingDeviceIDs(at: now)
         guard !activeFastPollingDeviceIDs.isEmpty else { return nil }
 
@@ -371,7 +377,7 @@ final class AppStateRuntimeController {
             await configureBackendForCurrentPreferences()
         }
 
-        await refreshHIDAccessStatus()
+        await refreshHIDAccessStatus(forceRefresh: false)
 
         if environment.usesRemoteServiceTransport {
             await bootstrapRemoteStateIfNeeded()
@@ -416,7 +422,7 @@ final class AppStateRuntimeController {
                 environment.backend = try await environment.serviceCoordinator.connectOrLaunchService()
                 await restartBackendStateUpdates()
                 isBackendReady = true
-                await refreshHIDAccessStatus()
+                await refreshHIDAccessStatus(forceRefresh: false)
                 runtimeStore.serviceStatusMessage = "Menu bar service connected"
                 transientStatusUntil = Date().addingTimeInterval(3.0)
                 deviceStore.errorMessage = nil
@@ -424,7 +430,7 @@ final class AppStateRuntimeController {
                 environment.backend = LocalBridgeBackend.shared
                 await restartBackendStateUpdates()
                 isBackendReady = true
-                await refreshHIDAccessStatus()
+                await refreshHIDAccessStatus(forceRefresh: false)
                 runtimeStore.backgroundServiceEnabled = false
                 environment.serviceCoordinator.setBackgroundServiceEnabled(false)
                 deviceStore.errorMessage = "Background service unavailable: \(error.localizedDescription)"
@@ -433,7 +439,7 @@ final class AppStateRuntimeController {
             environment.backend = LocalBridgeBackend.shared
             await restartBackendStateUpdates()
             isBackendReady = true
-            await refreshHIDAccessStatus()
+            await refreshHIDAccessStatus(forceRefresh: false)
             if environment.launchRole.isService {
                 environment.serviceCoordinator.stopCurrentServiceHostIfNeeded()
                 NSApp.terminate(nil)
@@ -535,7 +541,7 @@ final class AppStateRuntimeController {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.refreshHIDAccessStatus()
+            await self.refreshHIDAccessStatus(forceRefresh: false)
             await self.pollRuntimeOnce()
         }
     }
@@ -545,7 +551,7 @@ final class AppStateRuntimeController {
             environment.backend = try await environment.serviceCoordinator.makeBackendForCurrentMode()
             await restartBackendStateUpdates()
             isBackendReady = true
-            await refreshHIDAccessStatus()
+            await refreshHIDAccessStatus(forceRefresh: false)
             if runtimeStore.backgroundServiceEnabled {
                 runtimeStore.serviceStatusMessage = "Menu bar service connected"
                 transientStatusUntil = Date().addingTimeInterval(2.0)
@@ -554,7 +560,7 @@ final class AppStateRuntimeController {
             environment.backend = LocalBridgeBackend.shared
             await restartBackendStateUpdates()
             isBackendReady = true
-            await refreshHIDAccessStatus()
+            await refreshHIDAccessStatus(forceRefresh: false)
             deviceStore.errorMessage = "Background service unavailable: \(error.localizedDescription)"
         }
     }
@@ -630,23 +636,35 @@ final class AppStateRuntimeController {
             return
         }
 
-        if now.timeIntervalSince(lastDevicePresencePollAt) >= profile.devicePresenceInterval {
-            lastDevicePresencePollAt = now
-            await deviceController.pollDevicePresence()
-        }
+        if DeveloperRuntimeOptions.pollingEnabled() {
+            if now.timeIntervalSince(lastDevicePresencePollAt) >= profile.devicePresenceInterval {
+                lastDevicePresencePollAt = now
+                await deviceController.pollDevicePresence()
+            }
 
-        if now.timeIntervalSince(lastRefreshStatePollAt) >= profile.refreshStateInterval {
-            lastRefreshStatePollAt = now
-            await deviceController.refreshAllDeviceStates()
-        }
+            if now.timeIntervalSince(lastRefreshStatePollAt) >= profile.refreshStateInterval {
+                lastRefreshStatePollAt = now
+                await deviceController.refreshAllDeviceStates()
+            }
 
-        if let fastInterval = effectiveFastDpiInterval(at: now),
-           now.timeIntervalSince(lastFastDpiPollAt) >= fastInterval {
-            lastFastDpiPollAt = now
-            await deviceController.refreshDpiFast()
+            if let fastInterval = effectiveFastDpiInterval(at: now),
+               now.timeIntervalSince(lastFastDpiPollAt) >= fastInterval {
+                lastFastDpiPollAt = now
+                await deviceController.refreshDpiFast()
+            }
         }
 
         clearTransientStatusIfExpired(now: now)
+    }
+
+    func developerTransportSettingsDidChange() async {
+        if environment.usesRemoteServiceTransport {
+            await deviceController.refreshDevices()
+            sendRemoteClientPresence()
+        } else {
+            await deviceController.refreshDevices()
+        }
+        requestImmediateRuntimePoll(resetPollingDeadlines: true)
     }
 
     private func clearTransientStatusIfExpired(now: Date) {

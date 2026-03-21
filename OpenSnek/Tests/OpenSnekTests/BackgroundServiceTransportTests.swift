@@ -206,6 +206,30 @@ final class BackgroundServiceTransportTests: XCTestCase {
         }
     }
 
+    func testRemoteHIDAccessStatusCanReuseServiceHIDManager() async throws {
+        let suiteName = "BackgroundServiceTransportTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let backend = StubServiceBackend()
+        let host = try BackgroundServiceHost(backend: backend, defaults: defaults)
+        try await host.start()
+        defer { host.stop() }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let connectedBackend = try await coordinator.connectToRunningService()
+        let serviceBackend = try XCTUnwrap(connectedBackend)
+
+        let status = await serviceBackend.hidAccessStatus(forceRefresh: false)
+        let recordedForceRefreshes = await backend.recordedHIDAccessForceRefreshes()
+
+        XCTAssertEqual(status.authorization, .granted)
+        XCTAssertEqual(recordedForceRefreshes, [false])
+    }
+
     private static func firstUpdate(from stream: AsyncStream<BackendStateUpdate>) async -> BackendStateUpdate? {
         for await update in stream {
             return update
@@ -229,7 +253,7 @@ final class BackgroundServiceTransportTests: XCTestCase {
     }
 }
 
-private actor StubServiceBackend: DeviceBackend {
+private actor StubServiceBackend: HIDAccessRefreshControllingBackend {
     nonisolated var usesRemoteServiceTransport: Bool { false }
 
     nonisolated let device = MouseDevice(
@@ -249,7 +273,7 @@ private actor StubServiceBackend: DeviceBackend {
 
     private var stateUpdatesStream: AsyncStream<BackendStateUpdate>
     private var stateUpdatesContinuation: AsyncStream<BackendStateUpdate>.Continuation
-
+    private var hidAccessForceRefreshes: [Bool] = []
     private var state = MouseState(
         device: DeviceSummary(
             id: "test-mouse",
@@ -306,12 +330,21 @@ private actor StubServiceBackend: DeviceBackend {
     }
 
     func hidAccessStatus() async -> HIDAccessStatus {
-        HIDAccessStatus(
+        await hidAccessStatus(forceRefresh: true)
+    }
+
+    func hidAccessStatus(forceRefresh: Bool) async -> HIDAccessStatus {
+        hidAccessForceRefreshes.append(forceRefresh)
+        return HIDAccessStatus(
             authorization: .granted,
             hostLabel: "Test Host (io.opensnek.OpenSnek)",
             bundleIdentifier: "io.opensnek.OpenSnek",
             detail: nil
         )
+    }
+
+    func recordedHIDAccessForceRefreshes() -> [Bool] {
+        hidAccessForceRefreshes
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
@@ -365,6 +398,7 @@ private actor StubServiceBackend: DeviceBackend {
     func debugUSBReadButtonBinding(device _: MouseDevice, slot: Int, profile: Int) async throws -> [UInt8]? {
         [0xAA, 0x55, UInt8(slot & 0xFF), UInt8(profile & 0xFF)]
     }
+
 }
 
 private actor RemotePresenceRecorder {

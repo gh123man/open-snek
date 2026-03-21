@@ -19,7 +19,7 @@ struct ContentView: View {
         .navigationSplitViewStyle(.automatic)
         .task {
             await runtimeStore.start()
-            await runtimeStore.refreshHIDAccessStatus()
+            await runtimeStore.refreshHIDAccessStatus(forceRefresh: false)
         }
         .onChange(of: deviceStore.selectedDeviceID) { _, _ in
             guard !deviceStore.usesRemoteServiceTransport || deviceStore.state == nil else { return }
@@ -28,7 +28,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task {
-                    await runtimeStore.refreshHIDAccessStatus()
+                    await runtimeStore.refreshHIDAccessStatus(forceRefresh: false)
                     if deviceStore.usesRemoteServiceTransport {
                         runtimeStore.sendRemoteClientPresence()
                     } else {
@@ -180,7 +180,7 @@ struct ContentView: View {
                         },
                         NoticeAction(title: "Refresh") {
                             Task {
-                                await runtimeStore.refreshHIDAccessStatus()
+                                await runtimeStore.refreshHIDAccessStatus(forceRefresh: true)
                                 await deviceStore.refreshDevices()
                             }
                         },
@@ -197,7 +197,7 @@ struct ContentView: View {
             var actions: [NoticeAction] = [
                 NoticeAction(title: "Refresh") {
                     Task {
-                        await runtimeStore.refreshHIDAccessStatus()
+                        await runtimeStore.refreshHIDAccessStatus(forceRefresh: true)
                         await deviceStore.refreshDevices()
                     }
                 }

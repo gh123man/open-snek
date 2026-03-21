@@ -4,7 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [2026-03-21]
 
+### Added
+- Dev builds now expose two Settings toggles for transport debugging: one disables periodic runtime polling and the other disables passive HID DPI listeners, with both preferences persisted in `UserDefaults` so they survive app and menu-bar-service restarts.
+
 ### Fixed
+- `./run.sh` / `build_macos_app.sh` now generate a fresh temporary Xcode project from `project.yml`, build against `generic/platform=macOS`, and print the real compiler diagnostics plus full log path on `xcodebuild` failure instead of hiding the root cause behind a generic `EmitSwiftModule` error when the checked-in `.xcodeproj` is stale.
+- Passive HID DPI monitoring on Bluetooth now recreates its callback `IOHIDDevice` on the monitor thread from the underlying registry service before opening and scheduling it. The previous implementation reused a discovery-thread wrapper across run loops, which could degrade into heartbeat-only traffic with no real DPI callbacks until polling recovered.
+- Passive HID listener registrations now reuse a stable HID registry identity instead of raw `IOHIDDevice` wrapper pointer identity, so routine `listDevices()` refreshes no longer tear down and recreate the passive callback stream just because macOS handed discovery a new wrapper object for the same physical mouse.
+- The full app no longer eagerly starts its own local bridge backend when background-service mode is enabled, which prevents the foreground UI process from competing with the menu-bar service for the same passive HID DPI stream before remote transport finishes bootstrapping.
+- Passive HID DPI updates no longer depend on runtime polling to seed an initial device state first; in developer HID-only mode the first observed DPI event now bootstraps a minimal live state and keeps that fallback snapshot fresh until a full device read replaces it.
+- Opening the compact menu no longer forces a destructive `IOHIDManager` rebuild just to refresh the Input Monitoring badge, which could break an otherwise healthy passive HID DPI stream when polling was disabled.
+- Bluetooth passive DPI reconciliation no longer masks every mismatched poll result after a HID event; it now only hides reads that still match the pre-event state, which reduces false “stale read” lag and unnecessary fallback resets during rapid DPI cycling.
+- Routine Input Monitoring status refreshes now reuse the existing HID manager across both the full app and the background-service RPC path, so opening Settings or toggling developer transport options no longer tears down the passive listener right before polling is disabled.
+- The menu bar status badge no longer flips to `Reconnecting` after an idle gap when Bluetooth passive HID heartbeats are still fresh; a healthy passive stream now keeps the compact status pill in the connected state even if the last full telemetry snapshot is older.
 - The background service now observes macOS sleep/wake notifications, suspends its runtime polling while the system is sleeping, clears stale remote-client presence on sleep, and resumes with one immediate refresh on wake instead of carrying the higher interactive cadence across a laptop sleep cycle.
 - The background service now keeps its `4s` / `8s` idle discovery and state cadence, but the slower `1s` fallback fast-DPI watchdog only stays active for devices that are actually on polling fallback; healthy passive HID streaming paths no longer keep the fast poller running.
 - The full app and background service now use a single loopback TCP transport for unary RPCs, pushed state updates, remote-client presence, and `Settings…` handoff, which removes the older distributed-notification side channel and cleans up teardown races around mixed IPC paths.

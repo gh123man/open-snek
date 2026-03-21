@@ -1,10 +1,13 @@
 import AppKit
+import OpenSnekAppSupport
 import SwiftUI
 
 struct SettingsView: View {
     let deviceStore: DeviceStore
     let runtimeStore: RuntimeStore
     @AppStorage(AppLog.levelDefaultsKey) private var logLevelRawValue = AppLog.currentLevel.rawValue
+    @AppStorage(DeveloperRuntimeOptions.pollingEnabledDefaultsKey) private var developerPollingEnabled = true
+    @AppStorage(DeveloperRuntimeOptions.passiveHIDUpdatesEnabledDefaultsKey) private var developerPassiveHIDUpdatesEnabled = true
     @State private var showsDiagnosticsSheet = false
 
     private var selectedLevel: Binding<AppLogLevel> {
@@ -123,6 +126,30 @@ struct SettingsView: View {
                 }
             }
 
+            if deviceStore.currentBuildChannel == .dev {
+                Section("Developer") {
+                    Toggle("Enable runtime polling", isOn: Binding(
+                        get: { developerPollingEnabled },
+                        set: { newValue in
+                            developerPollingEnabled = newValue
+                            runtimeStore.developerTransportSettingsDidChange()
+                        }
+                    ))
+
+                    Toggle("Enable passive HID DPI stream", isOn: Binding(
+                        get: { developerPassiveHIDUpdatesEnabled },
+                        set: { newValue in
+                            developerPassiveHIDUpdatesEnabled = newValue
+                            runtimeStore.developerTransportSettingsDidChange()
+                        }
+                    ))
+
+                    Text("These developer-only switches let you isolate the periodic polling path from passive HID DPI callbacks. Both values are stored in UserDefaults and survive restarts.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Bug Reports") {
                 Text("Useful reports include the active protocol, the exact action that failed, whether it reproduced after reconnect, and a log captured at Info or Debug level.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -151,7 +178,7 @@ struct SettingsView: View {
         .padding(20)
         .frame(width: 520)
         .task {
-            await runtimeStore.refreshHIDAccessStatus()
+            await runtimeStore.refreshHIDAccessStatus(forceRefresh: false)
         }
         .sheet(isPresented: $showsDiagnosticsSheet) {
             IssueDiagnosticsSheet(payload: deviceStore.githubIssueDiagnosticsPayload())

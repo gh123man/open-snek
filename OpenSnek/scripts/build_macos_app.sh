@@ -195,6 +195,29 @@ resolve_sign_identity() {
   esac
 }
 
+generate_ephemeral_project() {
+  local project_parent="$1"
+  ln -s "$PACKAGE_DIR/App" "$project_parent/App"
+  ln -s "$PACKAGE_DIR/Sources" "$project_parent/Sources"
+  ln -s "$PACKAGE_DIR/Tests" "$project_parent/Tests"
+  xcodegen \
+    --quiet \
+    --spec "$SPEC_FILE" \
+    --project "$project_parent" \
+    --project-root "$project_parent"
+  printf '%s\n' "$project_parent/OpenSnek.xcodeproj"
+}
+
+print_xcodebuild_failure() {
+  local log_file="$1"
+
+  echo "[open-snek] Xcode build failed. Relevant diagnostics:" >&2
+  if ! rg -n "error:|warning:" "$log_file" >&2; then
+    tail -n 80 "$log_file" >&2 || true
+  fi
+  echo "[open-snek] Full xcodebuild log: $log_file" >&2
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-$PACKAGE_DIR/.dist}"
@@ -204,6 +227,15 @@ PRODUCT_NAME="OpenSnek"
 DISPLAY_NAME="OpenSnek"
 APP_BUNDLE="$OUTPUT_DIR/$DISPLAY_NAME.app"
 DERIVED_DATA_PATH="$OUTPUT_DIR/.derived-data"
+EPHEMERAL_PROJECT_PARENT=""
+XCODEBUILD_LOG=""
+
+cleanup() {
+  if [[ -n "$EPHEMERAL_PROJECT_PARENT" && -d "$EPHEMERAL_PROJECT_PARENT" ]]; then
+    rm -rf "$EPHEMERAL_PROJECT_PARENT"
+  fi
+}
+trap cleanup EXIT
 
 require_cmd xcodebuild
 require_cmd ditto
@@ -244,14 +276,24 @@ if [[ "$SIGN_IDENTITY" == "auto" && "$EXISTING_SIGN_IDENTITY" == "adhoc" ]]; the
 fi
 
 XCODE_CONFIGURATION="$(tr '[:lower:]' '[:upper:]' <<< "${CONFIGURATION:0:1}")${CONFIGURATION:1}"
+ACTIVE_PROJECT_FILE="$PROJECT_FILE"
+
+if command -v xcodegen >/dev/null 2>&1; then
+  EPHEMERAL_PROJECT_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/open_snek_xcodeproj.XXXXXX")"
+  ACTIVE_PROJECT_FILE="$(generate_ephemeral_project "$EPHEMERAL_PROJECT_PARENT")"
+  echo "[open-snek] Generated temporary Xcode project from project.yml"
+else
+  echo "[open-snek] xcodegen not found; using checked-in Xcode project"
+fi
 
 echo "[open-snek] Building $PRODUCT_NAME ($CONFIGURATION) via Xcode target..."
 rm -rf "$DERIVED_DATA_PATH"
-xcodebuild \
-  -project "$PROJECT_FILE" \
+XCODEBUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/open_snek_xcodebuild.XXXXXX")"
+if ! xcodebuild \
+  -project "$ACTIVE_PROJECT_FILE" \
   -scheme OpenSnek \
   -configuration "$XCODE_CONFIGURATION" \
-  -destination "platform=macOS" \
+  -destination "generic/platform=macOS" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   build \
   CODE_SIGNING_ALLOWED=NO \
@@ -260,7 +302,10 @@ xcodebuild \
   MARKETING_VERSION="$VERSION" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-  OPEN_SNEK_BUILD_CHANNEL="$BUILD_CHANNEL" >/tmp/open_snek_xcodebuild.log
+  OPEN_SNEK_BUILD_CHANNEL="$BUILD_CHANNEL" >"$XCODEBUILD_LOG" 2>&1; then
+  print_xcodebuild_failure "$XCODEBUILD_LOG"
+  exit 1
+fi
 
 BUILT_APP="$DERIVED_DATA_PATH/Build/Products/$XCODE_CONFIGURATION/OpenSnek.app"
 if [[ ! -d "$BUILT_APP" ]]; then

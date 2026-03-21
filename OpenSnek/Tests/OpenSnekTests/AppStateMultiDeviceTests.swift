@@ -400,6 +400,55 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertTrue(tooltip?.contains("Real-time HID: Listening for first HID event") == true)
     }
 
+    func testFreshPassiveHeartbeatKeepsBluetoothConnectedAfterIdleTelemetryGap() async {
+        let bluetoothDevice = makeTestDevice(
+            id: "bt-passive-heartbeat",
+            productName: "Basilisk V3 Pro",
+            transport: .bluetooth,
+            serial: "BT-PASSIVE-HEARTBEAT",
+            locationID: 8,
+            profile: .basiliskV3Pro
+        )
+        let initialState = makeTestState(
+            device: bluetoothDevice,
+            connection: "bluetooth",
+            batteryPercent: 73,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [bluetoothDevice],
+            stateByDeviceID: [bluetoothDevice.id: initialState],
+            shouldUseFastDPIPolling: false,
+            dpiUpdateTransportStatus: .streamActive
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        await MainActor.run {
+            appState.deviceController.storeState(
+                initialState,
+                for: bluetoothDevice.id,
+                updatedAt: Date().addingTimeInterval(-30)
+            )
+            appState.deviceController.applyBackendDpiTransportStatusUpdate(
+                deviceID: bluetoothDevice.id,
+                status: .streamActive,
+                updatedAt: Date()
+            )
+        }
+
+        let indicator = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator }
+        let message = await MainActor.run { appState.deviceStore.selectedDeviceInteractionMessage }
+
+        XCTAssertEqual(indicator.label, "Connected")
+        XCTAssertNil(message)
+    }
+
     func testBackendDeviceListUpdateRemovesDisconnectedDeviceImmediately() async throws {
         let bluetoothDevice = makeTestDevice(
             id: "bt-device",

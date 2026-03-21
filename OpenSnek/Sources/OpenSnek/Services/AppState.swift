@@ -22,9 +22,13 @@ final class AppState {
         autoStart: Bool = true,
         statusItemDpiDisplayDuration: TimeInterval = 3.0
     ) {
+        let initialBackend = backend ?? Self.initialBackend(
+            launchRole: launchRole,
+            serviceCoordinator: serviceCoordinator
+        )
         let environment = AppEnvironment(
             launchRole: launchRole,
-            backend: backend ?? LocalBridgeBackend.shared,
+            backend: initialBackend,
             serviceCoordinator: serviceCoordinator
         )
         let buttonSlots = ButtonSlotDescriptor.defaults
@@ -64,6 +68,16 @@ final class AppState {
             backendWasInjected: backend != nil,
             autoStart: autoStart
         )
+    }
+
+    private static func initialBackend(
+        launchRole: OpenSnekProcessRole,
+        serviceCoordinator: BackgroundServiceCoordinator
+    ) -> any DeviceBackend {
+        if launchRole.isService || !serviceCoordinator.backgroundServiceEnabled {
+            return LocalBridgeBackend.shared
+        }
+        return BootstrapPendingBackend.shared
     }
 
     deinit {
