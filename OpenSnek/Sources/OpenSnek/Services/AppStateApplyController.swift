@@ -5,9 +5,9 @@ import OpenSnekCore
 @MainActor
 final class AppStateApplyController {
     private let environment: AppEnvironment
-    private unowned let deviceStore: DeviceStore
-    private unowned let editorStore: EditorStore
-    private unowned let runtimeStore: RuntimeStore
+    private let deviceStore: DeviceStore
+    private let editorStore: EditorStore
+    private let runtimeStore: RuntimeStore
     private weak var deviceControllerStorage: AppStateDeviceController?
     private weak var editorControllerStorage: AppStateEditorController?
     private weak var runtimeControllerStorage: AppStateRuntimeController?

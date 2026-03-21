@@ -5,8 +5,8 @@ import OpenSnekCore
 @MainActor
 final class AppStateEditorController {
     private let environment: AppEnvironment
-    private unowned let deviceStore: DeviceStore
-    private unowned let editorStore: EditorStore
+    private let deviceStore: DeviceStore
+    private let editorStore: EditorStore
     private let buttonSlots: [ButtonSlotDescriptor]
     private weak var applyControllerStorage: AppStateApplyController?
 

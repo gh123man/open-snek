@@ -4,7 +4,7 @@ import OpenSnekCore
 @MainActor
 @Observable
 final class EditorStore {
-    @ObservationIgnored unowned let deviceStore: DeviceStore
+    @ObservationIgnored let deviceStore: DeviceStore
     var editableStageValues: [Int] = [800, 1600, 3200, 6400, 12000]
     var editableStageCount = 3
     var editableActiveStage = 1

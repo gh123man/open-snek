@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 
 struct WindowChromeConfigurator: NSViewRepresentable {
+    nonisolated static func shouldUseCompatibilityChrome(
+        osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) -> Bool {
+        osVersion.majorVersion == 15
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async { [weak view] in
@@ -21,12 +27,17 @@ struct WindowChromeConfigurator: NSViewRepresentable {
     private func configure(_ window: NSWindow) {
         window.title = ""
         window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+
+        if Self.shouldUseCompatibilityChrome() {
+            return
+        }
+
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         window.toolbarStyle = .unified
         if #available(macOS 11.0, *) {
             window.titlebarSeparatorStyle = .none
         }
-        window.isMovableByWindowBackground = true
     }
 }

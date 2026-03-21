@@ -13,8 +13,8 @@ final class AppStateRuntimeController {
     private static let serviceIdleFallbackFastDpiInterval: TimeInterval = 1.0
 
     private let environment: AppEnvironment
-    private unowned let deviceStore: DeviceStore
-    private unowned let runtimeStore: RuntimeStore
+    private let deviceStore: DeviceStore
+    private let runtimeStore: RuntimeStore
     private weak var deviceControllerStorage: AppStateDeviceController?
 
     private var runtimeTask: Task<Void, Never>?

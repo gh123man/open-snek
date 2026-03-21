@@ -6,7 +6,7 @@ final class AppStateDeviceController {
     private static let bluetoothPassiveHeartbeatConnectedInterval: TimeInterval = 1.5
 
     private let environment: AppEnvironment
-    private unowned let deviceStore: DeviceStore
+    private let deviceStore: DeviceStore
     private weak var editorControllerStorage: AppStateEditorController?
     private weak var applyControllerStorage: AppStateApplyController?
     private weak var runtimeControllerStorage: AppStateRuntimeController?
