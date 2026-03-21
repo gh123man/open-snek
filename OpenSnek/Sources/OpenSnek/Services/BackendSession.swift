@@ -25,6 +25,7 @@ protocol DeviceBackend: AnyObject, Sendable {
     func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus
     func hidAccessStatus() async -> HIDAccessStatus
     func stateUpdates() async -> AsyncStream<BackendStateUpdate>
+    func updateRemoteClientPresence(sourceProcessID: Int32, selectedDeviceID: String?) async
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState
     func readLightingColor(device: MouseDevice) async throws -> RGBPatch?
     func debugUSBReadButtonBinding(device: MouseDevice, slot: Int, profile: Int) async throws -> [UInt8]?
@@ -34,6 +35,9 @@ extension DeviceBackend {
     func dpiUpdateTransportStatus(device: MouseDevice) async -> DpiUpdateTransportStatus {
         let usesFastPolling = await shouldUseFastDPIPolling(device: device)
         return usesFastPolling ? .pollingFallback : .realTimeHID
+    }
+
+    func updateRemoteClientPresence(sourceProcessID _: Int32, selectedDeviceID _: String?) async {
     }
 }
 
@@ -91,19 +95,23 @@ struct HIDAccessStatus: Codable, Equatable, Sendable {
     }
 }
 
-enum BackendStateUpdate: Sendable {
+struct SharedServiceSnapshot: Codable, Sendable {
+    let devices: [MouseDevice]
+    let stateByDeviceID: [String: MouseState]
+    let lastUpdatedByDeviceID: [String: Date]
+}
+
+struct CrossProcessClientPresence: Codable, Sendable {
+    let sourceProcessID: Int32
+    let selectedDeviceID: String?
+}
+
+enum BackendStateUpdate: Codable, Sendable {
     case deviceList([MouseDevice], updatedAt: Date)
     case deviceState(deviceID: String, state: MouseState, updatedAt: Date)
     case dpiTransportStatus(deviceID: String, status: DpiUpdateTransportStatus, updatedAt: Date)
     case snapshot(SharedServiceSnapshot)
-}
-
-private final class DistributedObserverToken: @unchecked Sendable {
-    let observer: NSObjectProtocol
-
-    init(observer: NSObjectProtocol) {
-        self.observer = observer
-    }
+    case openSettingsRequested
 }
 
 func mergedStateFromPassiveDpiEvent(
@@ -149,6 +157,30 @@ private struct ButtonBindingReadRequest: Codable, Sendable {
     let profile: Int
 }
 
+private struct StreamSubscriptionRequest: Codable, Sendable {
+    let sourceProcessID: Int32
+    let selectedDeviceID: String?
+}
+
+private enum BackgroundServiceStreamClientEvent: String, Codable, Sendable {
+    case clientPresence
+}
+
+private struct BackgroundServiceStreamClientEnvelope: Codable, Sendable {
+    let event: BackgroundServiceStreamClientEvent
+    let payload: Data?
+}
+
+private enum BackgroundServiceStreamServerEvent: String, Codable, Sendable {
+    case stateUpdate
+    case openSettingsRequested
+}
+
+private struct BackgroundServiceStreamServerEnvelope: Codable, Sendable {
+    let event: BackgroundServiceStreamServerEvent
+    let payload: Data?
+}
+
 private enum BackendCodec {
     static let encoder = JSONEncoder()
     static let decoder = JSONDecoder()
@@ -173,6 +205,7 @@ private enum BackgroundServiceMethod: String, Codable, Sendable {
     case apply
     case readLightingColor
     case debugUSBReadButtonBinding
+    case subscribeStateUpdates
 }
 
 private struct BackgroundServiceRequestEnvelope: Codable, Sendable {
@@ -793,11 +826,13 @@ final actor LocalBridgeBackend: DeviceBackend {
     private func publishSnapshotIfService() {
         guard OpenSnekProcessRole.current.isService else { return }
         let liveIDs = Set(cachedDevices.map(\.id))
-        CrossProcessStateSync.post(
-            snapshot: SharedServiceSnapshot(
-                devices: cachedDevices,
-                stateByDeviceID: cachedStateByDeviceID.filter { liveIDs.contains($0.key) },
-                lastUpdatedByDeviceID: cachedStateAtByDeviceID.filter { liveIDs.contains($0.key) }
+        publishStateUpdate(
+            .snapshot(
+                SharedServiceSnapshot(
+                    devices: cachedDevices,
+                    stateByDeviceID: cachedStateByDeviceID.filter { liveIDs.contains($0.key) },
+                    lastUpdatedByDeviceID: cachedStateAtByDeviceID.filter { liveIDs.contains($0.key) }
+                )
             )
         )
     }
@@ -820,6 +855,14 @@ private actor BackgroundServiceRequestHandler {
         }
 
         return (try? BackendCodec.encode(response)) ?? Data()
+    }
+
+    func handle(_ request: BackgroundServiceRequestEnvelope) async -> BackgroundServiceResponseEnvelope {
+        do {
+            return try await makeResponse(for: request)
+        } catch {
+            return BackgroundServiceResponseEnvelope(payload: nil, error: error.localizedDescription)
+        }
     }
 
     private func makeResponse(for request: BackgroundServiceRequestEnvelope) async throws -> BackgroundServiceResponseEnvelope {
@@ -859,6 +902,8 @@ private actor BackgroundServiceRequestHandler {
                     profile: bindingRequest.profile
                 )
             )
+        case .subscribeStateUpdates:
+            payload = try BackendCodec.encode(true)
         }
 
         return BackgroundServiceResponseEnvelope(payload: payload, error: nil)
@@ -875,9 +920,15 @@ private actor BackgroundServiceRequestHandler {
 final actor IPCDeviceBackend: DeviceBackend {
     private let host: NWEndpoint.Host = .ipv4(.loopback)
     private let port: NWEndpoint.Port
+    private var latestRemoteClientPresence: CrossProcessClientPresence
+    private var remoteSubscription: BackgroundServiceClientSubscription?
 
     init(port: NWEndpoint.Port) {
         self.port = port
+        latestRemoteClientPresence = CrossProcessClientPresence(
+            sourceProcessID: Int32(ProcessInfo.processInfo.processIdentifier),
+            selectedDeviceID: nil
+        )
     }
 
     nonisolated var usesRemoteServiceTransport: Bool { true }
@@ -931,16 +982,26 @@ final actor IPCDeviceBackend: DeviceBackend {
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
-        AsyncStream { continuation in
-            let token = DistributedObserverToken(
-                observer: CrossProcessStateSync.observeSnapshots { snapshot in
-                    continuation.yield(.snapshot(snapshot))
-                }
-            )
-            continuation.onTermination = { @Sendable _ in
-                CrossProcessStateSync.removeObserver(token.observer)
-            }
+        if let remoteSubscription {
+            await remoteSubscription.stop()
         }
+        let remoteSubscription = BackgroundServiceClientSubscription(
+            host: host,
+            port: port,
+            initialPresence: latestRemoteClientPresence
+        )
+        self.remoteSubscription = remoteSubscription
+        return await remoteSubscription.makeStream()
+    }
+
+    func updateRemoteClientPresence(sourceProcessID: Int32, selectedDeviceID: String?) async {
+        let presence = CrossProcessClientPresence(
+            sourceProcessID: sourceProcessID,
+            selectedDeviceID: selectedDeviceID
+        )
+        latestRemoteClientPresence = presence
+        guard let remoteSubscription else { return }
+        await remoteSubscription.updatePresence(presence)
     }
 
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
@@ -996,17 +1057,293 @@ final actor IPCDeviceBackend: DeviceBackend {
     }
 }
 
+private actor BackgroundServiceClientSubscription {
+    private let host: NWEndpoint.Host
+    private let port: NWEndpoint.Port
+    private var latestPresence: CrossProcessClientPresence
+    private var connection: NWConnection?
+
+    init(
+        host: NWEndpoint.Host,
+        port: NWEndpoint.Port,
+        initialPresence: CrossProcessClientPresence
+    ) {
+        self.host = host
+        self.port = port
+        latestPresence = initialPresence
+    }
+
+    func makeStream() -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            let task = Task {
+                await self.run(continuation: continuation)
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+                Task {
+                    await self.stop()
+                }
+            }
+        }
+    }
+
+    func updatePresence(_ presence: CrossProcessClientPresence) async {
+        latestPresence = presence
+        guard let connection else { return }
+        do {
+            try await sendClientPresence(presence, over: connection)
+        } catch {
+            connection.cancel()
+            if self.connection === connection {
+                self.connection = nil
+            }
+        }
+    }
+
+    func stop() {
+        connection?.cancel()
+        connection = nil
+    }
+
+    private func run(continuation: AsyncStream<BackendStateUpdate>.Continuation) async {
+        let connection = NWConnection(host: host, port: port, using: BackgroundServiceTransport.clientParameters())
+        self.connection = connection
+
+        defer {
+            connection.cancel()
+            if self.connection === connection {
+                self.connection = nil
+            }
+            continuation.finish()
+        }
+
+        do {
+            try await BackgroundServiceTransport.awaitReady(connection: connection)
+
+            let subscribeRequest = BackgroundServiceRequestEnvelope(
+                method: .subscribeStateUpdates,
+                payload: try BackendCodec.encode(
+                    StreamSubscriptionRequest(
+                        sourceProcessID: latestPresence.sourceProcessID,
+                        selectedDeviceID: latestPresence.selectedDeviceID
+                    )
+                )
+            )
+            try await BackgroundServiceTransport.sendFrame(try BackendCodec.encode(subscribeRequest), over: connection)
+
+            let responseData = try await BackgroundServiceTransport.receiveFrame(from: connection)
+            let response = try BackendCodec.decode(BackgroundServiceResponseEnvelope.self, from: responseData)
+            if let error = response.error {
+                throw NSError(domain: "OpenSnek.Service", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: error
+                ])
+            }
+
+            while !Task.isCancelled {
+                let frame = try await BackgroundServiceTransport.receiveFrame(from: connection)
+                let envelope = try BackendCodec.decode(BackgroundServiceStreamServerEnvelope.self, from: frame)
+                switch envelope.event {
+                case .stateUpdate:
+                    guard let payload = envelope.payload else {
+                        throw BackgroundServiceTransportError.missingPayload
+                    }
+                    continuation.yield(try BackendCodec.decode(BackendStateUpdate.self, from: payload))
+                case .openSettingsRequested:
+                    continuation.yield(.openSettingsRequested)
+                }
+            }
+        } catch {
+            if !Task.isCancelled,
+               !isConnectionClosed(error) {
+                AppLog.warning("Service", "background service subscription failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func sendClientPresence(_ presence: CrossProcessClientPresence, over connection: NWConnection) async throws {
+        let envelope = BackgroundServiceStreamClientEnvelope(
+            event: .clientPresence,
+            payload: try BackendCodec.encode(presence)
+        )
+        try await BackgroundServiceTransport.sendFrame(try BackendCodec.encode(envelope), over: connection)
+    }
+
+    private func isConnectionClosed(_ error: Error) -> Bool {
+        if let transportError = error as? BackgroundServiceTransportError {
+            if case .connectionClosed = transportError {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+private actor BackgroundServiceSubscriberSession {
+    nonisolated let id = UUID()
+
+    private let connection: NWConnection
+    private let sourceProcessID: Int32
+    private let initialSelectedDeviceID: String?
+    private let onPresenceUpdate: @Sendable (CrossProcessClientPresence) async -> Void
+    private let onDisconnect: @Sendable (Int32) async -> Void
+    private var didHandleDisconnect = false
+
+    init(
+        connection: NWConnection,
+        subscription: StreamSubscriptionRequest,
+        onPresenceUpdate: @escaping @Sendable (CrossProcessClientPresence) async -> Void,
+        onDisconnect: @escaping @Sendable (Int32) async -> Void
+    ) {
+        self.connection = connection
+        sourceProcessID = subscription.sourceProcessID
+        initialSelectedDeviceID = subscription.selectedDeviceID
+        self.onPresenceUpdate = onPresenceUpdate
+        self.onDisconnect = onDisconnect
+    }
+
+    func run() async {
+        await onPresenceUpdate(
+            CrossProcessClientPresence(
+                sourceProcessID: sourceProcessID,
+                selectedDeviceID: initialSelectedDeviceID
+            )
+        )
+
+        do {
+            while !Task.isCancelled {
+                let frame = try await BackgroundServiceTransport.receiveFrame(from: connection)
+                let envelope = try BackendCodec.decode(BackgroundServiceStreamClientEnvelope.self, from: frame)
+                switch envelope.event {
+                case .clientPresence:
+                    guard let payload = envelope.payload else {
+                        throw BackgroundServiceTransportError.missingPayload
+                    }
+                    let presence = try BackendCodec.decode(CrossProcessClientPresence.self, from: payload)
+                    await onPresenceUpdate(presence)
+                }
+            }
+        } catch {
+            if !Task.isCancelled,
+               !isConnectionClosed(error) {
+                AppLog.warning("Service", "subscriber session failed: \(error.localizedDescription)")
+            }
+        }
+
+        await disconnect()
+    }
+
+    func sendStateUpdate(_ update: BackendStateUpdate) async throws {
+        try await send(
+            BackgroundServiceStreamServerEnvelope(
+                event: .stateUpdate,
+                payload: try BackendCodec.encode(update)
+            )
+        )
+    }
+
+    func sendOpenSettingsRequested() async throws {
+        try await send(
+            BackgroundServiceStreamServerEnvelope(
+                event: .openSettingsRequested,
+                payload: nil
+            )
+        )
+    }
+
+    func stop() async {
+        connection.cancel()
+        await disconnect()
+    }
+
+    private func disconnect() async {
+        guard !didHandleDisconnect else { return }
+        didHandleDisconnect = true
+        await onDisconnect(sourceProcessID)
+    }
+
+    private func send(_ envelope: BackgroundServiceStreamServerEnvelope) async throws {
+        try await BackgroundServiceTransport.sendFrame(try BackendCodec.encode(envelope), over: connection)
+    }
+
+    private func isConnectionClosed(_ error: Error) -> Bool {
+        if let transportError = error as? BackgroundServiceTransportError {
+            if case .connectionClosed = transportError {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+private actor BackgroundServiceSubscriberRegistry {
+    private var sessions: [UUID: BackgroundServiceSubscriberSession] = [:]
+
+    func add(_ session: BackgroundServiceSubscriberSession) {
+        sessions[session.id] = session
+    }
+
+    func remove(id: UUID) {
+        sessions.removeValue(forKey: id)
+    }
+
+    func closeAll() async {
+        let currentSessions = Array(sessions.values)
+        sessions.removeAll()
+        for session in currentSessions {
+            await session.stop()
+        }
+    }
+
+    func broadcast(_ update: BackendStateUpdate) async {
+        for (id, session) in sessions {
+            do {
+                try await session.sendStateUpdate(update)
+            } catch {
+                sessions.removeValue(forKey: id)
+                await session.stop()
+            }
+        }
+    }
+
+    func requestOpenSettings() async -> Bool {
+        var delivered = false
+        for (id, session) in sessions {
+            do {
+                try await session.sendOpenSettingsRequested()
+                delivered = true
+            } catch {
+                sessions.removeValue(forKey: id)
+                await session.stop()
+            }
+        }
+        return delivered
+    }
+}
+
 final class BackgroundServiceHost: @unchecked Sendable {
     private let defaults: UserDefaults
     private let pid = ProcessInfo.processInfo.processIdentifier
     private let listener: NWListener
+    private let backend: any DeviceBackend
     private let handler: BackgroundServiceRequestHandler
+    private let subscribers = BackgroundServiceSubscriberRegistry()
+    private let remoteClientPresenceHandler: @Sendable (CrossProcessClientPresence) async -> Void
+    private let remoteClientDisconnectHandler: @Sendable (Int32) async -> Void
     private let queue = DispatchQueue(label: "io.opensnek.service.host")
+    private var backendStateUpdatesTask: Task<Void, Never>?
 
-    init(backend: any DeviceBackend, defaults: UserDefaults = .standard) throws {
+    init(
+        backend: any DeviceBackend,
+        defaults: UserDefaults = .standard,
+        remoteClientPresenceHandler: @escaping @Sendable (CrossProcessClientPresence) async -> Void = { _ in },
+        remoteClientDisconnectHandler: @escaping @Sendable (Int32) async -> Void = { _ in }
+    ) throws {
         self.defaults = defaults
         self.listener = try NWListener(using: BackgroundServiceTransport.listenerParameters())
+        self.backend = backend
         self.handler = BackgroundServiceRequestHandler(backend: backend)
+        self.remoteClientPresenceHandler = remoteClientPresenceHandler
+        self.remoteClientDisconnectHandler = remoteClientDisconnectHandler
     }
 
     func start() async throws {
@@ -1019,10 +1356,16 @@ final class BackgroundServiceHost: @unchecked Sendable {
         defaults.set(Int(port.rawValue), forKey: BackgroundServiceCoordinator.portDefaultsKey)
         defaults.set(pid, forKey: BackgroundServiceCoordinator.pidDefaultsKey)
         defaults.synchronize()
+        startBroadcastingBackendStateUpdates()
         AppLog.info("Service", "background service published pid=\(pid) port=\(port.rawValue)")
     }
 
     func stop() {
+        backendStateUpdatesTask?.cancel()
+        backendStateUpdatesTask = nil
+        Task {
+            await subscribers.closeAll()
+        }
         if defaults.integer(forKey: BackgroundServiceCoordinator.pidDefaultsKey) == pid {
             defaults.removeObject(forKey: BackgroundServiceCoordinator.endpointDefaultsKey)
             defaults.removeObject(forKey: BackgroundServiceCoordinator.portDefaultsKey)
@@ -1030,6 +1373,10 @@ final class BackgroundServiceHost: @unchecked Sendable {
             defaults.synchronize()
         }
         listener.cancel()
+    }
+
+    func requestOpenSettingsForConnectedClients() async -> Bool {
+        await subscribers.requestOpenSettings()
     }
 
     private func accept(_ connection: NWConnection) {
@@ -1049,15 +1396,52 @@ final class BackgroundServiceHost: @unchecked Sendable {
 
     private func handle(_ connection: NWConnection) {
         let handler = self.handler
+        let subscribers = self.subscribers
+        let remoteClientPresenceHandler = self.remoteClientPresenceHandler
+        let remoteClientDisconnectHandler = self.remoteClientDisconnectHandler
         Task {
             do {
                 let requestData = try await BackgroundServiceTransport.receiveFrame(from: connection)
-                let responseData = await handler.handle(requestData)
-                try await BackgroundServiceTransport.sendFrame(responseData, over: connection)
+                let request = try BackendCodec.decode(BackgroundServiceRequestEnvelope.self, from: requestData)
+
+                if request.method == .subscribeStateUpdates {
+                    guard let payload = request.payload else {
+                        throw BackgroundServiceTransportError.missingPayload
+                    }
+                    let subscription = try BackendCodec.decode(StreamSubscriptionRequest.self, from: payload)
+                    let session = BackgroundServiceSubscriberSession(
+                        connection: connection,
+                        subscription: subscription,
+                        onPresenceUpdate: remoteClientPresenceHandler,
+                        onDisconnect: remoteClientDisconnectHandler
+                    )
+                    await subscribers.add(session)
+                    let response = BackgroundServiceResponseEnvelope(
+                        payload: try BackendCodec.encode(true),
+                        error: nil
+                    )
+                    try await BackgroundServiceTransport.sendFrame(try BackendCodec.encode(response), over: connection)
+                    await session.run()
+                    await subscribers.remove(id: session.id)
+                    return
+                }
+
+                let response = await handler.handle(request)
+                try await BackgroundServiceTransport.sendFrame(try BackendCodec.encode(response), over: connection)
             } catch {
                 AppLog.warning("Service", "background service request failed: \(error.localizedDescription)")
             }
             connection.cancel()
+        }
+    }
+
+    private func startBroadcastingBackendStateUpdates() {
+        backendStateUpdatesTask?.cancel()
+        backendStateUpdatesTask = Task { [backend, subscribers] in
+            let stream = await backend.stateUpdates()
+            for await update in stream {
+                await subscribers.broadcast(update)
+            }
         }
     }
 }

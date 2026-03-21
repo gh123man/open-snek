@@ -112,7 +112,7 @@ final class AppStateDeviceController {
     }
 
     func handleBackendDeviceListUpdate(_ listed: [MouseDevice]) async {
-        guard !environment.usesRemoteServiceUpdates else { return }
+        guard !environment.usesRemoteServiceTransport else { return }
         let previousIDs = Set(deviceStore.devices.map(\.id))
         _ = applyDeviceList(listed, source: "subscription")
         guard !listed.isEmpty else { return }
@@ -124,7 +124,7 @@ final class AppStateDeviceController {
     }
 
     func applyRemoteServiceSnapshot(_ snapshot: SharedServiceSnapshot) {
-        guard environment.usesRemoteServiceUpdates else { return }
+        guard environment.usesRemoteServiceTransport else { return }
 
         let liveIDs = Set(snapshot.devices.map(\.id))
         stateCacheByDeviceID = stateCacheByDeviceID.filter { liveIDs.contains($0.key) }
@@ -380,7 +380,7 @@ final class AppStateDeviceController {
                 "applyDeviceList source=\(source) count=\(sorted.count) selected=\(deviceStore.selectedDeviceID ?? "nil")"
             )
         }
-        if environment.usesRemoteServiceUpdates, previousSelectedID != deviceStore.selectedDeviceID {
+        if environment.usesRemoteServiceTransport, previousSelectedID != deviceStore.selectedDeviceID {
             runtimeController.sendRemoteClientPresence()
         }
         return changed
@@ -431,7 +431,7 @@ final class AppStateDeviceController {
                 await self?.refreshConnectionDiagnostics(for: selectedDevice)
             }
         }
-        if environment.usesRemoteServiceUpdates {
+        if environment.usesRemoteServiceTransport {
             runtimeController.sendRemoteClientPresence()
         }
     }

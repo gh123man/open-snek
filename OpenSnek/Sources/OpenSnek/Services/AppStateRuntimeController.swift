@@ -25,7 +25,7 @@ final class AppStateRuntimeController {
     private var lastFastDpiPollAt: Date = .distantPast
     private var transientStatusUntil: Date?
     private(set) var isBackendReady = false
-    private var clientPresenceObserver: NSObjectProtocol?
+    private var backendStateUpdatesBootstrapTask: Task<Void, Never>?
     private var backendStateUpdatesTask: Task<Void, Never>?
     private var remoteClientPresenceByProcessID: [Int32: RemoteClientPresenceState] = [:]
     private var lastRemoteClientPresencePingAt: Date = .distantPast
@@ -42,12 +42,9 @@ final class AppStateRuntimeController {
 
     func tearDown() {
         runtimeTask?.cancel()
+        backendStateUpdatesBootstrapTask?.cancel()
         backendStateUpdatesTask?.cancel()
         statusItemTransientDpiResetTask?.cancel()
-        if let clientPresenceObserver {
-            CrossProcessStateSync.removeObserver(clientPresenceObserver)
-        }
-        clientPresenceObserver = nil
         if let systemWillSleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(systemWillSleepObserver)
         }
@@ -223,13 +220,11 @@ final class AppStateRuntimeController {
         }
     }
 
-    func installCrossProcessObservers() {
-        guard clientPresenceObserver == nil else { return }
-        clientPresenceObserver = CrossProcessStateSync.observeClientPresence { [weak self] presence in
-            Task { [weak self] in
-                await self?.handleRemoteClientPresence(presence)
-            }
-        }
+    func clearRemoteClientPresence(processID: Int32, now: Date = Date()) {
+        guard environment.launchRole.isService else { return }
+        guard remoteClientPresenceByProcessID.removeValue(forKey: processID) != nil else { return }
+        pruneExpiredRemoteClientPresence(now: now)
+        requestImmediateRuntimePoll(resetPollingDeadlines: true)
     }
 
     func installPowerObservers() {
@@ -271,13 +266,28 @@ final class AppStateRuntimeController {
         }
     }
 
+    func scheduleBackendStateUpdatesBootstrap() {
+        guard backendStateUpdatesBootstrapTask == nil else { return }
+        backendStateUpdatesBootstrapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { backendStateUpdatesBootstrapTask = nil }
+            await restartBackendStateUpdates()
+        }
+    }
+
+    func ensureBackendStateUpdatesStarted() async {
+        if let backendStateUpdatesBootstrapTask {
+            await backendStateUpdatesBootstrapTask.value
+        }
+    }
+
     private func handleBackendStateUpdate(_ update: BackendStateUpdate) async {
         guard isBackendReady else { return }
         switch update {
         case .deviceList(let devices, _):
             await deviceController.handleBackendDeviceListUpdate(devices)
         case .snapshot(let snapshot):
-            guard environment.usesRemoteServiceUpdates else { return }
+            guard environment.usesRemoteServiceTransport else { return }
             deviceController.applyRemoteServiceSnapshot(snapshot)
         case .dpiTransportStatus(let deviceID, let status, let updatedAt):
             deviceController.applyBackendDpiTransportStatusUpdate(
@@ -291,11 +301,10 @@ final class AppStateRuntimeController {
                 state: updatedState,
                 updatedAt: updatedAt
             )
+        case .openSettingsRequested:
+            guard environment.usesRemoteServiceTransport else { return }
+            runtimeStore.openSettingsRequestCount &+= 1
         }
-    }
-
-    private func handleRemoteClientPresence(_ presence: CrossProcessClientPresence) async {
-        recordRemoteClientPresence(presence)
     }
 
     private func resolvedDpi(from state: MouseState?) -> Int? {
@@ -330,6 +339,7 @@ final class AppStateRuntimeController {
     func start() async {
         guard !didStartRuntime else { return }
         didStartRuntime = true
+        await ensureBackendStateUpdatesStarted()
         installPowerObservers()
 
         do {
@@ -340,7 +350,19 @@ final class AppStateRuntimeController {
 
         if environment.launchRole.isService {
             do {
-                try await environment.serviceCoordinator.registerServiceHostIfNeeded(backend: LocalBridgeBackend.shared)
+                try await environment.serviceCoordinator.registerServiceHostIfNeeded(
+                    backend: LocalBridgeBackend.shared,
+                    remoteClientPresenceHandler: { [weak self] presence in
+                        await MainActor.run {
+                            self?.recordRemoteClientPresence(presence)
+                        }
+                    },
+                    remoteClientDisconnectHandler: { [weak self] processID in
+                        await MainActor.run {
+                            self?.clearRemoteClientPresence(processID: processID)
+                        }
+                    }
+                )
             } catch {
                 runtimeStore.serviceStatusMessage = "Service host failed: \(error.localizedDescription)"
             }
@@ -351,7 +373,7 @@ final class AppStateRuntimeController {
 
         await refreshHIDAccessStatus()
 
-        if environment.usesRemoteServiceUpdates {
+        if environment.usesRemoteServiceTransport {
             await bootstrapRemoteStateIfNeeded()
             sendRemoteClientPresence()
         } else {
@@ -423,7 +445,7 @@ final class AppStateRuntimeController {
             transientStatusUntil = Date().addingTimeInterval(3.0)
         }
 
-        if environment.usesRemoteServiceUpdates {
+        if environment.usesRemoteServiceTransport {
             await bootstrapRemoteStateIfNeeded()
             sendRemoteClientPresence()
         } else {
@@ -445,7 +467,12 @@ final class AppStateRuntimeController {
         environment.serviceCoordinator.launchFullAppProcess()
     }
 
-    func openSettingsFromService() {
+    func openSettingsFromService() async {
+        if environment.launchRole.isService,
+           await environment.serviceCoordinator.requestOpenSettingsForConnectedClients() {
+            environment.serviceCoordinator.launchFullAppProcess()
+            return
+        }
         environment.serviceCoordinator.launchFullAppProcess(arguments: ["--open-settings"])
     }
 
@@ -460,7 +487,7 @@ final class AppStateRuntimeController {
     }
 
     func refreshNow() async {
-        if environment.usesRemoteServiceUpdates {
+        if environment.usesRemoteServiceTransport {
             await bootstrapRemoteStateIfNeeded(force: true)
             sendRemoteClientPresence()
         } else {
@@ -470,9 +497,14 @@ final class AppStateRuntimeController {
     }
 
     func sendRemoteClientPresence() {
-        guard environment.usesRemoteServiceUpdates else { return }
+        guard environment.usesRemoteServiceTransport else { return }
         lastRemoteClientPresencePingAt = Date()
-        CrossProcessStateSync.postClientPresence(selectedDeviceID: deviceStore.selectedDeviceID)
+        Task {
+            await environment.backend.updateRemoteClientPresence(
+                sourceProcessID: Int32(ProcessInfo.processInfo.processIdentifier),
+                selectedDeviceID: deviceStore.selectedDeviceID
+            )
+        }
     }
 
     func handleSystemWillSleep(now: Date = Date()) {
@@ -549,7 +581,7 @@ final class AppStateRuntimeController {
     }
 
     private func bootstrapRemoteStateIfNeeded(force: Bool = false) async {
-        guard environment.usesRemoteServiceUpdates else { return }
+        guard environment.usesRemoteServiceTransport else { return }
         if !force,
            !deviceStore.devices.isEmpty,
            deviceStore.state != nil {
@@ -566,7 +598,7 @@ final class AppStateRuntimeController {
             now: now,
             profile: pollingProfile(at: now),
             fastDpiInterval: effectiveFastDpiInterval(at: now),
-            usesRemoteServiceUpdates: environment.usesRemoteServiceUpdates,
+            usesRemoteServiceTransport: environment.usesRemoteServiceTransport,
             lastDevicePresencePollAt: lastDevicePresencePollAt,
             lastRefreshStatePollAt: lastRefreshStatePollAt,
             lastFastDpiPollAt: lastFastDpiPollAt,
@@ -586,10 +618,13 @@ final class AppStateRuntimeController {
         let profile = pollingProfile(at: now)
         pruneExpiredRemoteClientPresence(now: now)
 
-        if environment.usesRemoteServiceUpdates {
+        if environment.usesRemoteServiceTransport {
             if now.timeIntervalSince(lastRemoteClientPresencePingAt) >= 1.0 {
                 lastRemoteClientPresencePingAt = now
-                CrossProcessStateSync.postClientPresence(selectedDeviceID: deviceStore.selectedDeviceID)
+                await environment.backend.updateRemoteClientPresence(
+                    sourceProcessID: Int32(ProcessInfo.processInfo.processIdentifier),
+                    selectedDeviceID: deviceStore.selectedDeviceID
+                )
             }
             clearTransientStatusIfExpired(now: now)
             return
@@ -675,7 +710,7 @@ final class AppStateRuntimeController {
                 return []
             }
         }
-        return environment.usesRemoteServiceUpdates ? [] : [selectedDeviceID]
+        return environment.usesRemoteServiceTransport ? [] : [selectedDeviceID]
     }
 
     private func shouldFastPollSelectedDevice(_ device: MouseDevice) -> Bool {

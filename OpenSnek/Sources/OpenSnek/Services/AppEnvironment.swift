@@ -19,7 +19,7 @@ final class AppEnvironment {
         self.serviceCoordinator = serviceCoordinator
     }
 
-    var usesRemoteServiceUpdates: Bool {
+    var usesRemoteServiceTransport: Bool {
         !launchRole.isService && backend.usesRemoteServiceTransport
     }
 }

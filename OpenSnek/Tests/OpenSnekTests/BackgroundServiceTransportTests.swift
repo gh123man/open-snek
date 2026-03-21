@@ -57,12 +57,182 @@ final class BackgroundServiceTransportTests: XCTestCase {
         let binding = try await serviceBackend.debugUSBReadButtonBinding(device: devices[0], slot: 5, profile: 2)
         XCTAssertEqual(binding, [0xAA, 0x55, 0x05, 0x02])
     }
+
+    func testSubscriberReceivesPushedStateUpdatesOverTCP() async throws {
+        let suiteName = "BackgroundServiceTransportTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let backend = StubServiceBackend()
+        let recorder = RemotePresenceRecorder()
+        let host = try BackgroundServiceHost(
+            backend: backend,
+            defaults: defaults,
+            remoteClientPresenceHandler: { presence in
+                await recorder.record(presence)
+            }
+        )
+        try await host.start()
+        defer { host.stop() }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let connectedBackend = try await coordinator.connectToRunningService()
+        let serviceBackend = try XCTUnwrap(connectedBackend)
+        let stream = await serviceBackend.stateUpdates()
+        async let receivedUpdate = Self.firstUpdate(from: stream)
+
+        try await waitUntil {
+            await recorder.hasPresence(for: Int32(ProcessInfo.processInfo.processIdentifier))
+        }
+
+        let snapshot = await backend.snapshot(updatedAt: Date(timeIntervalSince1970: 1_774_000_000))
+        await backend.emit(.snapshot(snapshot))
+
+        guard let update = await receivedUpdate else {
+            XCTFail("Expected snapshot update")
+            return
+        }
+        switch update {
+        case .snapshot(let receivedSnapshot):
+            XCTAssertEqual(receivedSnapshot.devices.map(\.id), [snapshot.devices[0].id])
+            XCTAssertEqual(receivedSnapshot.stateByDeviceID[snapshot.devices[0].id]?.dpi?.x, snapshot.stateByDeviceID[snapshot.devices[0].id]?.dpi?.x)
+        default:
+            XCTFail("Expected snapshot update, got \(update)")
+        }
+    }
+
+    func testSubscriberPresenceRoutesOverTCPAndClearsOnDisconnect() async throws {
+        let suiteName = "BackgroundServiceTransportTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let backend = StubServiceBackend()
+        let recorder = RemotePresenceRecorder()
+        let host = try BackgroundServiceHost(
+            backend: backend,
+            defaults: defaults,
+            remoteClientPresenceHandler: { presence in
+                await recorder.record(presence)
+            },
+            remoteClientDisconnectHandler: { processID in
+                await recorder.disconnect(processID)
+            }
+        )
+        try await host.start()
+        defer { host.stop() }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let connectedBackend = try await coordinator.connectToRunningService()
+        let serviceBackend = try XCTUnwrap(connectedBackend)
+        let stream = await serviceBackend.stateUpdates()
+        let consumer = Task {
+            for await _ in stream {
+            }
+        }
+        defer {
+            consumer.cancel()
+        }
+
+        let expectedProcessID = Int32(ProcessInfo.processInfo.processIdentifier)
+        try await waitUntil {
+            await recorder.hasPresence(for: expectedProcessID)
+        }
+
+        await serviceBackend.updateRemoteClientPresence(
+            sourceProcessID: expectedProcessID,
+            selectedDeviceID: backend.device.id
+        )
+
+        try await waitUntil {
+            await recorder.selectedDeviceID(for: expectedProcessID) == backend.device.id
+        }
+
+        consumer.cancel()
+        _ = await consumer.result
+
+        try await waitUntil {
+            await recorder.didDisconnect(processID: expectedProcessID)
+        }
+    }
+
+    func testHostDeliversOpenSettingsControlEventOverTCPStream() async throws {
+        let suiteName = "BackgroundServiceTransportTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let backend = StubServiceBackend()
+        let recorder = RemotePresenceRecorder()
+        let host = try BackgroundServiceHost(
+            backend: backend,
+            defaults: defaults,
+            remoteClientPresenceHandler: { presence in
+                await recorder.record(presence)
+            }
+        )
+        try await host.start()
+        defer { host.stop() }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let connectedBackend = try await coordinator.connectToRunningService()
+        let serviceBackend = try XCTUnwrap(connectedBackend)
+        let stream = await serviceBackend.stateUpdates()
+        async let receivedUpdate = Self.firstUpdate(from: stream)
+
+        try await waitUntil {
+            await recorder.hasPresence(for: Int32(ProcessInfo.processInfo.processIdentifier))
+        }
+
+        let delivered = await host.requestOpenSettingsForConnectedClients()
+        XCTAssertTrue(delivered)
+
+        guard let update = await receivedUpdate else {
+            XCTFail("Expected openSettingsRequested update")
+            return
+        }
+        switch update {
+        case .openSettingsRequested:
+            break
+        default:
+            XCTFail("Expected openSettingsRequested, got \(update)")
+        }
+    }
+
+    private static func firstUpdate(from stream: AsyncStream<BackendStateUpdate>) async -> BackendStateUpdate? {
+        for await update in stream {
+            return update
+        }
+        return nil
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2.0,
+        pollInterval: UInt64 = 20_000_000,
+        condition: @escaping @Sendable () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: pollInterval)
+        }
+        XCTFail("Timed out waiting for condition")
+    }
 }
 
 private actor StubServiceBackend: DeviceBackend {
     nonisolated var usesRemoteServiceTransport: Bool { false }
 
-    private let device = MouseDevice(
+    nonisolated let device = MouseDevice(
         id: "test-mouse",
         vendor_id: 0x1532,
         product_id: 0x00B9,
@@ -76,6 +246,9 @@ private actor StubServiceBackend: DeviceBackend {
         supports_advanced_lighting_effects: true,
         onboard_profile_count: 1
     )
+
+    private var stateUpdatesStream: AsyncStream<BackendStateUpdate>
+    private var stateUpdatesContinuation: AsyncStream<BackendStateUpdate>.Continuation
 
     private var state = MouseState(
         device: DeviceSummary(
@@ -101,6 +274,12 @@ private actor StubServiceBackend: DeviceBackend {
             lighting: true
         )
     )
+
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: BackendStateUpdate.self)
+        stateUpdatesStream = stream
+        stateUpdatesContinuation = continuation
+    }
 
     func listDevices() async throws -> [MouseDevice] {
         [device]
@@ -136,9 +315,19 @@ private actor StubServiceBackend: DeviceBackend {
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
-        AsyncStream { continuation in
-            continuation.finish()
-        }
+        stateUpdatesStream
+    }
+
+    func emit(_ update: BackendStateUpdate) {
+        stateUpdatesContinuation.yield(update)
+    }
+
+    func snapshot(updatedAt: Date) -> SharedServiceSnapshot {
+        SharedServiceSnapshot(
+            devices: [device],
+            stateByDeviceID: [device.id: state],
+            lastUpdatedByDeviceID: [device.id: updatedAt]
+        )
     }
 
     func apply(device _: MouseDevice, patch: DevicePatch) async throws -> MouseState {
@@ -175,5 +364,31 @@ private actor StubServiceBackend: DeviceBackend {
 
     func debugUSBReadButtonBinding(device _: MouseDevice, slot: Int, profile: Int) async throws -> [UInt8]? {
         [0xAA, 0x55, UInt8(slot & 0xFF), UInt8(profile & 0xFF)]
+    }
+}
+
+private actor RemotePresenceRecorder {
+    private var latestPresenceByProcessID: [Int32: CrossProcessClientPresence] = [:]
+    private var disconnectedProcessIDs: Set<Int32> = []
+
+    func record(_ presence: CrossProcessClientPresence) {
+        latestPresenceByProcessID[presence.sourceProcessID] = presence
+    }
+
+    func disconnect(_ processID: Int32) {
+        disconnectedProcessIDs.insert(processID)
+        latestPresenceByProcessID.removeValue(forKey: processID)
+    }
+
+    func hasPresence(for processID: Int32) -> Bool {
+        latestPresenceByProcessID[processID] != nil
+    }
+
+    func selectedDeviceID(for processID: Int32) -> String? {
+        latestPresenceByProcessID[processID]?.selectedDeviceID
+    }
+
+    func didDisconnect(processID: Int32) -> Bool {
+        disconnectedProcessIDs.contains(processID)
     }
 }

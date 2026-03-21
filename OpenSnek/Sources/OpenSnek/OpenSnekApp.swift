@@ -22,7 +22,7 @@ struct OpenSnekApp: App {
                 )
                     .frame(minWidth: 900, minHeight: 600)
                     .background(WindowChromeConfigurator().frame(width: 0, height: 0))
-                    .background(SettingsOpenBridgeView().frame(width: 0, height: 0))
+                    .background(SettingsOpenBridgeView(runtimeStore: appState.runtimeStore).frame(width: 0, height: 0))
             }
         }
 
@@ -94,36 +94,21 @@ private struct ServiceWindowSuppressorView: NSViewRepresentable {
 }
 
 private struct SettingsOpenBridgeView: View {
+    let runtimeStore: RuntimeStore
+
     @Environment(\.openSettings) private var openSettings
     @State private var didHandleLaunchSettingsRequest = false
-    @State private var observer: NSObjectProtocol?
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
             .onAppear {
-                installObserverIfNeeded()
                 handleLaunchSettingsRequestIfNeeded()
             }
-            .onDisappear {
-                if let observer {
-                    DistributedNotificationCenter.default().removeObserver(observer)
-                    self.observer = nil
-                }
-            }
-    }
-
-    private func installObserverIfNeeded() {
-        guard observer == nil else { return }
-        observer = DistributedNotificationCenter.default().addObserver(
-            forName: BackgroundServiceCoordinator.openSettingsNotificationName,
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in
+            .onChange(of: runtimeStore.openSettingsRequestCount) { _, count in
+                guard count > 0 else { return }
                 openSettings()
             }
-        }
     }
 
     private func handleLaunchSettingsRequestIfNeeded() {

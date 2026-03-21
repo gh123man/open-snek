@@ -22,14 +22,14 @@ struct ContentView: View {
             await runtimeStore.refreshHIDAccessStatus()
         }
         .onChange(of: deviceStore.selectedDeviceID) { _, _ in
-            guard !deviceStore.usesRemoteServiceUpdates || deviceStore.state == nil else { return }
+            guard !deviceStore.usesRemoteServiceTransport || deviceStore.state == nil else { return }
             Task { await deviceStore.refreshState() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task {
                     await runtimeStore.refreshHIDAccessStatus()
-                    if deviceStore.usesRemoteServiceUpdates {
+                    if deviceStore.usesRemoteServiceTransport {
                         runtimeStore.sendRemoteClientPresence()
                     } else {
                         await deviceStore.refreshDevices()

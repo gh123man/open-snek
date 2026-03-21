@@ -47,13 +47,13 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(merged.led_value, 20)
     }
 
-    func testRemoteServiceBackendUsesSnapshotFeed() async {
+    func testRemoteServiceBackendUsesRemoteTransport() async {
         let appState = await MainActor.run {
             AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
         }
 
-        let usesRemoteSnapshots = await MainActor.run { appState.environment.usesRemoteServiceUpdates }
-        XCTAssertTrue(usesRemoteSnapshots)
+        let usesRemoteTransport = await MainActor.run { appState.environment.usesRemoteServiceTransport }
+        XCTAssertTrue(usesRemoteTransport)
     }
 
     func testApplyRemoteServiceSnapshotHydratesSelectedState() async {
@@ -340,6 +340,75 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(selectedBattery, 83)
         XCTAssertEqual(selectedDpi, 1600)
     }
+
+    func testRemoteServiceAppliesPushedSnapshotUpdatesOverTCPAfterBootstrap() async throws {
+        let suiteName = "RemoteServiceSnapshotTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let backend = RemoteBootstrapServiceBackend()
+        let host = try BackgroundServiceHost(backend: backend, defaults: defaults)
+        try await host.start()
+        defer { host.stop() }
+
+        let coordinator = await MainActor.run {
+            BackgroundServiceCoordinator(defaults: UserDefaults(suiteName: suiteName)!)
+        }
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, serviceCoordinator: coordinator, autoStart: false)
+        }
+
+        await MainActor.run {
+            appState.environment.hasCheckedForUpdates = true
+        }
+        await appState.runtimeStore.start()
+
+        let updatedState = makeSnapshotState(
+            device: RemoteBootstrapServiceBackend.device,
+            connection: "bluetooth",
+            batteryPercent: 79,
+            dpiValues: [1000, 2000, 3000],
+            activeStage: 2,
+            dpiValue: 3000
+        )
+        await backend.emit(
+            .snapshot(
+                SharedServiceSnapshot(
+                    devices: [RemoteBootstrapServiceBackend.device],
+                    stateByDeviceID: [RemoteBootstrapServiceBackend.device.id: updatedState],
+                    lastUpdatedByDeviceID: [RemoteBootstrapServiceBackend.device.id: Date(timeIntervalSince1970: 1_774_100_000)]
+                )
+            )
+        )
+
+        try await waitUntil {
+            await MainActor.run {
+                appState.deviceStore.state?.dpi?.x == 3000 &&
+                    appState.deviceStore.state?.battery_percent == 79
+            }
+        }
+
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+        let selectedBattery = await MainActor.run { appState.deviceStore.state?.battery_percent }
+        XCTAssertEqual(selectedDpi, 3000)
+        XCTAssertEqual(selectedBattery, 79)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2.0,
+        pollInterval: UInt64 = 20_000_000,
+        condition: @escaping @Sendable () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: pollInterval)
+        }
+        XCTFail("Timed out waiting for condition")
+    }
 }
 
 private func makeSnapshotDevice(
@@ -443,6 +512,9 @@ private actor RemoteBootstrapServiceBackend: DeviceBackend {
         onboard_profile_count: 1
     )
 
+    private let stateUpdatesStream: AsyncStream<BackendStateUpdate>
+    private let stateUpdatesContinuation: AsyncStream<BackendStateUpdate>.Continuation
+
     private let state = MouseState(
         device: DeviceSummary(
             id: "remote-bootstrap-device",
@@ -469,6 +541,12 @@ private actor RemoteBootstrapServiceBackend: DeviceBackend {
         )
     )
 
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: BackendStateUpdate.self)
+        stateUpdatesStream = stream
+        stateUpdatesContinuation = continuation
+    }
+
     func listDevices() async throws -> [MouseDevice] { [Self.device] }
     func readState(device _: MouseDevice) async throws -> MouseState { state }
     func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
@@ -484,9 +562,10 @@ private actor RemoteBootstrapServiceBackend: DeviceBackend {
         )
     }
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
-        AsyncStream { continuation in
-            continuation.finish()
-        }
+        stateUpdatesStream
+    }
+    func emit(_ update: BackendStateUpdate) {
+        stateUpdatesContinuation.yield(update)
     }
     func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState { state }
     func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { RGBPatch(r: 12, g: 34, b: 56) }

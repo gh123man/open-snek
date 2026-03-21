@@ -61,7 +61,6 @@
 		89F1D99AC824C1C84E34CB76 /* AppStateTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E55E2108B9FD27552854D4 /* AppStateTypes.swift */; };
 		8C48CAC00B058083534C228C /* Abstractions.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5AFD15E4A5E43403A377E62 /* Abstractions.swift */; };
 		919460C78606DD055E4140B0 /* HIDDevicePresenceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F083FEAC20E95519AAC4B2D /* HIDDevicePresenceMonitor.swift */; };
-		91AC2FEECA82E084A294955C /* CrossProcessStateSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08740BAF51C7F7DBD5135183 /* CrossProcessStateSync.swift */; };
 		96925611E343BBA733E39D68 /* OpenSnekHardware.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B4A9C2329D2DC93E67914B4 /* OpenSnekHardware.framework */; };
 		96D56FD27BF056283672F337 /* BLEVendorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405CA41EDB38DB20E5C0EF58 /* BLEVendorProtocol.swift */; };
 		9727C32F5255711EF1FF03C5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C5A19A6C82FEBA3F90D51D3 /* SettingsView.swift */; };
@@ -269,7 +268,6 @@
 		0165E25D97B7943014E776B8 /* USBPassiveDPIEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBPassiveDPIEventMonitor.swift; sourceTree = "<group>"; };
 		0182D1ED4655878220DF1DD3 /* DeviceSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSidebarView.swift; sourceTree = "<group>"; };
 		07762B84087CB0602BF393B1 /* AppStateApplyController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateApplyController.swift; sourceTree = "<group>"; };
-		08740BAF51C7F7DBD5135183 /* CrossProcessStateSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossProcessStateSync.swift; sourceTree = "<group>"; };
 		0A4224D8E997DD977430D6F8 /* ApplyCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplyCoordinator.swift; sourceTree = "<group>"; };
 		0AFCB16EA0F33132EF65690B /* AppStateMultiDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateMultiDeviceTests.swift; sourceTree = "<group>"; };
 		0B405B510FA38B3476E32D86 /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
@@ -504,7 +502,6 @@
 				68E55E2108B9FD27552854D4 /* AppStateTypes.swift */,
 				2FF8D2C81FE5C71D51C642B2 /* BackendSession.swift */,
 				89EC8F30230BA69A6D4F4581 /* BackgroundServiceCoordinator.swift */,
-				08740BAF51C7F7DBD5135183 /* CrossProcessStateSync.swift */,
 				40E41C578893CA4BB9F69711 /* DeviceStore.swift */,
 				6CD2CC99D4EB50E0A0940DC5 /* EditorStore.swift */,
 				257C620943BA80210638ABCF /* PermissionSupport.swift */,
@@ -867,7 +864,6 @@
 				7B24D57EBFA951B9AE503677 /* BridgeClient.swift in Sources */,
 				FF133C876B9199B351CCB4EC /* ContentView.swift in Sources */,
 				14A60F78987BD7E62A05435A /* CoreAliases.swift in Sources */,
-				91AC2FEECA82E084A294955C /* CrossProcessStateSync.swift in Sources */,
 				3F529556C5591DC4432C7191 /* DeviceDetailView.swift in Sources */,
 				E3E956E448128D0E7351C18A /* DeviceSidebarView.swift in Sources */,
 				F4C6C072F470C68686E8E986 /* DeviceStore.swift in Sources */,

@@ -124,7 +124,7 @@ enum RuntimeWakeSchedule {
         now: Date,
         profile: PollingProfile,
         fastDpiInterval: TimeInterval?,
-        usesRemoteServiceUpdates: Bool,
+        usesRemoteServiceTransport: Bool,
         lastDevicePresencePollAt: Date,
         lastRefreshStatePollAt: Date,
         lastFastDpiPollAt: Date,
@@ -134,7 +134,7 @@ enum RuntimeWakeSchedule {
     ) -> TimeInterval {
         var intervals: [TimeInterval] = []
 
-        if usesRemoteServiceUpdates {
+        if usesRemoteServiceTransport {
             intervals.append(max(0, 1.0 - now.timeIntervalSince(lastRemoteClientPresencePingAt)))
         } else {
             intervals.append(max(0, profile.devicePresenceInterval - now.timeIntervalSince(lastDevicePresencePollAt)))

@@ -10,7 +10,7 @@ Goal: shortest path from user request to the exact files, commands, and constrai
 | USB protocol, USB lighting, USB buttons | `docs/protocol/PROTOCOL.md` then `docs/protocol/USB_PROTOCOL.md`; `OpenSnek/Sources/OpenSnekProtocols/USBHIDProtocol.swift`; `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient+USB.swift`; `OpenSnek/Sources/OpenSnekCore/DeviceSupport.swift` | focused USB probe command; `DeviceProfilesTests`; `USBButtonHydrationTests` |
 | Device support, product IDs, zones, button layout | `OpenSnek/Sources/OpenSnekCore/{DeviceSupport.swift,Models.swift,ButtonBindingSupport.swift}`; `docs/protocol/PARITY.md` if shipped-status changes | `swift test --package-path OpenSnek --filter DeviceProfilesTests` |
 | App-state hydration, persistence, auto-apply | `OpenSnek/Sources/OpenSnek/Services/{AppState.swift,AppStateEditorController.swift,AppStateApplyController.swift,DeviceStore.swift,EditorStore.swift}`; `OpenSnek/Sources/OpenSnekAppSupport/DevicePreferenceStore.swift` | `swift test --package-path OpenSnek --filter AppStateRefactorCharacterizationTests` |
-| Background service, bridge transport, snapshots | `OpenSnek/Sources/OpenSnek/Services/{BackendSession.swift,BackgroundServiceCoordinator.swift,CrossProcessStateSync.swift}`; `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient.swift` | `swift test --package-path OpenSnek --filter BackgroundServiceTransportTests` or `RemoteServiceSnapshotTests` |
+| Background service, bridge transport, snapshots | `OpenSnek/Sources/OpenSnek/Services/{BackendSession.swift,BackgroundServiceCoordinator.swift,AppStateRuntimeController.swift}`; `OpenSnek/Sources/OpenSnek/Bridge/BridgeClient.swift` | `swift test --package-path OpenSnek --filter BackgroundServiceTransportTests` or `RemoteServiceSnapshotTests` |
 | UI, menu bar, startup/lifecycle | `OpenSnek/Sources/OpenSnek/UI/*.swift`; `OpenSnek/Sources/OpenSnek/{AppLifecycleDelegate.swift,OpenSnekApp.swift}`; `RuntimeStore.swift` | `swift test --package-path OpenSnek --filter AppLifecycleDelegateTests` or `ServiceMenuBarPresentationTests` |
 
 Protocol behavior changes require docs, tests, and `CHANGELOG.md` updates in the same change.
@@ -36,6 +36,7 @@ Protocol behavior changes require docs, tests, and `CHANGELOG.md` updates in the
 5. For BLE DPI stages, preserve stage IDs on write, resolve active stage from stage IDs, and do not reintroduce stage nudge/toggle writes.
 6. Keep `CHANGELOG.md` up to date for user-visible or protocol-visible changes.
 7. Regenerate `OpenSnek/OpenSnek.xcodeproj` only after changing `OpenSnek/project.yml`.
+8. Before saying work is done or pushing code, run the complete unit test suite with `swift test --package-path OpenSnek` and ensure it passes locally.
 
 ## Quick Commands
 

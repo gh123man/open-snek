@@ -12,6 +12,7 @@ final class RuntimeStore {
     var permissionStatusMessage: String?
     var isResettingPermissions = false
     var statusItemTransientDpi: Int?
+    var openSettingsRequestCount = 0
     @ObservationIgnored let statusItemDpiDisplayDuration: TimeInterval
 
     @ObservationIgnored private weak var runtimeControllerStorage: AppStateRuntimeController?
@@ -96,7 +97,9 @@ final class RuntimeStore {
     }
 
     func openSettingsFromService() {
-        runtimeController.openSettingsFromService()
+        Task {
+            await runtimeController.openSettingsFromService()
+        }
     }
 
     func prepareForCurrentServiceProcessTermination() {

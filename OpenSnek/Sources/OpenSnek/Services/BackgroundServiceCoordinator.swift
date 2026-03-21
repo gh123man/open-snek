@@ -12,8 +12,6 @@ final class BackgroundServiceCoordinator {
     nonisolated static let endpointDefaultsKey = "backgroundServiceEndpoint"
     nonisolated static let portDefaultsKey = "backgroundServicePort"
     nonisolated static let pidDefaultsKey = "backgroundServicePID"
-    nonisolated static let openSettingsNotificationName = Notification.Name("io.opensnek.OpenSnek.openSettings")
-
     struct RunningAppSnapshot: Equatable {
         let processIdentifier: pid_t
         let activationPolicy: NSApplication.ActivationPolicy
@@ -58,10 +56,19 @@ final class BackgroundServiceCoordinator {
         return Int32(pid)
     }
 
-    func registerServiceHostIfNeeded(backend: LocalBridgeBackend) async throws {
+    func registerServiceHostIfNeeded(
+        backend: LocalBridgeBackend,
+        remoteClientPresenceHandler: @escaping @Sendable (CrossProcessClientPresence) async -> Void,
+        remoteClientDisconnectHandler: @escaping @Sendable (Int32) async -> Void
+    ) async throws {
         guard isCurrentProcessService else { return }
         guard serviceHost == nil else { return }
-        let host = try BackgroundServiceHost(backend: backend, defaults: defaults)
+        let host = try BackgroundServiceHost(
+            backend: backend,
+            defaults: defaults,
+            remoteClientPresenceHandler: remoteClientPresenceHandler,
+            remoteClientDisconnectHandler: remoteClientDisconnectHandler
+        )
         try await host.start()
         serviceHost = host
     }
@@ -69,6 +76,11 @@ final class BackgroundServiceCoordinator {
     func stopCurrentServiceHostIfNeeded() {
         serviceHost?.stop()
         serviceHost = nil
+    }
+
+    func requestOpenSettingsForConnectedClients() async -> Bool {
+        guard let serviceHost else { return false }
+        return await serviceHost.requestOpenSettingsForConnectedClients()
     }
 
     func setBackgroundServiceEnabled(_ enabled: Bool) {
@@ -185,9 +197,6 @@ final class BackgroundServiceCoordinator {
         if let existingApp = existingForegroundAppInstance() {
             _ = existingApp.unhide()
             _ = existingApp.activate(options: [.activateAllWindows])
-            if arguments.contains("--open-settings") {
-                postOpenSettingsRequest()
-            }
             return
         }
 
@@ -276,15 +285,6 @@ final class BackgroundServiceCoordinator {
             return nil
         }
         return runningApplications.first { $0.processIdentifier == preferred.processIdentifier }
-    }
-
-    private func postOpenSettingsRequest() {
-        DistributedNotificationCenter.default().postNotificationName(
-            Self.openSettingsNotificationName,
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
     }
 
     nonisolated static func preferredReusableApplication(
