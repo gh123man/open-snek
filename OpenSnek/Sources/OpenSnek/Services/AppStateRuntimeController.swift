@@ -4,7 +4,12 @@ import OpenSnekCore
 
 @MainActor
 final class AppStateRuntimeController {
-    private static let serviceIdleFallbackFastDpiInterval: TimeInterval = 0.5
+    private enum PowerState {
+        case active
+        case sleeping
+    }
+
+    private static let serviceIdleFallbackFastDpiInterval: TimeInterval = 1.0
 
     private let environment: AppEnvironment
     private unowned let deviceStore: DeviceStore
@@ -25,6 +30,9 @@ final class AppStateRuntimeController {
     private var remoteClientPresenceByProcessID: [Int32: RemoteClientPresenceState] = [:]
     private var lastRemoteClientPresencePingAt: Date = .distantPast
     private var statusItemTransientDpiResetTask: Task<Void, Never>?
+    private var powerState: PowerState = .active
+    private var systemWillSleepObserver: NSObjectProtocol?
+    private var systemDidWakeObserver: NSObjectProtocol?
 
     init(environment: AppEnvironment, deviceStore: DeviceStore, runtimeStore: RuntimeStore) {
         self.environment = environment
@@ -40,6 +48,14 @@ final class AppStateRuntimeController {
             CrossProcessStateSync.removeObserver(clientPresenceObserver)
         }
         clientPresenceObserver = nil
+        if let systemWillSleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(systemWillSleepObserver)
+        }
+        systemWillSleepObserver = nil
+        if let systemDidWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(systemDidWakeObserver)
+        }
+        systemDidWakeObserver = nil
     }
 
     func bind(deviceController: AppStateDeviceController) {
@@ -124,13 +140,16 @@ final class AppStateRuntimeController {
     }
 
     func effectiveFastDpiInterval(at now: Date) -> TimeInterval? {
+        let activeFastPollingDeviceIDs = activeFastPollingDeviceIDs(at: now)
+        guard !activeFastPollingDeviceIDs.isEmpty else { return nil }
+
         let profile = pollingProfile(at: now)
         if let fastInterval = profile.fastDpiInterval {
             return fastInterval
         }
 
         guard profile == .serviceIdle else { return nil }
-        return activeFastPollingDeviceIDs(at: now).isEmpty ? nil : Self.serviceIdleFallbackFastDpiInterval
+        return Self.serviceIdleFallbackFastDpiInterval
     }
 
     func pollingProfile(at now: Date) -> PollingProfile {
@@ -168,6 +187,8 @@ final class AppStateRuntimeController {
 
         for deviceID in remoteSelectedDeviceIDs {
             guard liveIDs.contains(deviceID) else { continue }
+            guard let device = deviceStore.devices.first(where: { $0.id == deviceID }) else { continue }
+            guard shouldFastPollSelectedDevice(device) else { continue }
             guard seen.insert(deviceID).inserted else { continue }
             ordered.append(deviceID)
         }
@@ -176,7 +197,9 @@ final class AppStateRuntimeController {
            hasActiveRemoteClients(at: now),
            remoteSelectedDeviceIDs.isEmpty,
            let selectedDeviceID = deviceStore.selectedDeviceID,
+           let selectedDevice = deviceStore.devices.first(where: { $0.id == selectedDeviceID }),
            liveIDs.contains(selectedDeviceID),
+           shouldFastPollSelectedDevice(selectedDevice),
            seen.insert(selectedDeviceID).inserted {
             ordered.append(selectedDeviceID)
         }
@@ -205,6 +228,34 @@ final class AppStateRuntimeController {
         clientPresenceObserver = CrossProcessStateSync.observeClientPresence { [weak self] presence in
             Task { [weak self] in
                 await self?.handleRemoteClientPresence(presence)
+            }
+        }
+    }
+
+    func installPowerObservers() {
+        let notificationCenter = NSWorkspace.shared.notificationCenter
+
+        if systemWillSleepObserver == nil {
+            systemWillSleepObserver = notificationCenter.addObserver(
+                forName: NSWorkspace.willSleepNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.handleSystemWillSleep()
+                }
+            }
+        }
+
+        if systemDidWakeObserver == nil {
+            systemDidWakeObserver = notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.handleSystemDidWake()
+                }
             }
         }
     }
@@ -279,6 +330,7 @@ final class AppStateRuntimeController {
     func start() async {
         guard !didStartRuntime else { return }
         didStartRuntime = true
+        installPowerObservers()
 
         do {
             try environment.serviceCoordinator.synchronizeLaunchAgentIfNeeded()
@@ -423,6 +475,39 @@ final class AppStateRuntimeController {
         CrossProcessStateSync.postClientPresence(selectedDeviceID: deviceStore.selectedDeviceID)
     }
 
+    func handleSystemWillSleep(now: Date = Date()) {
+        guard powerState != .sleeping else { return }
+        powerState = .sleeping
+        compactMenuPresented = false
+        compactInteractionUntil = nil
+        remoteClientPresenceByProcessID.removeAll()
+        clearStatusItemTransientDpi()
+        lastDevicePresencePollAt = now
+        lastRefreshStatePollAt = now
+        lastFastDpiPollAt = now
+        lastRemoteClientPresencePingAt = now
+        AppLog.info("Power", "system sleep detected; suspending runtime polling")
+    }
+
+    func handleSystemDidWake(now: Date = Date()) {
+        let wasSleeping = powerState == .sleeping
+        powerState = .active
+        guard wasSleeping else { return }
+
+        lastDevicePresencePollAt = .distantPast
+        lastRefreshStatePollAt = .distantPast
+        lastFastDpiPollAt = .distantPast
+        lastRemoteClientPresencePingAt = .distantPast
+        pruneExpiredRemoteClientPresence(now: now)
+        AppLog.info("Power", "system wake detected; resuming runtime polling")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshHIDAccessStatus()
+            await self.pollRuntimeOnce()
+        }
+    }
+
     private func configureBackendForCurrentPreferences() async {
         do {
             environment.backend = try await environment.serviceCoordinator.makeBackendForCurrentMode()
@@ -474,7 +559,10 @@ final class AppStateRuntimeController {
     }
 
     func runtimeSleepInterval(after now: Date) -> TimeInterval {
-        RuntimeWakeSchedule.nextSleepInterval(
+        if powerState == .sleeping {
+            return RuntimeWakeSchedule.suspendedForSleepInterval
+        }
+        return RuntimeWakeSchedule.nextSleepInterval(
             now: now,
             profile: pollingProfile(at: now),
             fastDpiInterval: effectiveFastDpiInterval(at: now),
@@ -493,6 +581,7 @@ final class AppStateRuntimeController {
     }
 
     private func pollRuntimeOnce() async {
+        guard powerState == .active else { return }
         let now = Date()
         let profile = pollingProfile(at: now)
         pruneExpiredRemoteClientPresence(now: now)
@@ -568,22 +657,38 @@ final class AppStateRuntimeController {
         if environment.launchRole.isService {
             let localInteractive = isLocallyInteractive(at: now)
             if localInteractive {
-                return [selectedDeviceID]
+                guard let selectedDevice = deviceStore.devices.first(where: { $0.id == selectedDeviceID }) else {
+                    return []
+                }
+                return shouldFastPollSelectedDevice(selectedDevice) ? [selectedDeviceID] : []
             }
 
             guard let selectedDevice = deviceStore.devices.first(where: { $0.id == selectedDeviceID }) else {
                 return []
             }
             switch deviceController.dpiUpdateTransportStatus(for: selectedDevice) {
-            case .streamActive, .pollingFallback:
+            case .pollingFallback:
                 return [selectedDeviceID]
             case .realTimeHID:
                 return [selectedDeviceID]
-            case .unknown, .listening, .unsupported:
+            case .unknown, .listening, .streamActive, .unsupported:
                 return []
             }
         }
         return environment.usesRemoteServiceUpdates ? [] : [selectedDeviceID]
+    }
+
+    private func shouldFastPollSelectedDevice(_ device: MouseDevice) -> Bool {
+        switch deviceController.dpiUpdateTransportStatus(for: device) {
+        case .unknown:
+            return true
+        case .pollingFallback:
+            return true
+        case .realTimeHID:
+            return true
+        case .listening, .streamActive, .unsupported:
+            return false
+        }
     }
 
     private func isLocallyInteractive(at now: Date) -> Bool {

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-21]
+
+### Fixed
+- The background service now observes macOS sleep/wake notifications, suspends its runtime polling while the system is sleeping, clears stale remote-client presence on sleep, and resumes with one immediate refresh on wake instead of carrying the higher interactive cadence across a laptop sleep cycle.
+- The background service now keeps its `4s` / `8s` idle discovery and state cadence, but the slower `1s` fallback fast-DPI watchdog only stays active for devices that are actually on polling fallback; healthy passive HID streaming paths no longer keep the fast poller running.
+
 ## [2026-03-15]
 
 ### Fixed

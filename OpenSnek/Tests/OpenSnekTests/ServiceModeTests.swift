@@ -144,7 +144,7 @@ final class ServiceModeTests: XCTestCase {
         )
         XCTAssertEqual(
             appState.runtimeController.effectiveFastDpiInterval(at: Date()),
-            0.5
+            1.0
         )
     }
 
@@ -165,8 +165,8 @@ final class ServiceModeTests: XCTestCase {
     }
 
     @MainActor
-    func testServiceIdleKeepsSlowFastPollingForSelectedBluetoothRealtimeWatchdog() async {
-        let backend = ServiceModeTransportBackend(transportStatus: .realTimeHID)
+    func testServiceIdleDoesNotFastPollWhilePassiveHIDStreamIsActive() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .streamActive)
         let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
         let device = backend.device
 
@@ -175,16 +175,13 @@ final class ServiceModeTests: XCTestCase {
 
         XCTAssertEqual(
             appState.runtimeStore.activeFastPollingDeviceIDs(at: Date()),
-            [device.id]
+            []
         )
-        XCTAssertEqual(
-            appState.runtimeController.effectiveFastDpiInterval(at: Date()),
-            0.5
-        )
+        XCTAssertNil(appState.runtimeController.effectiveFastDpiInterval(at: Date()))
     }
 
     @MainActor
-    func testServiceIdleKeepsSlowFastPollingForSelectedUSBRealtimeCorrection() async {
+    func testServiceIdleKeepsSlowFastPollingWhilePassiveHIDRealtimeIsActive() async {
         let backend = ServiceModeTransportBackend(
             transportStatus: .realTimeHID,
             device: makeServiceModeDevice(id: "service-test-usb-device", transport: .usb, productID: 0x00AB)
@@ -201,7 +198,89 @@ final class ServiceModeTests: XCTestCase {
         )
         XCTAssertEqual(
             appState.runtimeController.effectiveFastDpiInterval(at: Date()),
-            0.5
+            1.0
+        )
+    }
+
+    @MainActor
+    func testServiceInteractiveDoesNotScheduleFastPollingWithoutFallbackCandidates() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .streamActive)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let device = backend.device
+        let now = Date(timeIntervalSince1970: 1_773_400_250)
+
+        _ = appState.deviceController.applyDeviceList([device], source: "test")
+        await appState.deviceController.refreshConnectionDiagnostics(for: device)
+        appState.runtimeController.setCompactMenuPresented(true)
+
+        XCTAssertEqual(appState.runtimeStore.currentPollingProfile, .serviceInteractive)
+        XCTAssertEqual(appState.runtimeStore.activeFastPollingDeviceIDs(at: now), [])
+        XCTAssertNil(appState.runtimeController.effectiveFastDpiInterval(at: now))
+        XCTAssertEqual(
+            appState.runtimeController.runtimeSleepInterval(after: now),
+            RuntimeWakeSchedule.minimumSleepInterval,
+            accuracy: 0.001
+        )
+    }
+
+    @MainActor
+    func testRemoteClientPresenceDoesNotScheduleFastPollingWithoutFallbackCandidates() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .streamActive)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let device = backend.device
+        let now = Date(timeIntervalSince1970: 1_773_400_275)
+
+        _ = appState.deviceController.applyDeviceList([device], source: "test")
+        await appState.deviceController.refreshConnectionDiagnostics(for: device)
+        appState.runtimeController.recordRemoteClientPresence(
+            CrossProcessClientPresence(sourceProcessID: 42, selectedDeviceID: device.id),
+            now: now
+        )
+
+        XCTAssertEqual(appState.runtimeStore.pollingProfile(at: now), .serviceInteractive)
+        XCTAssertEqual(appState.runtimeStore.activeFastPollingDeviceIDs(at: now), [])
+        XCTAssertNil(appState.runtimeController.effectiveFastDpiInterval(at: now))
+    }
+
+    @MainActor
+    func testSystemSleepSuspendsRuntimePollingUntilWake() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .pollingFallback)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let now = Date(timeIntervalSince1970: 1_773_400_300)
+
+        appState.runtimeController.handleSystemWillSleep(now: now)
+        XCTAssertEqual(
+            appState.runtimeController.runtimeSleepInterval(after: now),
+            RuntimeWakeSchedule.suspendedForSleepInterval,
+            accuracy: 0.001
+        )
+
+        appState.runtimeController.handleSystemDidWake(now: now.addingTimeInterval(30))
+        XCTAssertEqual(
+            appState.runtimeController.runtimeSleepInterval(after: now.addingTimeInterval(30)),
+            RuntimeWakeSchedule.minimumSleepInterval,
+            accuracy: 0.001
+        )
+    }
+
+    @MainActor
+    func testSystemSleepClearsRemotePresenceSoWakeResumesIdle() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .realTimeHID)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let now = Date(timeIntervalSince1970: 1_773_400_400)
+
+        appState.runtimeController.recordRemoteClientPresence(
+            CrossProcessClientPresence(sourceProcessID: 42, selectedDeviceID: backend.device.id),
+            now: now
+        )
+        XCTAssertEqual(appState.runtimeStore.pollingProfile(at: now), .serviceInteractive)
+
+        appState.runtimeController.handleSystemWillSleep(now: now.addingTimeInterval(1))
+        appState.runtimeController.handleSystemDidWake(now: now.addingTimeInterval(10))
+
+        XCTAssertEqual(
+            appState.runtimeStore.pollingProfile(at: now.addingTimeInterval(10)),
+            .serviceIdle
         )
     }
 

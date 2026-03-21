@@ -118,6 +118,7 @@ enum PollingProfile: Equatable {
 
 enum RuntimeWakeSchedule {
     static let minimumSleepInterval: TimeInterval = 0.10
+    static let suspendedForSleepInterval: TimeInterval = 60.0
 
     static func nextSleepInterval(
         now: Date,
