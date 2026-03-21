@@ -673,13 +673,26 @@ final class USBPassiveDPIEventTests: XCTestCase {
                 dpiValue: 3200
             )
         )
-        try? await Task.sleep(nanoseconds: 20_000_000)
-
-        let transientDpi = await MainActor.run { appState.runtimeStore.statusItemTransientDpi }
+        let transientDpi = try? await withAsyncTimeout(seconds: 1.0) {
+            while true {
+                let transientDpi = await MainActor.run { appState.runtimeStore.statusItemTransientDpi }
+                if transientDpi == 3200 {
+                    return transientDpi
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
         XCTAssertEqual(transientDpi, 3200)
 
-        try? await Task.sleep(nanoseconds: 80_000_000)
-        let clearedTransientDpi = await MainActor.run { appState.runtimeStore.statusItemTransientDpi }
+        let clearedTransientDpi = try? await withAsyncTimeout(seconds: 1.0) {
+            while true {
+                let transientDpi = await MainActor.run { appState.runtimeStore.statusItemTransientDpi }
+                if transientDpi == nil {
+                    return transientDpi
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
         XCTAssertNil(clearedTransientDpi)
     }
 

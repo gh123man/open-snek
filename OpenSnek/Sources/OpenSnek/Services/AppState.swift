@@ -13,7 +13,6 @@ final class AppState {
     let editorController: AppStateEditorController
     let applyController: AppStateApplyController
     let runtimeController: AppStateRuntimeController
-    private var backendStateUpdatesBootstrapTask: Task<Void, Never>?
     private var autoStartRuntimeTask: Task<Void, Never>?
 
     init(
@@ -70,8 +69,6 @@ final class AppState {
     deinit {
         @MainActor
         func tearDownControllers() {
-            backendStateUpdatesBootstrapTask?.cancel()
-            backendStateUpdatesBootstrapTask = nil
             autoStartRuntimeTask?.cancel()
             autoStartRuntimeTask = nil
             deviceController.tearDown()
@@ -125,9 +122,7 @@ final class AppState {
         runtimeController.setBackendReady(
             environment.launchRole.isService || backendWasInjected || !environment.serviceCoordinator.backgroundServiceEnabled
         )
-        backendStateUpdatesBootstrapTask = Task { [weak self] in
-            await self?.runtimeController.restartBackendStateUpdates()
-        }
+        runtimeController.scheduleBackendStateUpdatesBootstrap()
         if environment.launchRole.isService, autoStart {
             autoStartRuntimeTask = Task { [weak self] in
                 await self?.runtimeController.start()

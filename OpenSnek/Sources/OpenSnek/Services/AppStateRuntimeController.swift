@@ -25,6 +25,7 @@ final class AppStateRuntimeController {
     private var lastFastDpiPollAt: Date = .distantPast
     private var transientStatusUntil: Date?
     private(set) var isBackendReady = false
+    private var backendStateUpdatesBootstrapTask: Task<Void, Never>?
     private var backendStateUpdatesTask: Task<Void, Never>?
     private var remoteClientPresenceByProcessID: [Int32: RemoteClientPresenceState] = [:]
     private var lastRemoteClientPresencePingAt: Date = .distantPast
@@ -41,6 +42,7 @@ final class AppStateRuntimeController {
 
     func tearDown() {
         runtimeTask?.cancel()
+        backendStateUpdatesBootstrapTask?.cancel()
         backendStateUpdatesTask?.cancel()
         statusItemTransientDpiResetTask?.cancel()
         if let systemWillSleepObserver {
@@ -264,6 +266,21 @@ final class AppStateRuntimeController {
         }
     }
 
+    func scheduleBackendStateUpdatesBootstrap() {
+        guard backendStateUpdatesBootstrapTask == nil else { return }
+        backendStateUpdatesBootstrapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { backendStateUpdatesBootstrapTask = nil }
+            await restartBackendStateUpdates()
+        }
+    }
+
+    func ensureBackendStateUpdatesStarted() async {
+        if let backendStateUpdatesBootstrapTask {
+            await backendStateUpdatesBootstrapTask.value
+        }
+    }
+
     private func handleBackendStateUpdate(_ update: BackendStateUpdate) async {
         guard isBackendReady else { return }
         switch update {
@@ -322,6 +339,7 @@ final class AppStateRuntimeController {
     func start() async {
         guard !didStartRuntime else { return }
         didStartRuntime = true
+        await ensureBackendStateUpdatesStarted()
         installPowerObservers()
 
         do {

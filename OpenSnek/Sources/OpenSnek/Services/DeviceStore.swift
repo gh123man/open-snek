@@ -200,19 +200,23 @@ final class DeviceStore {
     }
 
     func refreshDevices() async {
+        await runtimeController.ensureBackendStateUpdatesStarted()
         await runtimeController.refreshHIDAccessStatus()
         await deviceController.refreshDevices()
     }
 
     func refreshState() async {
+        await runtimeController.ensureBackendStateUpdatesStarted()
         await deviceController.refreshState()
     }
 
     func pollDevicePresence() async {
+        await runtimeController.ensureBackendStateUpdatesStarted()
         await deviceController.pollDevicePresence()
     }
 
     func refreshDpiFast() async {
+        await runtimeController.ensureBackendStateUpdatesStarted()
         await deviceController.refreshDpiFast()
     }
 
