@@ -105,6 +105,8 @@ swift test --package-path OpenSnek
 ./OpenSnek/scripts/generate_xcodeproj.sh --open
 ```
 
+`OpenSnek/OpenSnek.xcodeproj` is generated from `OpenSnek/project.yml` on demand and is not checked into git.
+
 ## Project Docs
 
 - App build, run, probe, and validation details: [OpenSnek/README.md](OpenSnek/README.md)

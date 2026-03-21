@@ -26,8 +26,8 @@ jobs:
           swift --version
           xcodegen --version
 
-      - name: Verify generated Xcode project is in sync
-        run: ./OpenSnek/scripts/check_xcodeproj_sync.sh
+      - name: Validate generated Xcode project
+        run: ./OpenSnek/scripts/generate_xcodeproj.sh
 
       - name: Run Swift package tests
         env:

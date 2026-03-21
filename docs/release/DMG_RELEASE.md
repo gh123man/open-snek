@@ -116,12 +116,12 @@ The workflow will:
 7. publish the latest top section from `CHANGELOG.md` as the GitHub Release notes
 8. upload `OpenSnek-<version>.dmg` to the matching GitHub Release
 
-## Project sync guard
+## Project generation check
 
-The pull-request workflow now verifies that `OpenSnek/OpenSnek.xcodeproj` is regenerated and in sync with `OpenSnek/project.yml`:
+The pull-request workflow installs XcodeGen and regenerates the Xcode project from `OpenSnek/project.yml` to catch spec regressions. The generated `OpenSnek/OpenSnek.xcodeproj` is not committed:
 
 ```bash
-./OpenSnek/scripts/check_xcodeproj_sync.sh
+./OpenSnek/scripts/generate_xcodeproj.sh
 ```
 
 ## Validation

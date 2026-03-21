@@ -238,6 +238,7 @@ cleanup() {
 trap cleanup EXIT
 
 require_cmd xcodebuild
+require_cmd xcodegen
 require_cmd ditto
 
 if [[ -z "$VERSION" ]]; then
@@ -277,14 +278,9 @@ fi
 
 XCODE_CONFIGURATION="$(tr '[:lower:]' '[:upper:]' <<< "${CONFIGURATION:0:1}")${CONFIGURATION:1}"
 ACTIVE_PROJECT_FILE="$PROJECT_FILE"
-
-if command -v xcodegen >/dev/null 2>&1; then
-  EPHEMERAL_PROJECT_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/open_snek_xcodeproj.XXXXXX")"
-  ACTIVE_PROJECT_FILE="$(generate_ephemeral_project "$EPHEMERAL_PROJECT_PARENT")"
-  echo "[open-snek] Generated temporary Xcode project from project.yml"
-else
-  echo "[open-snek] xcodegen not found; using checked-in Xcode project"
-fi
+EPHEMERAL_PROJECT_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/open_snek_xcodeproj.XXXXXX")"
+ACTIVE_PROJECT_FILE="$(generate_ephemeral_project "$EPHEMERAL_PROJECT_PARENT")"
+echo "[open-snek] Generated temporary Xcode project from project.yml"
 
 echo "[open-snek] Building $PRODUCT_NAME ($CONFIGURATION) via Xcode target..."
 rm -rf "$DERIVED_DATA_PATH"

@@ -34,8 +34,9 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 1
 fi
 
+rm -rf "$PROJECT_FILE"
 xcodegen generate --spec "$SPEC_FILE" --project "$PROJECT_DIR"
-echo "Generated: $PROJECT_FILE"
+echo "Generated (gitignored): $PROJECT_FILE"
 
 if $OPEN_AFTER; then
   open "$PROJECT_FILE"

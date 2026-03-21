@@ -92,12 +92,12 @@ Use these only when the task needs them:
 swift run --package-path OpenSnek OpenSnek
 ./OpenSnek/scripts/run_macos_app.sh
 ./OpenSnek/scripts/generate_xcodeproj.sh
-xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' build
-xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnek -destination 'platform=macOS' test
-xcodebuild -project OpenSnek/OpenSnek.xcodeproj -scheme OpenSnekProbe -destination 'platform=macOS' build
+./OpenSnek/scripts/xcodebuild_generated.sh -scheme OpenSnek -destination 'platform=macOS' build
+./OpenSnek/scripts/xcodebuild_generated.sh -scheme OpenSnek -destination 'platform=macOS' test
+./OpenSnek/scripts/xcodebuild_generated.sh -scheme OpenSnekProbe -destination 'platform=macOS' build
 ```
 
-Do not regenerate `OpenSnek/OpenSnek.xcodeproj` unless `OpenSnek/project.yml` changed.
+`OpenSnek/OpenSnek.xcodeproj` is generated from `OpenSnek/project.yml` on demand and is not committed.
 
 ## Permissions / TCC
 
