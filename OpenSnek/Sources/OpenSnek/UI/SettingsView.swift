@@ -29,45 +29,33 @@ struct SettingsView: View {
                         .foregroundStyle(permissionStatusColor)
                 }
 
-                Text(permissionSummary)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(runtimeStore.hidAccessStatus.isDenied ? .red : .secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Button("Open Settings") {
+                            PermissionSupport.openInputMonitoringSettings()
+                        }
 
-                Text("Current host: \(runtimeStore.hidAccessStatus.hostLabel)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .textSelection(.enabled)
+                        Button("Reset Permissions") {
+                            Task { await runtimeStore.resetAllPermissions() }
+                        }
+                        .disabled(runtimeStore.isResettingPermissions)
 
-                if let detail = runtimeStore.hidAccessStatus.detail {
-                    Text(detail)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 10) {
-                    Button("Open Input Monitoring Settings") {
-                        PermissionSupport.openInputMonitoringSettings()
+                        if runtimeStore.isResettingPermissions {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
                     }
 
-                    Button("Reset All Permissions") {
-                        Task { await runtimeStore.resetAllPermissions() }
+                    if let message = runtimeStore.permissionStatusMessage {
+                        Text(message)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(runtimeStore.isResettingPermissions)
-
-                    if runtimeStore.isResettingPermissions {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
-
-                if let message = runtimeStore.permissionStatusMessage {
-                    Text(message)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
                 }
             }
 
             Section("General") {
-                Toggle("Menu bar icon", isOn: Binding(
+                Toggle("Show menu bar icon", isOn: Binding(
                     get: { runtimeStore.backgroundServiceEnabled },
                     set: { newValue in
                         Task { await runtimeStore.setBackgroundServiceEnabled(newValue) }
@@ -79,10 +67,6 @@ struct SettingsView: View {
                     set: { runtimeStore.setLaunchAtStartupEnabled($0) }
                 ))
                 .disabled(!runtimeStore.backgroundServiceEnabled)
-
-                Text("When enabled, OpenSnek keeps a compact menu bar icon running as a separate background instance. The full app can still be launched at any time.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
 
                 if let message = runtimeStore.compactStatusMessage ?? runtimeStore.serviceStatusMessage {
                     Text(message)
@@ -99,17 +83,15 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Text("Default is Warning. Raise this to Info or Debug before reproducing a bug if you need a more detailed log.")
+                Text("Use Info or Debug before reproducing a bug. Changing the level starts a fresh log file.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
 
-                Text("Changing the level starts a fresh log file so the captured output matches the selected threshold.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-
-                Text(AppLog.path)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .textSelection(.enabled)
+                LabeledContent("Log file") {
+                    Text(AppLog.path)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .textSelection(.enabled)
+                }
 
                 HStack(spacing: 10) {
                     Button("Open Log File") {
@@ -144,27 +126,23 @@ struct SettingsView: View {
                         }
                     ))
 
-                    Text("These developer-only switches let you isolate the periodic polling path from passive HID DPI callbacks. Both values are stored in UserDefaults and survive restarts.")
+                    Text("Use these switches to isolate polling from passive HID DPI callbacks during debugging.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
 
             Section("Bug Reports") {
-                Text("Useful reports include the active protocol, the exact action that failed, whether it reproduced after reconnect, and a log captured at Info or Debug level.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-
-                Text("Use the diagnostics payload below for GitHub issues. It includes app info, connected devices, support profile details, and live device state.")
+                Text("Include the failing action, whether reconnecting changed it, and a log captured at Info or Debug.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 10) {
-                    Button("Preview Diagnostics Payload") {
+                    Button("Preview Payload") {
                         showsDiagnosticsSheet = true
                     }
 
-                    Button("Copy GitHub Issue Payload") {
+                    Button("Copy Payload") {
                         copyDiagnosticsPayload()
                     }
 
@@ -196,19 +174,6 @@ struct SettingsView: View {
             return Color(hex: 0xD59A2B)
         case .unknown, .unavailable:
             return Color.secondary
-        }
-    }
-
-    private var permissionSummary: String {
-        switch runtimeStore.hidAccessStatus.authorization {
-        case .granted:
-            return "Input Monitoring is enabled, so OpenSnek can attach real-time HID listeners for supported USB and Bluetooth devices."
-        case .denied:
-            return "macOS still needs you to allow Input Monitoring for this OpenSnek host before instant DPI updates and some USB reads can work normally."
-        case .unknown:
-            return "OpenSnek is still checking macOS HID permission state."
-        case .unavailable:
-            return "OpenSnek could not confirm the current HID permission state. Use the controls below to reopen the settings pane or reset the app's TCC grants."
         }
     }
 
