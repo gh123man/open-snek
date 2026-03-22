@@ -112,6 +112,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         }
         guard let data = try? JSONEncoder().encode(encoded) else { return }
         defaults.set(data, forKey: key)
+        defaults.synchronize()
     }
 
     public func loadPersistedButtonBindings(device: MouseDevice, profile: Int? = nil) -> [Int: ButtonBindingDraft] {

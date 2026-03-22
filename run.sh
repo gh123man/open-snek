@@ -21,6 +21,16 @@ terminate_existing_opensnek() {
     return
   fi
 
+  echo "[open-snek] Requesting OpenSnek quit"
+  osascript -e 'tell application id "io.opensnek.OpenSnek" to quit' >/dev/null 2>&1 || true
+
+  for _ in {1..20}; do
+    if ! pgrep -x OpenSnek >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.1
+  done
+
   echo "[open-snek] Stopping existing OpenSnek processes"
   pkill -x OpenSnek >/dev/null 2>&1 || true
 
