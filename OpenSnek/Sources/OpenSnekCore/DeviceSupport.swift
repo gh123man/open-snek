@@ -270,6 +270,7 @@ public struct DeviceProfile: Hashable, Sendable {
 public enum DeviceProfiles {
     public static let minimumDPI = 100
     public static let defaultMaximumDPI = 30_000
+    public static let preferredSliderMaximumDPI = 6_000
 
     public static let basiliskV3XUSBLightingEffects: [LightingEffectKind] = [
         .off, .staticColor, .spectrum, .wave, .reactive, .pulseRandom, .pulseSingle, .pulseDual,
@@ -566,6 +567,14 @@ public enum DeviceProfiles {
             transport: device.transport
         )?.id ?? device.profile_id
         return dpiRange(for: resolvedProfileID)
+    }
+
+    public static func sliderMaximumDPI(for profileID: DeviceProfileID?) -> Int {
+        min(maximumDPI(for: profileID), preferredSliderMaximumDPI)
+    }
+
+    public static func sliderDpiRange(for profileID: DeviceProfileID?) -> ClosedRange<Int> {
+        minimumDPI...sliderMaximumDPI(for: profileID)
     }
 
     public static func clampDPI(_ value: Int, profileID: DeviceProfileID?) -> Int {

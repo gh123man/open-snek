@@ -121,6 +121,9 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3XHyperspeed), 100...18_000)
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3Pro), 100...30_000)
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV335K), 100...35_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3XHyperspeed), 100...6_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3Pro), 100...6_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV335K), 100...6_000)
         XCTAssertEqual(DeviceProfiles.clampDPI(40_000, profileID: .basiliskV335K), 35_000)
         XCTAssertEqual(DeviceProfiles.clampDPI(24_000, profileID: .basiliskV3XHyperspeed), 18_000)
     }
