@@ -228,6 +228,44 @@ final class ServiceModeTests: XCTestCase {
     }
 
     @MainActor
+    func testServiceIdleSkipsRealtimeWatchdogWhileBluetoothPassiveHeartbeatIsFresh() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .realTimeHID)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let device = backend.device
+        let now = Date(timeIntervalSince1970: 1_773_400_240)
+
+        _ = appState.deviceController.applyDeviceList([device], source: "test")
+        await appState.deviceController.refreshConnectionDiagnostics(for: device)
+        appState.deviceController.applyBackendDpiTransportStatusUpdate(
+            deviceID: device.id,
+            status: .streamActive,
+            updatedAt: now
+        )
+
+        XCTAssertEqual(appState.runtimeStore.activeFastPollingDeviceIDs(at: now), [])
+        XCTAssertNil(appState.runtimeController.effectiveFastDpiInterval(at: now))
+    }
+
+    @MainActor
+    func testServiceIdleRestoresRealtimeWatchdogAfterBluetoothPassiveHeartbeatGoesStale() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .realTimeHID)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let device = backend.device
+        let now = Date(timeIntervalSince1970: 1_773_400_245)
+
+        _ = appState.deviceController.applyDeviceList([device], source: "test")
+        await appState.deviceController.refreshConnectionDiagnostics(for: device)
+        appState.deviceController.applyBackendDpiTransportStatusUpdate(
+            deviceID: device.id,
+            status: .streamActive,
+            updatedAt: now.addingTimeInterval(-2.0)
+        )
+
+        XCTAssertEqual(appState.runtimeStore.activeFastPollingDeviceIDs(at: now), [device.id])
+        XCTAssertEqual(appState.runtimeController.effectiveFastDpiInterval(at: now), 1.0)
+    }
+
+    @MainActor
     func testServiceInteractiveDoesNotScheduleFastPollingWithoutFallbackCandidates() async {
         let backend = ServiceModeTransportBackend(transportStatus: .streamActive)
         let appState = AppState(launchRole: .service, backend: backend, autoStart: false)

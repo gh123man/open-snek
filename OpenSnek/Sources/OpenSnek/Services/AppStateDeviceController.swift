@@ -542,6 +542,12 @@ final class AppStateDeviceController {
         return dpiUpdateTransportStatusByDeviceID[device.id] ?? .unknown
     }
 
+    func isPassiveBluetoothHeartbeatFresh(for device: MouseDevice, now: Date) -> Bool {
+        guard device.transport == .bluetooth else { return false }
+        guard let lastHeartbeatAt = lastPassiveHeartbeatAtByDeviceID[device.id] else { return false }
+        return now.timeIntervalSince(lastHeartbeatAt) <= Self.bluetoothPassiveHeartbeatConnectedInterval
+    }
+
     func refreshDpiUpdateTransportStatuses(for devices: [MouseDevice]) async {
         for device in devices {
             await refreshConnectionDiagnostics(for: device)
@@ -1089,8 +1095,7 @@ final class AppStateDeviceController {
         let transportStatus = dpiUpdateTransportStatusByDeviceID[device.id]
         guard transportStatus == .streamActive || transportStatus == .realTimeHID else { return false }
 
-        guard let lastHeartbeatAt = lastPassiveHeartbeatAtByDeviceID[device.id] else { return false }
-        return now.timeIntervalSince(lastHeartbeatAt) <= Self.bluetoothPassiveHeartbeatConnectedInterval
+        return isPassiveBluetoothHeartbeatFresh(for: device, now: now)
     }
 
     private static func shouldApplyBackendDpiTransportStatusUpdate(

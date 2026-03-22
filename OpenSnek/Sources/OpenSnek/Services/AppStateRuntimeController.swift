@@ -723,7 +723,7 @@ final class AppStateRuntimeController {
             case .pollingFallback:
                 return [selectedDeviceID]
             case .realTimeHID:
-                return [selectedDeviceID]
+                return shouldMaintainIdleRealtimeWatchdog(for: selectedDevice, now: now) ? [selectedDeviceID] : []
             case .unknown, .listening, .streamActive, .unsupported:
                 return []
             }
@@ -742,6 +742,14 @@ final class AppStateRuntimeController {
         case .listening, .streamActive, .unsupported:
             return false
         }
+    }
+
+    private func shouldMaintainIdleRealtimeWatchdog(for device: MouseDevice, now: Date) -> Bool {
+        if device.transport == .bluetooth,
+           deviceController.isPassiveBluetoothHeartbeatFresh(for: device, now: now) {
+            return false
+        }
+        return true
     }
 
     private func isLocallyInteractive(at now: Date) -> Bool {
