@@ -318,6 +318,11 @@ final class AppStateDeviceController {
 
     @discardableResult
     func applyDeviceList(_ listed: [MouseDevice], source: String) -> Bool {
+        guard !isTearingDown else { return false }
+        guard let editorController = editorControllerStorage,
+              let runtimeController = runtimeControllerStorage else {
+            return false
+        }
         let sorted = listed.sorted { $0.product_name < $1.product_name }
         let previousDevices = deviceStore.devices
         let previousIDs = Set(previousDevices.map(\.id))
@@ -435,6 +440,8 @@ final class AppStateDeviceController {
     }
 
     func selectDevice(_ deviceID: String) {
+        guard !isTearingDown else { return }
+        guard let runtimeController = runtimeControllerStorage else { return }
         guard deviceStore.selectedDeviceID != deviceID else { return }
         runtimeController.clearStatusItemTransientDpi()
         deviceStore.selectedDeviceID = deviceID
@@ -450,6 +457,11 @@ final class AppStateDeviceController {
     }
 
     func syncSelectedDevicePresentation(deviceID: String) {
+        guard !isTearingDown else { return }
+        guard let applyController = applyControllerStorage,
+              let editorController = editorControllerStorage else {
+            return
+        }
         guard let device = deviceStore.devices.first(where: { $0.id == deviceID }) else {
             deviceStore.state = nil
             deviceStore.errorMessage = nil
@@ -496,7 +508,11 @@ final class AppStateDeviceController {
 
     private func scheduleSelectedDeviceButtonBindingHydration(device: MouseDevice) {
         Task { [weak self] in
-            await self?.editorController.hydrateButtonBindingsIfNeeded(device: device)
+            guard let self, !self.isTearingDown,
+                  let editorController = self.editorControllerStorage else {
+                return
+            }
+            await editorController.hydrateButtonBindingsIfNeeded(device: device)
         }
     }
 
@@ -508,6 +524,7 @@ final class AppStateDeviceController {
     }
 
     func connectionState(for device: MouseDevice) -> DeviceConnectionState {
+        guard !isTearingDown else { return .disconnected }
         if isStrictlyUnsupported(device) {
             return .unsupported
         }
@@ -536,7 +553,8 @@ final class AppStateDeviceController {
         }
 
         let age = now.timeIntervalSince(updatedAt)
-        if age > max(4.5, runtimeController.currentPollingProfile.refreshStateInterval * 1.7) {
+        let refreshInterval = runtimeControllerStorage?.currentPollingProfile.refreshStateInterval ?? 2.5
+        if age > max(4.5, refreshInterval * 1.7) {
             if shouldTreatActivePassiveHIDAsConnected(device: device, now: now) {
                 return .connected
             }
@@ -568,12 +586,14 @@ final class AppStateDeviceController {
     }
 
     func refreshDpiUpdateTransportStatuses(for devices: [MouseDevice]) async {
+        guard !isTearingDown else { return }
         for device in devices {
             await refreshConnectionDiagnostics(for: device)
         }
     }
 
     func focusServiceSelectionOnActivity(deviceID: String) {
+        guard !isTearingDown else { return }
         guard environment.launchRole.isService else { return }
         guard deviceStore.selectedDeviceID != deviceID else { return }
         guard deviceStore.devices.contains(where: { $0.id == deviceID }) else { return }
@@ -1181,6 +1201,11 @@ final class AppStateDeviceController {
     }
 
     private func restorePersistedLightingIfNeeded(for device: MouseDevice) async {
+        guard !isTearingDown else { return }
+        guard let applyController = applyControllerStorage,
+              let editorController = editorControllerStorage else {
+            return
+        }
         guard pendingLightingRestoreDeviceIDs.contains(device.id) else { return }
         guard !restoringLightingDeviceIDs.contains(device.id) else { return }
         guard !(deviceStore.selectedDeviceID == device.id && !applyController.shouldHydrateEditable) else { return }
