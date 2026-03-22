@@ -497,16 +497,6 @@ final class AppStateRuntimeController {
         NSApp.terminate(nil)
     }
 
-    func refreshNow() async {
-        if environment.usesRemoteServiceTransport {
-            await bootstrapRemoteStateIfNeeded(force: true)
-            sendRemoteClientPresence()
-        } else {
-            await deviceController.refreshDevices()
-        }
-        compactInteractionUntil = Date().addingTimeInterval(3.0)
-    }
-
     func sendRemoteClientPresence() {
         guard environment.usesRemoteServiceTransport else { return }
         lastRemoteClientPresencePingAt = Date()

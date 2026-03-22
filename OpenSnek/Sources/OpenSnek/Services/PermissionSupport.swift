@@ -3,8 +3,6 @@ import Foundation
 
 struct PermissionResetResult: Equatable, Sendable {
     let bundleIdentifier: String
-    let hostLabel: String
-    let command: String
 }
 
 enum PermissionSupportError: LocalizedError {
@@ -60,9 +58,7 @@ enum PermissionSupport {
         }
 
         return PermissionResetResult(
-            bundleIdentifier: resolvedBundleIdentifier,
-            hostLabel: currentHostLabel(bundleIdentifier: resolvedBundleIdentifier),
-            command: permissionResetCommand(bundleIdentifier: resolvedBundleIdentifier)
+            bundleIdentifier: resolvedBundleIdentifier
         )
     }
 

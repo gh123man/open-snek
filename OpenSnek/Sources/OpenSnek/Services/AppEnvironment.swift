@@ -1,6 +1,3 @@
-import OpenSnekAppSupport
-import OpenSnekCore
-
 @MainActor
 final class AppEnvironment {
     let launchRole: OpenSnekProcessRole

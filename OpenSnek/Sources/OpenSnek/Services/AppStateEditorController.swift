@@ -184,10 +184,6 @@ final class AppStateEditorController {
         return true
     }
 
-    func markLightingHydrated(deviceID: String) {
-        hydratedLightingStateByDeviceID.insert(deviceID)
-    }
-
     func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
         preferenceStore.persistLightingColor(color, device: device, zoneID: zoneID)
     }

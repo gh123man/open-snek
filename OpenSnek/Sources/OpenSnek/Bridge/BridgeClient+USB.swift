@@ -6,7 +6,7 @@ import OpenSnekProtocols
 
 extension BridgeClient {
     func resolvedUSBStateCapabilities(
-        device: MouseDevice,
+        device _: MouseDevice,
         profile: DeviceProfile?,
         stages: (Int, [Int])?,
         poll: Int?,

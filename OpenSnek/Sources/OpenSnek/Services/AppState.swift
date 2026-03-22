@@ -1,5 +1,4 @@
 import Foundation
-import OpenSnekAppSupport
 import OpenSnekCore
 
 @MainActor
@@ -8,7 +7,6 @@ final class AppState {
     let deviceStore: DeviceStore
     let editorStore: EditorStore
     let runtimeStore: RuntimeStore
-    let buttonSlots: [ButtonSlotDescriptor]
     let deviceController: AppStateDeviceController
     let editorController: AppStateEditorController
     let applyController: AppStateApplyController
@@ -41,7 +39,6 @@ final class AppState {
             launchAtStartupEnabled: serviceCoordinator.launchAtStartupEnabled,
             statusItemDpiDisplayDuration: statusItemDpiDisplayDuration
         )
-        self.buttonSlots = buttonSlots
         self.deviceController = AppStateDeviceController(
             environment: environment,
             deviceStore: deviceStore

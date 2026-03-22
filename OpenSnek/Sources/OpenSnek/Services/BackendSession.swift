@@ -970,18 +970,6 @@ private actor BackgroundServiceRequestHandler {
         self.backend = backend
     }
 
-    func handle(_ requestData: Data) async -> Data {
-        let response: BackgroundServiceResponseEnvelope
-        do {
-            let request = try BackendCodec.decode(BackgroundServiceRequestEnvelope.self, from: requestData)
-            response = try await makeResponse(for: request)
-        } catch {
-            response = BackgroundServiceResponseEnvelope(payload: nil, error: error.localizedDescription)
-        }
-
-        return (try? BackendCodec.encode(response)) ?? Data()
-    }
-
     func handle(_ request: BackgroundServiceRequestEnvelope) async -> BackgroundServiceResponseEnvelope {
         do {
             return try await makeResponse(for: request)

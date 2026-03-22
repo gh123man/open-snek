@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import OpenSnekAppSupport
 
 @MainActor
 @Observable
@@ -47,10 +46,6 @@ final class RuntimeStore {
 
     var compactStatusMessage: String? {
         runtimeController.compactStatusMessage
-    }
-
-    var currentPollingProfile: PollingProfile {
-        runtimeController.currentPollingProfile
     }
 
     func start() async {

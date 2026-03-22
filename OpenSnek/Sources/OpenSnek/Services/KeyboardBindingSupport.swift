@@ -177,10 +177,6 @@ enum AppStateKeyboardSupport {
         optionsByHidKey[hidKey]?.label ?? String(format: "HID 0x%02X", hidKey)
     }
 
-    static func keyboardOption(forHidKey hidKey: Int) -> KeyboardBindingOption? {
-        optionsByHidKey[hidKey]
-    }
-
     private static func option(_ hidKey: Int, _ label: String, aliases: [String], group: KeyboardBindingGroup) -> KeyboardBindingOption {
         KeyboardBindingOption(hidKey: hidKey, label: label, aliases: aliases, group: group)
     }

@@ -16,7 +16,6 @@ final class AppStateApplyController {
     private var dpiApplyTask: Task<Void, Never>?
     private var pollApplyTask: Task<Void, Never>?
     private var powerApplyTask: Task<Void, Never>?
-    private var deviceModeApplyTask: Task<Void, Never>?
     private var lowBatteryApplyTask: Task<Void, Never>?
     private var scrollModeApplyTask: Task<Void, Never>?
     private var scrollAccelerationApplyTask: Task<Void, Never>?
@@ -47,7 +46,6 @@ final class AppStateApplyController {
         dpiApplyTask?.cancel()
         pollApplyTask?.cancel()
         powerApplyTask?.cancel()
-        deviceModeApplyTask?.cancel()
         lowBatteryApplyTask?.cancel()
         scrollModeApplyTask?.cancel()
         scrollAccelerationApplyTask?.cancel()
@@ -99,16 +97,6 @@ final class AppStateApplyController {
         guard !deviceStore.isApplying, !editorStore.isEditingDpiControl, !hasPendingLocalEdits else { return false }
         guard let lastLocalEditAt else { return true }
         return Date().timeIntervalSince(lastLocalEditAt) > 0.8
-    }
-
-    func updateStage(_ index: Int, value: Int) {
-        guard index >= 0 && index < editorStore.editableStageValues.count else { return }
-        editorStore.editableStageValues[index] = DeviceProfiles.clampDPI(value, profileID: deviceStore.selectedDevice?.profile_id)
-    }
-
-    func stageValue(_ index: Int) -> Int {
-        guard index >= 0 && index < editorStore.editableStageValues.count else { return 800 }
-        return editorStore.editableStageValues[index]
     }
 
     func applyDpiStages() async {
@@ -192,26 +180,6 @@ final class AppStateApplyController {
             }
             guard !Task.isCancelled else { return }
             await self?.applySleepTimeout()
-        }
-    }
-
-    func applyDeviceMode() async {
-        let mode = editorStore.editableDeviceMode == 0x03 ? 0x03 : 0x00
-        enqueueApply(DevicePatch(deviceMode: DeviceMode(mode: mode, param: 0x00)))
-    }
-
-    func scheduleAutoApplyDeviceMode() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        deviceModeApplyTask?.cancel()
-        deviceModeApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 200_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyDeviceMode()
         }
     }
 

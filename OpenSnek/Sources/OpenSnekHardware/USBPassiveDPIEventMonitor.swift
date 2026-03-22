@@ -153,11 +153,18 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
     private struct RegistrationKey: Hashable {
         let deviceID: String
         let targetID: String
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.deviceID == rhs.deviceID && lhs.targetID == rhs.targetID
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(deviceID)
+            hasher.combine(targetID)
+        }
     }
 
     private struct Registration {
-        let deviceID: String
-        let targetID: String
         let device: IOHIDDevice
         let deviceIdentityToken: String
         let descriptor: PassiveDPIInputDescriptor
@@ -324,8 +331,6 @@ public final class PassiveDPIEventMonitor: @unchecked Sendable {
         )
 
         registrationsByKey[key] = Registration(
-            deviceID: target.deviceID,
-            targetID: target.targetID,
             device: registrationDevice,
             deviceIdentityToken: target.deviceIdentityToken,
             descriptor: target.descriptor,

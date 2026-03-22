@@ -87,10 +87,6 @@ struct DeviceDetailView: View {
         return sections
     }
 
-    private func twoColumnActivationWidth() -> CGFloat {
-        (detailTwoColumnMinWidth * 2) + cardSpacing + twoColumnBreakpointPadding
-    }
-
     @ViewBuilder
     private func detailCard(for section: DetailSection) -> some View {
         switch section {

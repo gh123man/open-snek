@@ -183,10 +183,6 @@ public final class BLEVendorTransportClient: NSObject, @unchecked Sendable {
         return BluetoothNameMatcher.looselyMatches(peripheral.name, preferredPeripheralName)
     }
 
-    private func normalizedName(_ value: String?) -> String? {
-        BluetoothNameMatcher.normalized(value)
-    }
-
     private func finish(_ output: Result<[Data], Error>) {
         guard let completion else { return }
         self.completion = nil

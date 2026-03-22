@@ -27,19 +27,19 @@ final class ServiceModeTests: XCTestCase {
             AppState(launchRole: .service, serviceCoordinator: coordinator, autoStart: false)
         }
 
-        let initial = await MainActor.run { appState.runtimeStore.currentPollingProfile }
+        let initial = await MainActor.run { appState.runtimeStore.pollingProfile(at: Date()) }
         XCTAssertEqual(initial, .serviceIdle)
 
         await MainActor.run {
             appState.runtimeStore.setCompactMenuPresented(true)
         }
-        let interactive = await MainActor.run { appState.runtimeStore.currentPollingProfile }
+        let interactive = await MainActor.run { appState.runtimeStore.pollingProfile(at: Date()) }
         XCTAssertEqual(interactive, .serviceInteractive)
 
         await MainActor.run {
             appState.runtimeStore.setCompactMenuPresented(false)
         }
-        let afterClose = await MainActor.run { appState.runtimeStore.currentPollingProfile }
+        let afterClose = await MainActor.run { appState.runtimeStore.pollingProfile(at: Date()) }
         XCTAssertEqual(afterClose, .serviceInteractive)
     }
 
@@ -52,7 +52,7 @@ final class ServiceModeTests: XCTestCase {
             AppState(launchRole: .app, serviceCoordinator: coordinator, autoStart: false)
         }
 
-        let profile = await MainActor.run { appState.runtimeStore.currentPollingProfile }
+        let profile = await MainActor.run { appState.runtimeStore.pollingProfile(at: Date()) }
         XCTAssertEqual(profile, .foreground)
     }
 
@@ -276,7 +276,7 @@ final class ServiceModeTests: XCTestCase {
         await appState.deviceController.refreshConnectionDiagnostics(for: device)
         appState.runtimeController.setCompactMenuPresented(true)
 
-        XCTAssertEqual(appState.runtimeStore.currentPollingProfile, .serviceInteractive)
+        XCTAssertEqual(appState.runtimeStore.pollingProfile(at: Date()), .serviceInteractive)
         XCTAssertEqual(appState.runtimeStore.activeFastPollingDeviceIDs(at: now), [])
         XCTAssertNil(appState.runtimeController.effectiveFastDpiInterval(at: now))
         XCTAssertEqual(
