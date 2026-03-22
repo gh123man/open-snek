@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import OpenSnekAppSupport
 import OpenSnekCore
 @testable import OpenSnek
 
@@ -96,6 +97,65 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(selectedDpi, 2400)
         XCTAssertEqual(activeStage, 2)
         XCTAssertEqual(pollRate, 1000)
+    }
+
+    func testApplyRemoteServiceSnapshotHydratesPersistedButtonBindingsForSelectedDevice() async throws {
+        let device = makeSnapshotDevice(
+            id: "snapshot-button-device",
+            productName: "Snapshot Button Mouse",
+            transport: .bluetooth,
+            serial: "SNAPSHOT-BTN-\(UUID().uuidString)",
+            locationID: 4,
+            profile: .basiliskV3XHyperspeed
+        )
+        DevicePreferenceStore().savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                5: ButtonBindingDraft(
+                    kind: .keyboardSimple,
+                    hidKey: 80,
+                    turboEnabled: false,
+                    turboRate: 0x8E,
+                    clutchDPI: nil
+                )
+            ],
+            profile: 1
+        )
+        defer { clearSnapshotPreferences(for: device) }
+
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
+        }
+
+        let state = makeSnapshotState(
+            device: device,
+            connection: "bluetooth",
+            batteryPercent: 79,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let snapshot = SharedServiceSnapshot(
+            devices: [device],
+            stateByDeviceID: [device.id: state],
+            lastUpdatedByDeviceID: [device.id: Date(timeIntervalSince1970: 1_773_320_100)]
+        )
+
+        await MainActor.run {
+            appState.deviceStore.applyRemoteServiceSnapshot(snapshot)
+        }
+
+        try await waitUntil {
+            await MainActor.run {
+                appState.editorStore.buttonBindingKind(for: 5) == .keyboardSimple &&
+                    appState.editorStore.buttonBindingHidKey(for: 5) == 80
+            }
+        }
+
+        let bindingKind = await MainActor.run { appState.editorStore.buttonBindingKind(for: 5) }
+        let hidKey = await MainActor.run { appState.editorStore.buttonBindingHidKey(for: 5) }
+        XCTAssertEqual(bindingKind, .keyboardSimple)
+        XCTAssertEqual(hidKey, 80)
     }
 
     func testApplyingLaterSnapshotKeepsExistingLocalSelection() async {
@@ -409,6 +469,31 @@ final class RemoteServiceSnapshotTests: XCTestCase {
             try await Task.sleep(nanoseconds: pollInterval)
         }
         XCTFail("Timed out waiting for condition")
+    }
+}
+
+private func clearSnapshotPreferences(for device: MouseDevice) {
+    let defaults = UserDefaults.standard
+    let key = DevicePersistenceKeys.key(for: device)
+    let legacyKey = DevicePersistenceKeys.legacyKey(for: device)
+    let prefixes = [
+        "lightingColor.\(key)",
+        "lightingColor.\(legacyKey)",
+        "lightingZone.\(key)",
+        "lightingZone.\(legacyKey)",
+        "lightingEffect.\(key)",
+        "lightingEffect.\(legacyKey)",
+        "buttonBindings.\(key)",
+        "buttonBindings.\(legacyKey)",
+        "buttonBindings.\(key).profile1",
+        "buttonBindings.\(key).profile2",
+        "buttonBindings.\(legacyKey).profile1",
+        "buttonBindings.\(legacyKey).profile2",
+    ]
+    for storedKey in defaults.dictionaryRepresentation().keys {
+        if prefixes.contains(where: { storedKey.hasPrefix($0) }) {
+            defaults.removeObject(forKey: storedKey)
+        }
     }
 }
 

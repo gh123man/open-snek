@@ -163,6 +163,7 @@ final class AppStateDeviceController {
             deviceStore.lastUpdated = lastUpdatedByDeviceID[selectedDeviceID]
             if applyController.shouldHydrateEditable {
                 editorController.hydrateEditable(from: selectedState)
+                scheduleSelectedDeviceButtonBindingHydration(device: selectedDevice)
             }
             deviceStore.errorMessage = nil
             setTelemetryWarning(editorController.telemetryWarning(for: selectedState, device: selectedDevice), device: selectedDevice)
@@ -222,6 +223,7 @@ final class AppStateDeviceController {
             }
             if applyController.shouldHydrateEditable {
                 editorController.hydrateEditable(from: merged)
+                scheduleSelectedDeviceButtonBindingHydration(device: presentationDevice)
             }
             deviceStore.errorMessage = nil
             setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
@@ -474,11 +476,13 @@ final class AppStateDeviceController {
             deviceStore.warningMessage = editorController.telemetryWarning(for: cached, device: device)
             if applyController.shouldHydrateEditable {
                 editorController.hydrateEditable(from: cached)
+                scheduleSelectedDeviceButtonBindingHydration(device: device)
             }
         } else if let state = deviceStore.state, stateSummaryMatchesDevice(state, device: device) {
             deviceStore.warningMessage = editorController.telemetryWarning(for: state, device: device)
             if applyController.shouldHydrateEditable {
                 editorController.hydrateEditable(from: state)
+                scheduleSelectedDeviceButtonBindingHydration(device: device)
             }
         } else {
             deviceStore.state = nil
@@ -487,6 +491,12 @@ final class AppStateDeviceController {
         }
         if !unavailableDeviceIDs.contains(deviceID) {
             deviceStore.errorMessage = nil
+        }
+    }
+
+    private func scheduleSelectedDeviceButtonBindingHydration(device: MouseDevice) {
+        Task { [weak self] in
+            await self?.editorController.hydrateButtonBindingsIfNeeded(device: device)
         }
     }
 
