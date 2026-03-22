@@ -16,6 +16,7 @@ final class AppStateEditorController {
     private var hydratedButtonBindingsKey: String?
     private var manualUSBButtonProfileSelectionByDeviceID: Set<String> = []
     private var keyboardDraftApplyTaskBySlot: [Int: Task<Void, Never>] = [:]
+    private var isTearingDown = false
 
     init(
         environment: AppEnvironment,
@@ -30,6 +31,7 @@ final class AppStateEditorController {
     }
 
     func tearDown() {
+        isTearingDown = true
         for task in keyboardDraftApplyTaskBySlot.values {
             task.cancel()
         }
@@ -77,6 +79,7 @@ final class AppStateEditorController {
     }
 
     func hydrateEditable(from state: MouseState) {
+        guard !isTearingDown else { return }
         isHydrating = true
         defer { isHydrating = false }
 
@@ -135,6 +138,7 @@ final class AppStateEditorController {
     }
 
     func hydrateLightingStateIfNeeded(device: MouseDevice) async {
+        guard !isTearingDown else { return }
         guard device.showsLightingControls else {
             editorStore.editableUSBLightingZoneID = "all"
             editorStore.editableLightingEffect = .staticColor
@@ -149,6 +153,7 @@ final class AppStateEditorController {
         guard !hydratedLightingStateByDeviceID.contains(device.id) else { return }
         if device.transport == .bluetooth,
                   let rgb = try? await environment.backend.readLightingColor(device: device) {
+            guard !isTearingDown else { return }
             editorStore.editableColor = RGBColor(r: rgb.r, g: rgb.g, b: rgb.b)
             persistLightingColor(editorStore.editableColor, device: device)
             editorStore.editableUSBLightingZoneID = "all"
@@ -169,6 +174,7 @@ final class AppStateEditorController {
 
     @discardableResult
     func hydratePersistedLightingStateIfNeeded(device: MouseDevice) -> Bool {
+        guard !isTearingDown else { return false }
         guard !hydratedLightingStateByDeviceID.contains(device.id) else { return false }
         guard let plan = persistedLightingRestorePlan(device: device) else { return false }
 
@@ -216,6 +222,7 @@ final class AppStateEditorController {
     }
 
     func hydrateButtonBindingsIfNeeded(device: MouseDevice) async {
+        guard !isTearingDown else { return }
         let hydrationKey = buttonBindingsHydrationKey(device: device)
         guard hydratedButtonBindingsKey != hydrationKey else { return }
 
@@ -248,6 +255,7 @@ final class AppStateEditorController {
     }
 
     func loadUSBButtonBindingsFromDevice(device: MouseDevice) async -> [Int: ButtonBindingDraft]? {
+        guard !isTearingDown else { return nil }
         let slots = (device.button_layout?.visibleSlots ?? buttonSlots)
             .map(\.slot)
             .filter { $0 != 6 }
@@ -263,9 +271,11 @@ final class AppStateEditorController {
                     slot: slot,
                     profile: persistentProfile
                 )
+                guard !isTearingDown else { return nil }
                 let directBlock = shouldReadDirect
                     ? try await environment.backend.debugUSBReadButtonBinding(device: device, slot: slot, profile: 0x00)
                     : nil
+                guard !isTearingDown else { return nil }
                 let block = directBlock ?? persistentBlock
                 if let block {
                     readAnyBlock = true

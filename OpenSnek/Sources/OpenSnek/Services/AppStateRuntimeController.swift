@@ -34,6 +34,7 @@ final class AppStateRuntimeController {
     private var powerState: PowerState = .active
     private var systemWillSleepObserver: NSObjectProtocol?
     private var systemDidWakeObserver: NSObjectProtocol?
+    private var isTearingDown = false
 
     init(environment: AppEnvironment, deviceStore: DeviceStore, runtimeStore: RuntimeStore) {
         self.environment = environment
@@ -42,6 +43,7 @@ final class AppStateRuntimeController {
     }
 
     func tearDown() {
+        isTearingDown = true
         runtimeTask?.cancel()
         backendStateUpdatesBootstrapTask?.cancel()
         backendStateUpdatesTask?.cancel()
@@ -125,6 +127,7 @@ final class AppStateRuntimeController {
     }
 
     func updateStatusItemTransientDpi(previous: MouseState?, next: MouseState, deviceID: String) {
+        guard !isTearingDown else { return }
         guard environment.launchRole.isService else { return }
         guard deviceStore.selectedDeviceID == deviceID else { return }
         guard let previousDpi = resolvedDpi(from: previous),
@@ -262,18 +265,20 @@ final class AppStateRuntimeController {
     }
 
     func restartBackendStateUpdates() async {
+        guard !isTearingDown else { return }
         backendStateUpdatesTask?.cancel()
         let stream = await environment.backend.stateUpdates()
         backendStateUpdatesTask = Task { [weak self] in
-            guard let self else { return }
             for await update in stream {
+                guard !Task.isCancelled else { break }
+                guard let self, !self.isTearingDown else { break }
                 await self.handleBackendStateUpdate(update)
             }
         }
     }
 
     func scheduleBackendStateUpdatesBootstrap() {
-        guard backendStateUpdatesBootstrapTask == nil else { return }
+        guard !isTearingDown, backendStateUpdatesBootstrapTask == nil else { return }
         backendStateUpdatesBootstrapTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { backendStateUpdatesBootstrapTask = nil }
@@ -288,7 +293,7 @@ final class AppStateRuntimeController {
     }
 
     private func handleBackendStateUpdate(_ update: BackendStateUpdate) async {
-        guard isBackendReady else { return }
+        guard !isTearingDown, isBackendReady else { return }
         switch update {
         case .deviceList(let devices, _):
             await deviceController.handleBackendDeviceListUpdate(devices)
@@ -619,6 +624,7 @@ final class AppStateRuntimeController {
     }
 
     private func pollRuntimeOnce() async {
+        guard !isTearingDown else { return }
         guard powerState == .active else { return }
         let now = Date()
         let profile = pollingProfile(at: now)

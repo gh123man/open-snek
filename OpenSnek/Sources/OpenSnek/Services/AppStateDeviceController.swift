@@ -27,6 +27,7 @@ final class AppStateDeviceController {
     private var dpiUpdateTransportStatusByDeviceID: [String: DpiUpdateTransportStatus] = [:]
     private var pendingLightingRestoreDeviceIDs: Set<String> = []
     private var restoringLightingDeviceIDs: Set<String> = []
+    private var isTearingDown = false
 
     init(environment: AppEnvironment, deviceStore: DeviceStore) {
         self.environment = environment
@@ -34,6 +35,7 @@ final class AppStateDeviceController {
     }
 
     func tearDown() {
+        isTearingDown = true
     }
 
     func bind(
@@ -94,6 +96,7 @@ final class AppStateDeviceController {
     }
 
     func refreshConnectionDiagnostics(for device: MouseDevice) async {
+        guard !isTearingDown else { return }
         guard !isStrictlyUnsupported(device) else {
             setDpiUpdateTransportStatus(.unsupported, for: device.id)
             return
@@ -114,6 +117,7 @@ final class AppStateDeviceController {
     }
 
     func handleBackendDeviceListUpdate(_ listed: [MouseDevice]) async {
+        guard !isTearingDown else { return }
         guard !environment.usesRemoteServiceTransport else { return }
         let previousIDs = Set(deviceStore.devices.map(\.id))
         _ = applyDeviceList(listed, source: "subscription")
@@ -126,6 +130,7 @@ final class AppStateDeviceController {
     }
 
     func applyRemoteServiceSnapshot(_ snapshot: SharedServiceSnapshot) {
+        guard !isTearingDown else { return }
         guard environment.usesRemoteServiceTransport else { return }
 
         let liveIDs = Set(snapshot.devices.map(\.id))
@@ -177,6 +182,7 @@ final class AppStateDeviceController {
     }
 
     func applyBackendDeviceStateUpdate(deviceID: String, state updatedState: MouseState, updatedAt: Date) {
+        guard !isTearingDown else { return }
         guard let sourceDevice = deviceStore.devices.first(where: { $0.id == deviceID }),
               let presentationDevice = presentationDevice(for: sourceDevice) else {
             return
@@ -223,6 +229,7 @@ final class AppStateDeviceController {
     }
 
     func applyBackendDpiTransportStatusUpdate(deviceID: String, status: DpiUpdateTransportStatus, updatedAt: Date) {
+        guard !isTearingDown else { return }
         if status == .streamActive {
             lastPassiveHeartbeatAtByDeviceID[deviceID] = updatedAt
         }
@@ -250,6 +257,7 @@ final class AppStateDeviceController {
     }
 
     func refreshDevices() async {
+        guard !isTearingDown else { return }
         guard runtimeController.isBackendReady else {
             AppLog.debug("AppState", "refreshDevices deferred until backend is ready")
             return
@@ -274,6 +282,7 @@ final class AppStateDeviceController {
     }
 
     func pollDevicePresence() async {
+        guard !isTearingDown else { return }
         guard !isPollingDevices, !deviceStore.isLoading else { return }
         isPollingDevices = true
         defer { isPollingDevices = false }
@@ -730,6 +739,7 @@ final class AppStateDeviceController {
     }
 
     func refreshState() async {
+        guard !isTearingDown else { return }
         guard let selectedDevice = deviceStore.selectedDevice else {
             deviceStore.state = nil
             deviceStore.errorMessage = nil
@@ -750,6 +760,7 @@ final class AppStateDeviceController {
     }
 
     func refreshAllDeviceStates(prioritizing prioritizedDeviceIDs: [String] = []) async {
+        guard !isTearingDown else { return }
         let devicesToRefresh = refreshableDevicesInPriorityOrder(prioritizing: prioritizedDeviceIDs)
         guard !devicesToRefresh.isEmpty else {
             if let selectedDevice = deviceStore.selectedDevice, isStrictlyUnsupported(selectedDevice) {
@@ -781,6 +792,7 @@ final class AppStateDeviceController {
 
     @discardableResult
     func refreshState(for device: MouseDevice) async -> Bool {
+        guard !isTearingDown else { return false }
         guard !isStrictlyUnsupported(device) else { return false }
         guard !refreshingStateDeviceIDs.contains(device.id) else { return false }
         guard !deviceStore.isApplying else {
@@ -825,6 +837,7 @@ final class AppStateDeviceController {
 
         do {
             let fetched = try await environment.backend.readState(device: device)
+            guard !isTearingDown else { return false }
             guard refreshRevision == applyController.stateRevision else {
                 AppLog.debug("AppState", "refreshState stale-drop rev=\(refreshRevision) current=\(applyController.stateRevision)")
                 return false
@@ -947,6 +960,7 @@ final class AppStateDeviceController {
     }
 
     func refreshDpiFast() async {
+        guard !isTearingDown else { return }
         guard !deviceStore.isApplying else { return }
 
         let now = Date()
@@ -957,12 +971,14 @@ final class AppStateDeviceController {
     }
 
     private func refreshDpiFast(for device: MouseDevice, now: Date) async {
+        guard !isTearingDown else { return }
         guard device.transport == .bluetooth || device.transport == .usb else { return }
         guard !isStrictlyUnsupported(device) else { return }
         guard !refreshingFastDpiDeviceIDs.contains(device.id) else { return }
         guard !refreshingStateDeviceIDs.contains(device.id) else { return }
         guard !applyController.hasPendingLocalEditsAffecting(device) else { return }
         let usesFastPolling = await environment.backend.shouldUseFastDPIPolling(device: device)
+        guard !isTearingDown else { return }
         let correctionOnly = !usesFastPolling
         if correctionOnly,
            device.transport == .bluetooth,
@@ -998,6 +1014,7 @@ final class AppStateDeviceController {
 
         do {
             guard let fast = try await environment.backend.readDpiStagesFast(device: device) else { return }
+            guard !isTearingDown else { return }
             guard let presentationDevice = presentationDevice(for: device) else { return }
             let readAt = Date()
             if device.transport == .usb {
