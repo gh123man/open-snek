@@ -154,3 +154,7 @@ if HAS_CB_VENDOR:
                     break
 
             return (self.error, self.notifs)
+else:
+    class _CBVendorTxn:
+        def __init__(self, service_uuid: str, write_uuid: str, notify_uuid: str, debug: bool = False):
+            raise RuntimeError("CoreBluetooth vendor transport is unavailable")
