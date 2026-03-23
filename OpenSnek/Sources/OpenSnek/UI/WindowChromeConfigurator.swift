@@ -2,12 +2,6 @@ import AppKit
 import SwiftUI
 
 struct WindowChromeConfigurator: NSViewRepresentable {
-    nonisolated static func shouldUseCompatibilityChrome(
-        osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
-    ) -> Bool {
-        osVersion.majorVersion == 15
-    }
-
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async { [weak view] in
@@ -28,14 +22,12 @@ struct WindowChromeConfigurator: NSViewRepresentable {
         window.title = ""
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-
-        if Self.shouldUseCompatibilityChrome() {
-            return
-        }
-
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        window.toolbarStyle = .unified
+        // Do not set toolbarStyle = .unified — this window has no toolbar,
+        // and the unified toolbar style causes AppKit to surface the app icon
+        // in the title-bar region on macOS 15 and some earlier versions,
+        // producing a spurious status-bar icon even when service mode is off.
         if #available(macOS 11.0, *) {
             window.titlebarSeparatorStyle = .none
         }

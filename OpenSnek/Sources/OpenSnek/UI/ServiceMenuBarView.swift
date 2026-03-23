@@ -365,6 +365,21 @@ struct ServiceMenuBarStatusItemLabel: View {
 
     var body: some View {
         Group {
+            if runtimeStore.isServiceProcess {
+                serviceLabel
+            } else {
+                // Workaround: MenuBarExtra(isInserted: .constant(false)) still
+                // creates a visible NSStatusItem on some macOS versions (see
+                // FB10185325, orchetect/MenuBarExtraAccess#1). Suppress it.
+                SpuriousStatusItemSuppressor()
+            }
+        }
+        .help(helpText)
+        .accessibilityLabel(helpText)
+    }
+
+    private var serviceLabel: some View {
+        Group {
             if let transientDpi = runtimeStore.statusItemTransientDpi {
                 ServiceMenuBarStatusDpiBadge(dpi: transientDpi)
                     .frame(width: OpenSnekBranding.menuBarIconSide, height: OpenSnekBranding.menuBarIconSide)
@@ -374,8 +389,6 @@ struct ServiceMenuBarStatusItemLabel: View {
                     .fixedSize()
             }
         }
-        .help(helpText)
-        .accessibilityLabel(helpText)
     }
 
     private var helpText: String {
@@ -396,6 +409,54 @@ private struct ServiceMenuBarStatusDpiBadge: View {
         Image(nsImage: OpenSnekBranding.menuBarDpiBadge(dpi: dpi))
             .interpolation(.high)
             .antialiased(true)
+    }
+}
+
+/// Hides the status-item window that SwiftUI's MenuBarExtra erroneously
+/// creates when `isInserted` is `.constant(false)` on some macOS versions.
+///
+/// This is a known class of SwiftUI MenuBarExtra bugs: the scene machinery
+/// eagerly instantiates the underlying NSStatusItem regardless of the
+/// `isInserted` binding value. Related reports include FB10185325 (MenuBarExtra
+/// needs a non-presenting style) and orchetect/MenuBarExtraAccess discussions
+/// #1 and #10 which document phantom status items and inverted state. No
+/// first-party fix exists as of macOS 15.
+///
+/// When the label view is rendered inside the spurious status item, this
+/// NSViewRepresentable walks up the view hierarchy to the containing
+/// NSStatusBarButton and hides its window, making the item invisible.
+/// If the status item is never created (bug doesn't manifest), this view
+/// is never rendered — so it's a no-op in that case.
+private struct SpuriousStatusItemSuppressor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        SuppressorView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class SuppressorView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            suppress()
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            super.viewWillMove(toWindow: newWindow)
+            guard newWindow != nil else { return }
+            suppress()
+        }
+
+        private func suppress() {
+            var current: NSView? = self
+            while let view = current {
+                if view is NSStatusBarButton {
+                    view.window?.orderOut(nil)
+                    view.isHidden = true
+                    return
+                }
+                current = view.superview
+            }
+        }
     }
 }
 
