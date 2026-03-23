@@ -199,239 +199,6 @@ func mergedStateFromPassiveDpiEvent(
     )
 }
 
-private struct ApplyRequest: Codable, Sendable {
-    let device: MouseDevice
-    let patch: DevicePatch
-}
-
-private struct ButtonBindingReadRequest: Codable, Sendable {
-    let device: MouseDevice
-    let slot: Int
-    let profile: Int
-}
-
-private struct StreamSubscriptionRequest: Codable, Sendable {
-    let sourceProcessID: Int32
-    let selectedDeviceID: String?
-}
-
-private enum BackgroundServiceStreamClientEvent: String, Codable, Sendable {
-    case clientPresence
-}
-
-private struct BackgroundServiceStreamClientEnvelope: Codable, Sendable {
-    let event: BackgroundServiceStreamClientEvent
-    let payload: Data?
-}
-
-private enum BackgroundServiceStreamServerEvent: String, Codable, Sendable {
-    case stateUpdate
-    case openSettingsRequested
-}
-
-private struct BackgroundServiceStreamServerEnvelope: Codable, Sendable {
-    let event: BackgroundServiceStreamServerEvent
-    let payload: Data?
-}
-
-private enum BackendCodec {
-    static let encoder = JSONEncoder()
-    static let decoder = JSONDecoder()
-
-    static func encode<T: Encodable>(_ value: T) throws -> Data {
-        try encoder.encode(value)
-    }
-
-    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        try decoder.decode(type, from: data)
-    }
-}
-
-private enum BackgroundServiceMethod: String, Codable, Sendable {
-    case ping
-    case listDevices
-    case readState
-    case readDpiStagesFast
-    case shouldUseFastDPIPolling
-    case dpiUpdateTransportStatus
-    case hidAccessStatus
-    case apply
-    case readLightingColor
-    case debugUSBReadButtonBinding
-    case subscribeStateUpdates
-}
-
-private struct BackgroundServiceRequestEnvelope: Codable, Sendable {
-    let method: BackgroundServiceMethod
-    let payload: Data?
-}
-
-private struct BackgroundServiceResponseEnvelope: Codable, Sendable {
-    let payload: Data?
-    let error: String?
-}
-
-private enum BackgroundServiceTransportError: LocalizedError {
-    case connectionClosed
-    case invalidLength
-    case missingPayload
-    case listenerUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .connectionClosed:
-            return "Background service connection closed unexpectedly"
-        case .invalidLength:
-            return "Background service returned an invalid message"
-        case .missingPayload:
-            return "Background service request was missing its payload"
-        case .listenerUnavailable:
-            return "Background service listener did not publish a port"
-        }
-    }
-}
-
-private final class BackgroundServiceResumeGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var hasResumed = false
-
-    func claim() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !hasResumed else { return false }
-        hasResumed = true
-        return true
-    }
-}
-
-private enum BackgroundServiceTransport {
-    static func listenerParameters() -> NWParameters {
-        let parameters = NWParameters.tcp
-        parameters.allowLocalEndpointReuse = true
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
-        return parameters
-    }
-
-    static func clientParameters() -> NWParameters {
-        .tcp
-    }
-
-    static func awaitReady(listener: NWListener) async throws -> NWEndpoint.Port {
-        try await withCheckedThrowingContinuation { continuation in
-            let queue = DispatchQueue(label: "io.opensnek.service.listener")
-            let gate = BackgroundServiceResumeGate()
-            listener.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    guard gate.claim() else { return }
-                    guard let port = listener.port else {
-                        continuation.resume(throwing: BackgroundServiceTransportError.listenerUnavailable)
-                        return
-                    }
-                    continuation.resume(returning: port)
-                case .failed(let error):
-                    guard gate.claim() else { return }
-                    continuation.resume(throwing: error)
-                case .cancelled:
-                    guard gate.claim() else { return }
-                    continuation.resume(throwing: BackgroundServiceTransportError.connectionClosed)
-                default:
-                    break
-                }
-            }
-            listener.start(queue: queue)
-        }
-    }
-
-    static func awaitReady(connection: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            let queue = DispatchQueue(label: "io.opensnek.service.client")
-            let gate = BackgroundServiceResumeGate()
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    guard gate.claim() else { return }
-                    continuation.resume()
-                case .failed(let error):
-                    guard gate.claim() else { return }
-                    continuation.resume(throwing: error)
-                case .cancelled:
-                    guard gate.claim() else { return }
-                    continuation.resume(throwing: BackgroundServiceTransportError.connectionClosed)
-                default:
-                    break
-                }
-            }
-            connection.start(queue: queue)
-        }
-    }
-
-    static func sendFrame(_ payload: Data, over connection: NWConnection) async throws {
-        var framed = Data()
-        var length = UInt32(payload.count).bigEndian
-        withUnsafeBytes(of: &length) { header in
-            framed.append(contentsOf: header)
-        }
-        framed.append(payload)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: framed, completion: .contentProcessed { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            })
-        }
-    }
-
-    static func receiveFrame(from connection: NWConnection) async throws -> Data {
-        let header = try await receiveExactly(4, from: connection)
-        let length = header.reduce(UInt32(0)) { partial, byte in
-            (partial << 8) | UInt32(byte)
-        }
-
-        if length == 0 {
-            return Data()
-        }
-
-        return try await receiveExactly(Int(length), from: connection)
-    }
-
-    private static func receiveExactly(_ count: Int, from connection: NWConnection) async throws -> Data {
-        guard count >= 0 else {
-            throw BackgroundServiceTransportError.invalidLength
-        }
-
-        var buffer = Data()
-        while buffer.count < count {
-            let chunk = try await receiveChunk(maximumLength: count - buffer.count, from: connection)
-            buffer.append(chunk)
-        }
-        return buffer
-    }
-
-    private static func receiveChunk(maximumLength: Int, from connection: NWConnection) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: maximumLength) { data, _, isComplete, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                if let data, !data.isEmpty {
-                    continuation.resume(returning: data)
-                    return
-                }
-                if isComplete {
-                    continuation.resume(throwing: BackgroundServiceTransportError.connectionClosed)
-                } else {
-                    continuation.resume(throwing: BackgroundServiceTransportError.invalidLength)
-                }
-            }
-        }
-    }
-}
-
 final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
     static let shared = LocalBridgeBackend()
 
@@ -444,7 +211,7 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
     private var cachedFastAtByDeviceID: [String: Date] = [:]
     private var reconnectSeedStateByDeviceID: [String: MouseState] = [:]
     private var bluetoothControlReadyDeviceIDs: Set<String> = []
-    private var stateUpdateContinuations: [UUID: AsyncStream<BackendStateUpdate>.Continuation] = [:]
+    private let stateUpdatesStream = BroadcastStream<BackendStateUpdate>()
     private var devicePresenceRefreshTask: Task<Void, Never>?
     private var activeBluetoothWarmupKeys: Set<String> = []
 
@@ -572,15 +339,7 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
     }
 
     func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
-        let id = UUID()
-        let (stream, continuation) = AsyncStream.makeStream(of: BackendStateUpdate.self)
-        stateUpdateContinuations[id] = continuation
-        continuation.onTermination = { @Sendable [weak self] _ in
-            Task {
-                await self?.removeStateUpdateContinuation(id: id)
-            }
-        }
-        return stream
+        stateUpdatesStream.makeStream()
     }
 
     func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
@@ -609,10 +368,6 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
 
     func debugUSBReadButtonBinding(device: MouseDevice, slot: Int, profile: Int) async throws -> [UInt8]? {
         try await client.debugUSBReadButtonBinding(device: device, slot: slot, profile: profile)
-    }
-
-    private func removeStateUpdateContinuation(id: UUID) {
-        stateUpdateContinuations.removeValue(forKey: id)
     }
 
     nonisolated static func mergedApplyState(_ state: MouseState, previous: MouseState?) -> MouseState {
@@ -874,9 +629,7 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
     }
 
     private func publishStateUpdate(_ update: BackendStateUpdate) {
-        for continuation in stateUpdateContinuations.values {
-            continuation.yield(update)
-        }
+        stateUpdatesStream.yield(update)
     }
 
     private func refreshCachedDevicesAfterPresenceChange(

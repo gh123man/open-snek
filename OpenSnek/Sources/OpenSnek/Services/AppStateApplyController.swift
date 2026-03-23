@@ -8,23 +8,30 @@ final class AppStateApplyController {
     private let deviceStore: DeviceStore
     private let editorStore: EditorStore
     private let runtimeStore: RuntimeStore
-    private weak var deviceControllerStorage: AppStateDeviceController?
-    private weak var editorControllerStorage: AppStateEditorController?
-    private weak var runtimeControllerStorage: AppStateRuntimeController?
+    @WeakBound("AppStateApplyController", dependency: "deviceController")
+    private var deviceController: AppStateDeviceController
+    @WeakBound("AppStateApplyController", dependency: "editorController")
+    private var editorController: AppStateEditorController
+    @WeakBound("AppStateApplyController", dependency: "runtimeController")
+    private var runtimeController: AppStateRuntimeController
 
     private let applyCoordinator = ApplyCoordinator()
-    private var dpiApplyTask: Task<Void, Never>?
-    private var pollApplyTask: Task<Void, Never>?
-    private var powerApplyTask: Task<Void, Never>?
-    private var lowBatteryApplyTask: Task<Void, Never>?
-    private var scrollModeApplyTask: Task<Void, Never>?
-    private var scrollAccelerationApplyTask: Task<Void, Never>?
-    private var scrollSmartReelApplyTask: Task<Void, Never>?
-    private var ledApplyTask: Task<Void, Never>?
-    private var colorApplyTask: Task<Void, Never>?
-    private var lightingEffectApplyTask: Task<Void, Never>?
-    private var buttonApplyTask: Task<Void, Never>?
-    private var activeStageApplyTask: Task<Void, Never>?
+    private enum ApplyTaskKey: Hashable {
+        case dpi
+        case pollRate
+        case power
+        case lowBattery
+        case scrollMode
+        case scrollAcceleration
+        case scrollSmartReel
+        case ledBrightness
+        case ledColor
+        case lightingEffect
+        case button
+        case activeStage
+    }
+
+    private var applyTasks: [ApplyTaskKey: Task<Void, Never>] = [:]
     private(set) var hasPendingLocalEdits = false
     private var applyDrainTask: Task<Void, Never>?
     private var lastLocalEditAt: Date?
@@ -43,18 +50,10 @@ final class AppStateApplyController {
     }
 
     func tearDown() {
-        dpiApplyTask?.cancel()
-        pollApplyTask?.cancel()
-        powerApplyTask?.cancel()
-        lowBatteryApplyTask?.cancel()
-        scrollModeApplyTask?.cancel()
-        scrollAccelerationApplyTask?.cancel()
-        scrollSmartReelApplyTask?.cancel()
-        ledApplyTask?.cancel()
-        colorApplyTask?.cancel()
-        lightingEffectApplyTask?.cancel()
-        buttonApplyTask?.cancel()
-        activeStageApplyTask?.cancel()
+        for task in applyTasks.values {
+            task.cancel()
+        }
+        applyTasks.removeAll()
         applyDrainTask?.cancel()
     }
 
@@ -63,30 +62,9 @@ final class AppStateApplyController {
         editorController: AppStateEditorController,
         runtimeController: AppStateRuntimeController
     ) {
-        self.deviceControllerStorage = deviceController
-        self.editorControllerStorage = editorController
-        self.runtimeControllerStorage = runtimeController
-    }
-
-    private var deviceController: AppStateDeviceController {
-        guard let deviceControllerStorage else {
-            preconditionFailure("AppStateApplyController accessed before deviceController was bound")
-        }
-        return deviceControllerStorage
-    }
-
-    private var editorController: AppStateEditorController {
-        guard let editorControllerStorage else {
-            preconditionFailure("AppStateApplyController accessed before editorController was bound")
-        }
-        return editorControllerStorage
-    }
-
-    private var runtimeController: AppStateRuntimeController {
-        guard let runtimeControllerStorage else {
-            preconditionFailure("AppStateApplyController accessed before runtimeController was bound")
-        }
-        return runtimeControllerStorage
+        _deviceController.bind(deviceController)
+        _editorController.bind(editorController)
+        _runtimeController.bind(runtimeController)
     }
 
     var stateRevision: UInt64 {
@@ -108,40 +86,20 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyDpi() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        dpiApplyTask?.cancel()
-        dpiApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 320_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyDpiStages()
+        scheduleAutoApply(key: .dpi, delay: 320_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyDpiStages()
         }
     }
 
     func applyActiveStageOnly() async {
-        let count = max(1, min(5, editorStore.editableStageCount))
-        let profileID = deviceStore.selectedDevice?.profile_id
-        let values = Array(editorStore.editableStageValues.prefix(count)).map { DeviceProfiles.clampDPI($0, profileID: profileID) }
-        let active = max(0, min(count - 1, editorStore.editableActiveStage - 1))
-        enqueueApply(DevicePatch(dpiStages: values, activeStage: active))
+        await applyDpiStages()
     }
 
     func scheduleAutoApplyActiveStage() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        activeStageApplyTask?.cancel()
-        activeStageApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 80_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyActiveStageOnly()
+        scheduleAutoApply(key: .activeStage, delay: 80_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyActiveStageOnly()
         }
     }
 
@@ -150,17 +108,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyPollRate() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        pollApplyTask?.cancel()
-        pollApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 250_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyPollRate()
+        scheduleAutoApply(key: .pollRate, delay: 250_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyPollRate()
         }
     }
 
@@ -169,17 +119,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplySleepTimeout() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        powerApplyTask?.cancel()
-        powerApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 260_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applySleepTimeout()
+        scheduleAutoApply(key: .power, delay: 260_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applySleepTimeout()
         }
     }
 
@@ -189,17 +131,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyLowBatteryThreshold() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        lowBatteryApplyTask?.cancel()
-        lowBatteryApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 220_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyLowBatteryThreshold()
+        scheduleAutoApply(key: .lowBattery, delay: 220_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyLowBatteryThreshold()
         }
     }
 
@@ -208,17 +142,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyScrollMode() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        scrollModeApplyTask?.cancel()
-        scrollModeApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 220_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyScrollMode()
+        scheduleAutoApply(key: .scrollMode, delay: 220_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyScrollMode()
         }
     }
 
@@ -227,17 +153,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyScrollAcceleration() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        scrollAccelerationApplyTask?.cancel()
-        scrollAccelerationApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 220_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyScrollAcceleration()
+        scheduleAutoApply(key: .scrollAcceleration, delay: 220_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyScrollAcceleration()
         }
     }
 
@@ -246,17 +164,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyScrollSmartReel() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        scrollSmartReelApplyTask?.cancel()
-        scrollSmartReelApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 220_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyScrollSmartReel()
+        scheduleAutoApply(key: .scrollSmartReel, delay: 220_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyScrollSmartReel()
         }
     }
 
@@ -265,17 +175,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyLedBrightness() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        ledApplyTask?.cancel()
-        ledApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 180_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyLedBrightness()
+        scheduleAutoApply(key: .ledBrightness, delay: 180_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyLedBrightness()
         }
     }
 
@@ -289,17 +191,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyLedColor() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        colorApplyTask?.cancel()
-        colorApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 200_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyLedColor()
+        scheduleAutoApply(key: .ledColor, delay: 200_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyLedColor()
         }
     }
 
@@ -319,17 +213,9 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyLightingEffect() {
-        guard !editorController.isHydrating else { return }
-        markLocalEditsPending()
-        lightingEffectApplyTask?.cancel()
-        lightingEffectApplyTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 200_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.applyLightingEffect()
+        scheduleAutoApply(key: .lightingEffect, delay: 200_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyLightingEffect()
         }
     }
 
@@ -349,17 +235,28 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyButton(slot: Int) {
+        scheduleAutoApply(key: .button, delay: 260_000_000) { [weak self] in
+            guard let self else { return }
+            await self.applyButtonBinding(slot: slot)
+        }
+    }
+
+    private func scheduleAutoApply(
+        key: ApplyTaskKey,
+        delay: UInt64 = 220_000_000,
+        action: @escaping @MainActor () async -> Void
+    ) {
         guard !editorController.isHydrating else { return }
         markLocalEditsPending()
-        buttonApplyTask?.cancel()
-        buttonApplyTask = Task { [weak self] in
+        applyTasks[key]?.cancel()
+        applyTasks[key] = Task {
             do {
-                try await Task.sleep(nanoseconds: 260_000_000)
+                try await Task.sleep(nanoseconds: delay)
             } catch {
                 return
             }
             guard !Task.isCancelled else { return }
-            await self?.applyButtonBinding(slot: slot)
+            await action()
         }
     }
 

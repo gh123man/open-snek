@@ -7,9 +7,12 @@ final class AppStateDeviceController {
 
     private let environment: AppEnvironment
     private let deviceStore: DeviceStore
-    private weak var editorControllerStorage: AppStateEditorController?
-    private weak var applyControllerStorage: AppStateApplyController?
-    private weak var runtimeControllerStorage: AppStateRuntimeController?
+    @WeakBound("AppStateDeviceController", dependency: "editorController")
+    private var editorController: AppStateEditorController
+    @WeakBound("AppStateDeviceController", dependency: "applyController")
+    private var applyController: AppStateApplyController
+    @WeakBound("AppStateDeviceController", dependency: "runtimeController")
+    private var runtimeController: AppStateRuntimeController
 
     private var stateCacheByDeviceID: [String: MouseState] = [:]
     private var lastUpdatedByDeviceID: [String: Date] = [:]
@@ -43,30 +46,9 @@ final class AppStateDeviceController {
         applyController: AppStateApplyController,
         runtimeController: AppStateRuntimeController
     ) {
-        self.editorControllerStorage = editorController
-        self.applyControllerStorage = applyController
-        self.runtimeControllerStorage = runtimeController
-    }
-
-    private var editorController: AppStateEditorController {
-        guard let editorControllerStorage else {
-            preconditionFailure("AppStateDeviceController accessed before editorController was bound")
-        }
-        return editorControllerStorage
-    }
-
-    private var applyController: AppStateApplyController {
-        guard let applyControllerStorage else {
-            preconditionFailure("AppStateDeviceController accessed before applyController was bound")
-        }
-        return applyControllerStorage
-    }
-
-    private var runtimeController: AppStateRuntimeController {
-        guard let runtimeControllerStorage else {
-            preconditionFailure("AppStateDeviceController accessed before runtimeController was bound")
-        }
-        return runtimeControllerStorage
+        _editorController.bind(editorController)
+        _applyController.bind(applyController)
+        _runtimeController.bind(runtimeController)
     }
 
     func cachedState(for deviceID: String) -> MouseState? {
@@ -319,8 +301,8 @@ final class AppStateDeviceController {
     @discardableResult
     func applyDeviceList(_ listed: [MouseDevice], source: String) -> Bool {
         guard !isTearingDown else { return false }
-        guard let editorController = editorControllerStorage,
-              let runtimeController = runtimeControllerStorage else {
+        guard let editorController = _editorController.optionalValue,
+              let runtimeController = _runtimeController.optionalValue else {
             return false
         }
         let sorted = listed.sorted { $0.product_name < $1.product_name }
@@ -441,7 +423,7 @@ final class AppStateDeviceController {
 
     func selectDevice(_ deviceID: String) {
         guard !isTearingDown else { return }
-        guard let runtimeController = runtimeControllerStorage else { return }
+        guard let runtimeController = _runtimeController.optionalValue else { return }
         guard deviceStore.selectedDeviceID != deviceID else { return }
         runtimeController.clearStatusItemTransientDpi()
         deviceStore.selectedDeviceID = deviceID
@@ -458,8 +440,8 @@ final class AppStateDeviceController {
 
     func syncSelectedDevicePresentation(deviceID: String) {
         guard !isTearingDown else { return }
-        guard let applyController = applyControllerStorage,
-              let editorController = editorControllerStorage else {
+        guard let applyController = _applyController.optionalValue,
+              let editorController = _editorController.optionalValue else {
             return
         }
         guard let device = deviceStore.devices.first(where: { $0.id == deviceID }) else {
@@ -509,7 +491,7 @@ final class AppStateDeviceController {
     private func scheduleSelectedDeviceButtonBindingHydration(device: MouseDevice) {
         Task { [weak self] in
             guard let self, !self.isTearingDown,
-                  let editorController = self.editorControllerStorage else {
+                  let editorController = self._editorController.optionalValue else {
                 return
             }
             await editorController.hydrateButtonBindingsIfNeeded(device: device)
@@ -553,7 +535,7 @@ final class AppStateDeviceController {
         }
 
         let age = now.timeIntervalSince(updatedAt)
-        let refreshInterval = runtimeControllerStorage?.currentPollingProfile.refreshStateInterval ?? 2.5
+        let refreshInterval = _runtimeController.optionalValue?.currentPollingProfile.refreshStateInterval ?? 2.5
         if age > max(4.5, refreshInterval * 1.7) {
             if shouldTreatActivePassiveHIDAsConnected(device: device, now: now) {
                 return .connected
@@ -1202,8 +1184,8 @@ final class AppStateDeviceController {
 
     private func restorePersistedLightingIfNeeded(for device: MouseDevice) async {
         guard !isTearingDown else { return }
-        guard let applyController = applyControllerStorage,
-              let editorController = editorControllerStorage else {
+        guard let applyController = _applyController.optionalValue,
+              let editorController = _editorController.optionalValue else {
             return
         }
         guard pendingLightingRestoreDeviceIDs.contains(device.id) else { return }
