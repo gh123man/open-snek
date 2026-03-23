@@ -30,18 +30,84 @@ It still cannot:
 
 ## Capture-Backed Findings
 
-The focused Windows capture `captures/ble/hypershift-hold-2026-03-22.pcapng` shows:
+### Handle `0x0027`: the Hypersense button stream
 
-- a separate notify handle `0x0027`
-- press payload `04 52 00 00 00 00 00 00`
-- release payload `04 00 00 00 00 00 00 00`
-- no `08 04 01 06` vendor remap write for slot `0x06`
-- each press is followed by a software-side DPI-stage write/readback on `0B 04 01 00` / `0B 84 01 00`
+Six independent captures now confirm a passive HID notify stream on ATT handle `0x0027` that carries the Hypersense / Hypershift / DPI-clutch button:
 
-Best current inference:
+| Capture | Press byte | Synapse binding | Notes |
+|---|---|---|---|
+| `full-hid-hypershift-cap.pcapng` | `0x59` | DPI clutch | older capture |
+| `hs-full-caputre.pcapng` | `0x59` | DPI clutch | |
+| `bt-reconnect-1.pcapng` | `0x59` | DPI clutch | includes connection setup |
+| `bt-reconnect-2.pcapng` | `0x59` | DPI clutch | includes connection setup |
+| `hypershift-hold-2026-03-22.pcapng` | `0x52` | different binding | March 22 focused hold |
 
-- Synapse is not detecting this button with a fast vendor poll loop.
-- The button appears to arrive through a passive HID/report stream, and Synapse reacts by applying the clutch DPI through the existing vendor DPI-stage path.
+Frame format:
+
+```text
+byte 0   report ID (always 0x04)
+byte 1   action byte (0x00 = release, nonzero = press)
+bytes 2-7  zero padding
+```
+
+- Press: `04 <action> 00 00 00 00 00 00`
+- Release: `04 00 00 00 00 00 00 00`
+- The action byte (`byte 1`) is **not** a fixed physical-button identifier. It changes depending on the Synapse-assigned function (`0x59` when DPI clutch is assigned, `0x52` under a different assignment). OpenSnek should detect press vs release only by testing `byte 1 != 0x00` vs `byte 1 == 0x00`.
+
+### How Synapse intercepts the button
+
+Across all captures, Synapse's behavior is consistent:
+
+1. The mouse sends an unsolicited HID notification on `0x0027` — no polling, no vendor read loop.
+2. On press (`byte 1 != 0`), Synapse immediately issues a DPI-stage write/readback (`0B 04 01 00` / `0B 84 01 00`) to apply the clutch DPI. This arrives within ~20-30 ms of the HID notification.
+3. On release (`byte 1 == 0`), Synapse either writes the DPI back or does nothing depending on the binding. No vendor write is issued on the release edge itself.
+4. No `08 04 01 06` vendor button-remap write appears in any capture. The button is entirely software-read; Synapse never writes to slot `0x06`.
+
+### How to intercept the Hypersense button (for OpenSnek)
+
+The stream is part of the standard HID-over-GATT (HOGP) profile, not the vendor GATT service. The OS subscribes to it during Bluetooth pairing/connection setup — no explicit CCCD enable by the application is needed for this handle.
+
+**On macOS (CoreBluetooth / IOKit):**
+
+The `0x0027` handle is an HID Input Report characteristic within the HID Service (`0x1812`). macOS exposes this through `IOHIDDeviceRegisterInputReportCallback`. OpenSnek already uses this callback path for the passive DPI stream on handle `0x002b` (report ID `0x05`).
+
+To intercept the Hypersense button:
+
+1. Subscribe to HID input reports on the same BLE HID device already used for passive DPI.
+2. Filter for **report ID `0x04`** (byte 0 of the `0x0027` payload).
+3. Read **byte 1**: nonzero = press, zero = release.
+4. The report arrives on a separate HID interface/element from the DPI stream (report ID `0x05`) and the mouse movement stream (handle `0x001b`).
+
+No vendor GATT interaction, CCCD write, or polling is needed. The button event arrives passively as an HID input report, just like mouse movement.
+
+**On Windows:**
+
+Windows HOGP driver subscribes to `0x0027` during Bluetooth connection setup before BTVS/Wireshark can capture. This is confirmed by the reconnect captures: `0x0027` notifications arrive without any visible application-side CCCD write for that handle. The only explicit CCCD enable visible in captures is for the vendor notify handle `0x0040`.
+
+### Related handles
+
+| Handle | Report ID | Content | Stream type |
+|---|---|---|---|
+| `0x001b` | none | Mouse movement/buttons (X/Y deltas) | HID input — continuous |
+| `0x0027` | `0x04` | Hypersense button press/release | HID input — event-driven |
+| `0x002b` | `0x05` | DPI stage changes + heartbeat (`0x10` subtype) | HID input — event-driven |
+| `0x002f` | unknown | Fires once with `00 00 00 00 00 00 00 00` on connection | HID input — one-shot |
+| `0x003d` | n/a | Vendor write characteristic | Vendor GATT |
+| `0x003f` | n/a | Vendor notify characteristic | Vendor GATT |
+
+### Connection-time behavior
+
+The reconnect captures (`bt-reconnect-1`, `bt-reconnect-2`) show that immediately after Bluetooth connection completes:
+
+1. The `0x002b` heartbeat stream starts immediately with `05 10 00 00 00 00 00 00`.
+2. Handle `0x0027` may emit a stray release (`04 00 00 00 00 00 00 00`) before any button press. OpenSnek should not treat this as a meaningful release edge.
+3. Handle `0x002f` may emit a single all-zeros frame.
+4. Synapse then performs its initialization sequence (device info reads, serial number, battery, etc.) on the vendor path before reacting to button events.
+
+### Negative findings
+
+- No `08 04 01 06` vendor write appears in any capture. Slot `0x06` is confirmed software-read-only on the BLE vendor path.
+- The earlier `hypershift-hold-2026-03-22.md` noted a press byte change from `0x59` to `0x52` and inferred it was mapping-dependent. The reconnect captures now confirm this: all captures where DPI clutch was the active Synapse binding show `0x59`; the March 22 capture with a different binding shows `0x52`.
 
 ## What OpenSnek Still Needs To Support
 
@@ -109,83 +175,37 @@ Minimum tests needed before shipping:
 - backend tests for press -> apply clutch -> release -> restore flow
 - duplicate-event / reconnect-state tests
 
-### 5. One more capture before clutch implementation
+### 5. Windows HID GATT enumeration (optional, for full descriptor mapping)
 
-The remaining missing piece is the exact HID descriptor/identity of the `0x0027` stream.
+The reconnect captures confirmed that Windows subscribes to `0x0027` during Bluetooth connection setup before BTVS can capture. The stream is standard HOGP, not vendor GATT. The button is already interceptable on macOS without any additional discovery.
 
-Needed capture:
-
-1. start capture before Bluetooth connection/setup completes
-2. include CCCD writes and service discovery
-3. open Synapse
-4. press the Hypershift/DPI-clutch button once without moving the mouse
-
-Goal:
-
-- map `0x0027` to its characteristic UUID and CCCD enable path
-- confirm whether the stream is standard HID-over-GATT input traffic versus a vendor-side notify path that only happens to sit outside the current vendor GATT command family
-
-### 6. Windows HID GATT enumeration
-
-The reconnect captures showed a consistent limitation: we can see live HID notifications on `0x0027`, `0x002b`, and `0x002f`, but the capture window still starts after Windows has already claimed and subscribed to the HID service.
-
-That means a better next step is direct HID GATT enumeration on Windows instead of another Synapse capture.
+For completeness, running `tools/python/enumerate_hid_gatt.py` would map the exact characteristic UUID and Report Reference descriptor for `0x0027`, `0x002b`, and `0x002f`. This is nice-to-have documentation, not a blocker for implementation.
 
 Script:
 
 - `tools/python/enumerate_hid_gatt.py`
 
-What it prints:
-
-- all visible GATT services
-- every HID `0x2A4D` Report characteristic
-- each report's:
-  - characteristic handle
-  - `0x2908` Report Reference descriptor handle
-  - `0x2902` CCCD handle if present
-  - report ID / report type
-
-Windows setup:
-
-1. Install Python 3 if needed.
-2. Install Bleak:
-   - `pip install bleak`
-3. Turn the mouse on and make sure Windows can see it on Bluetooth.
-
 Commands:
-
-If you know the Bluetooth address:
 
 ```bash
 python tools/python/enumerate_hid_gatt.py XX:XX:XX:XX:XX:XX
-```
-
-If you do not know the address yet:
-
-```bash
+# or
 python tools/python/enumerate_hid_gatt.py --name "BSK V3 X"
 ```
 
-What to send back:
-
-- the full `HID SERVICE DETAIL` section
-- especially any rows whose characteristic or descriptor handles line up with the capture-backed notify handles:
-  - `0x0027` Hypershift press/release stream
-  - `0x002b` passive DPI / heartbeat stream
-  - `0x002f` nearby zeroed notify seen during the first release edge
-
-If Windows still cannot expose the HID service to Bleak on this host, that itself is useful evidence and we should pivot to Linux with HOGP disabled.
-
 ## Recommended Follow-Up Order
 
-1. Capture the stream from connection start and identify the characteristic/descriptor path.
+1. ~~Capture the stream from connection start and identify the characteristic/descriptor path.~~ Done — reconnect captures confirmed passive HOGP delivery on `0x0027`, report ID `0x04`.
 2. Add clutch press/release runtime behavior using the existing BLE DPI-stage write path.
 3. Add separate Hypershift transport diagnostics.
 4. Expand profile coverage only after capture-backed validation on each device.
 5. Add reconnect and duplicate-edge hardening tests.
+6. Optionally run `enumerate_hid_gatt.py` to document the exact characteristic UUID for `0x0027`.
 
 ## Bottom Line
 
-OpenSnek already has the right high-level architecture for passive, non-polling Bluetooth input.
+The Hypersense button's Bluetooth path is now fully understood. It is a passive HID input report on ATT handle `0x0027` (report ID `0x04`), delivered through standard HOGP — not the vendor GATT service. The OS subscribes to it automatically during Bluetooth connection. No polling, no vendor commands, no CCCD writes from the application.
 
-What is still missing is not a polling loop. The remaining work is the runtime policy that turns validated press/release edges into clutch apply/restore behavior, plus diagnostics and broader device validation.
+To intercept it, OpenSnek subscribes to HID input reports on the BLE device (same callback path already used for passive DPI), filters for report ID `0x04`, and reads byte 1 for press/release. The existing `PassiveButtonInputDescriptor` and `PassiveButtonEventMonitor` are already wired for this.
+
+What is still missing is the runtime policy that turns validated press/release edges into clutch apply/restore behavior, plus diagnostics and broader device validation.

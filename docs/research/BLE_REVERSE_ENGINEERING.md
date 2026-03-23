@@ -114,8 +114,18 @@ Related notes:
 - 2026-03-08: Live write/readback validation for scalar keys and DPI stages.
 - 2026-03-08: Added focused captures for power/lighting and button rebinding (`captures/ble/power-lighting.pcapng`, `captures/ble/basic-rebind.pcapng`, `captures/ble/right-click-bind.pcapng`).
 - 2026-03-22: Added focused Windows hold capture for the Hypershift/DPI-clutch button (`captures/ble/hypershift-hold-2026-03-22.pcapng`) and decoded the correlated `0x0027` notify path plus DPI-stage vendor writes.
+- 2026-03-23: Added Bluetooth reconnect captures (`captures/ble/bt-reconnect-1.pcapng`, `captures/ble/bt-reconnect-2.pcapng`) including full connection setup, Synapse init, and Hypersense DPI-clutch presses. Confirmed that `0x0027` is passive HOGP (not vendor GATT), action byte `0x59` is specific to the DPI-clutch binding, and the OS subscribes to the HID handle automatically during connection.
 
 ### Changelog
+
+- **2026-03-23**: Added Bluetooth reconnect captures and resolved the Hypersense button interception path:
+  - new captures: `captures/ble/bt-reconnect-1.pcapng`, `captures/ble/bt-reconnect-2.pcapng`
+  - confirmed `0x0027` is part of the standard HID-over-GATT (HOGP) profile, not vendor GATT
+  - no explicit CCCD enable for `0x0027` is visible — the OS subscribes during Bluetooth connection setup
+  - action byte `0x59` is consistent across all captures where DPI clutch was the Synapse binding
+  - action byte `0x52` in the March 22 capture is now explained: different Synapse binding produces a different action byte
+  - OpenSnek should detect press/release by testing `byte 1 != 0` / `byte 1 == 0`, not matching a fixed action code
+  - the Hypersense button path is now fully documented — no further captures are needed before implementation
 
 - **2026-03-22**: Added focused Hypershift/DPI-clutch hold capture from Windows:
   - new capture: `captures/ble/hypershift-hold-2026-03-22.pcapng`

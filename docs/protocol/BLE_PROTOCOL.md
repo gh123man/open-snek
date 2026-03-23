@@ -822,7 +822,7 @@ The app may still expose richer lighting on USB HID, but this BLE document only 
 - No source-of-truth BLE vendor key for low-battery-threshold control in Swift
 - No source-of-truth BLE vendor key for poll-rate control in Swift
 - No decoded BLE vendor path for slot `0x06` / Hypershift-Boss-sniper control remap; treat it as software-read-only on the current BLE path until a separate HID/report command family is validated
-- Windows BTVS hold captures show a separate HID-style notify handle (`0x0027`) during Hypershift/DPI-clutch presses, with press/release payloads changing independently of the validated `08 04 01 <slot>` family; this is useful reverse-engineering context but is not yet a source-of-truth configurable path in Swift
+- The Hypersense/Hypershift button is delivered as a passive HID input report on ATT handle `0x0027` (report ID `0x04`, HOGP), not through the vendor GATT service. Press = `04 <action> 00 00 00 00 00 00` (byte 1 nonzero), release = `04 00 00 00 00 00 00 00`. The action byte varies by Synapse binding (`0x59` for DPI clutch, `0x52` observed under a different binding). OpenSnek has initial passive-button plumbing but the runtime clutch behavior is not yet implemented. See [BLE Hypershift Stream Support](../research/BLE_HYPERSHIFT_STREAM_SUPPORT.md) for the full capture-backed analysis
 - No complete button action taxonomy for media/macro/system families
 - No multi-device validation beyond the Basilisk V3 X Bluetooth family
 

@@ -113,6 +113,23 @@ This directory stores BLE protocol captures used to derive and validate `tools/p
   - Packet-by-packet decode notes for the March 22 focused hold capture.
   - Includes the `0x0027` press/release timeline and the correlated `0B 04` / `0B 84` DPI-stage transactions.
 
+- `ble/bt-reconnect-1.pcapng`
+  - Full Bluetooth reconnect capture including connection setup, Synapse initialization, and Hypersense button presses with DPI clutch assigned.
+  - Key findings:
+    - Confirms `0x0027` notify handle delivers Hypersense button as a passive HID stream (HOGP, not vendor GATT).
+    - Press payload: `04 59 00 00 00 00 00 00` (action byte `0x59` = DPI clutch binding).
+    - Release payload: `04 00 00 00 00 00 00 00`.
+    - No explicit CCCD enable for `0x0027` or `0x002b` is visible — Windows subscribes to these HID handles during Bluetooth setup before the capture window starts. Only the vendor CCCD (`0x0040`) is written by Synapse.
+    - `0x002f` fires once with all-zeros on connection.
+    - Stray release on `0x0027` (`04 00`) may appear before first press after connection.
+    - Synapse reacts to each press with immediate vendor DPI-stage writes on the `0B 04 01 00` path.
+
+- `ble/bt-reconnect-2.pcapng`
+  - Second reconnect capture with the same DPI clutch binding.
+  - Confirms `0x59` as the consistent action byte when DPI clutch is the Synapse-assigned function.
+  - Same Synapse DPI-stage write reaction pattern on press.
+  - Mouse movement visible on `0x001b` throughout, with `0x002b` heartbeat stream constant at `05 10 00 00 00 00 00 00`.
+
 ## Notes
 
 - Captures are intentionally action-scoped for faster diffing.
