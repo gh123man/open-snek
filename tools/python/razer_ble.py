@@ -13,240 +13,63 @@ Usage:
     python3 tools/python/razer_ble.py --active-stage 2         # Set active stage (1-5)
 """
 
-import argparse
 import colorsys
 import hid
 import time
 import sys
-import threading
 from typing import Optional, Tuple, List
 
-try:
-    from ble_battery import read_razer_battery_ble, HAS_COREBLUETOOTH
-except ImportError:
-    HAS_COREBLUETOOTH = False
-
-    def read_razer_battery_ble(**kwargs):
-        return None
-
-try:
-    import objc
-    from CoreBluetooth import CBCentralManager, CBUUID
-    from Foundation import NSObject, NSRunLoop, NSDate, NSData
-    HAS_CB_VENDOR = True
-except Exception:
-    HAS_CB_VENDOR = False
-
-# Constants
-USB_VENDOR_ID_RAZER = 0x1532
-BT_VENDOR_ID_RAZER = 0x068e
-RAZER_USB_REPORT_LEN = 90
-RAZER_STATUS_BUSY = 0x01
-
-# Commands
-CMD_CLASS_STANDARD = 0x00
-CMD_CLASS_CONFIG = 0x02
-CMD_CLASS_DPI = 0x04
-CMD_CLASS_MISC = 0x07
-CMD_CLASS_MATRIX = 0x0F
-
-CMD_GET_DEVICE_MODE = 0x84
-CMD_SET_DEVICE_MODE = 0x04
-CMD_GET_SERIAL = 0x82
-CMD_GET_FIRMWARE = 0x81
-CMD_GET_DPI_XY = 0x85
-CMD_SET_DPI_XY = 0x05
-CMD_GET_DPI_STAGES = 0x86
-CMD_SET_DPI_STAGES = 0x06
-CMD_GET_POLL_RATE = 0x85
-CMD_SET_POLL_RATE = 0x05
-CMD_GET_BATTERY = 0x80
-CMD_GET_IDLE_TIME = 0x83
-CMD_SET_IDLE_TIME = 0x03
-CMD_GET_LOW_BATTERY_THRESHOLD = 0x81
-CMD_SET_LOW_BATTERY_THRESHOLD = 0x01
-CMD_GET_SCROLL_MODE = 0x94
-CMD_SET_SCROLL_MODE = 0x14
-CMD_GET_SCROLL_ACCELERATION = 0x96
-CMD_SET_SCROLL_ACCELERATION = 0x16
-CMD_GET_SCROLL_SMART_REEL = 0x97
-CMD_SET_SCROLL_SMART_REEL = 0x17
-CMD_SET_BUTTON_ACTION_NON_ANALOG = 0x0D
-CMD_GET_MATRIX_BRIGHTNESS = 0x84
-CMD_SET_MATRIX_BRIGHTNESS = 0x04
-CMD_SET_MATRIX_EFFECT = 0x02
-
-NOSTORE = 0x00
-VARSTORE = 0x01
-STATUS_SUCCESS = 0x02
-LED_SCROLL_WHEEL = 0x01
-STATUS_NAMES = {
-    0x00: "new",
-    0x01: "busy",
-    0x02: "success",
-    0x03: "failure",
-    0x04: "timeout",
-    0x05: "not_supported",
-}
-
-RAZER_VENDOR_SERVICE_UUID = "52401523-F97C-7F90-0E7F-6C6F4E36DB1C"
-RAZER_VENDOR_WRITE_UUID = "52401524-F97C-7F90-0E7F-6C6F4E36DB1C"
-RAZER_VENDOR_NOTIFY_UUID = "52401525-F97C-7F90-0E7F-6C6F4E36DB1C"
-
-# Device info
-KNOWN_MICE = {
-    0x00B9: ("Razer Basilisk V3 X HyperSpeed", 18000),
-    0x00CB: ("Razer Basilisk V3 35K", 35000),
-    0x0083: ("Razer Basilisk V3", 26000),
-    0x0084: ("Razer Basilisk V3", 26000),
-    0x00BA: ("Razer Basilisk V3 X HyperSpeed (BT)", 18000),
-}
-
-TRANSACTION_ID_CANDIDATES = {
-    # Some Bluetooth firmware variants use a different transaction ID.
-    0x00BA: [0x3F, 0x1F, 0xFF],  # Basilisk V3 X HyperSpeed (BT)
-}
-
-
-if HAS_CB_VENDOR:
-    class _CBVendorTxnDelegate(NSObject):
-        def initWithOwner_(self, owner):
-            self = objc.super(_CBVendorTxnDelegate, self).init()
-            if self is None:
-                return None
-            self._owner = owner
-            return self
-
-        def centralManagerDidUpdateState_(self, central):
-            self._owner._on_central_state(central)
-
-        def centralManager_didConnectPeripheral_(self, central, peripheral):
-            self._owner._on_connected(peripheral)
-
-        def centralManager_didFailToConnectPeripheral_error_(self, central, peripheral, error):
-            self._owner._on_error(f"connect failed: {error}")
-
-        def peripheral_didDiscoverServices_(self, peripheral, error):
-            self._owner._on_services(peripheral, error)
-
-        def peripheral_didDiscoverCharacteristicsForService_error_(self, peripheral, service, error):
-            self._owner._on_characteristics(peripheral, service, error)
-
-        def peripheral_didUpdateNotificationStateForCharacteristic_error_(self, peripheral, characteristic, error):
-            self._owner._on_notify_state(characteristic, error)
-
-        def peripheral_didWriteValueForCharacteristic_error_(self, peripheral, characteristic, error):
-            if error is not None:
-                self._owner._on_error(f"write failed: {error}")
-
-        def peripheral_didUpdateValueForCharacteristic_error_(self, peripheral, characteristic, error):
-            self._owner._on_notify(characteristic, error)
-
-
-    class _CBVendorTxn:
-        def __init__(self, debug: bool = False):
-            self.debug = debug
-            self.done = threading.Event()
-            self.error = None
-            self.notifs: List[bytes] = []
-            self.peripheral = None
-            self.manager = None
-            self.write_char = None
-            self.notify_char = None
-            self._write_queue: List[bytes] = []
-            self._last_write_at = 0.0
-            self._notify_enabled = False
-
-        def _dbg(self, msg: str):
-            if self.debug:
-                print(f"[hid-debug] {msg}")
-
-        def _on_error(self, msg: str):
-            self.error = msg
-            self._dbg(msg)
-            self.done.set()
-
-        def _on_central_state(self, central):
-            state = central.state()
-            if state != 5:
-                return
-            uuid = CBUUID.UUIDWithString_(RAZER_VENDOR_SERVICE_UUID)
-            peripherals = central.retrieveConnectedPeripheralsWithServices_([uuid])
-            if not peripherals:
-                self._on_error("no connected Razer vendor-service peripheral")
-                return
-            self.peripheral = peripherals[0]
-            self.peripheral.setDelegate_(self._delegate)
-            central.connectPeripheral_options_(self.peripheral, None)
-
-        def _on_connected(self, peripheral):
-            uuid = CBUUID.UUIDWithString_(RAZER_VENDOR_SERVICE_UUID)
-            peripheral.discoverServices_([uuid])
-
-        def _on_services(self, peripheral, error):
-            if error is not None:
-                self._on_error(f"service discovery failed: {error}")
-                return
-            for service in peripheral.services() or []:
-                peripheral.discoverCharacteristics_forService_(None, service)
-
-        def _on_characteristics(self, peripheral, service, error):
-            if error is not None:
-                self._on_error(f"char discovery failed: {error}")
-                return
-            for ch in service.characteristics() or []:
-                uuid = ch.UUID().UUIDString().upper()
-                if uuid == RAZER_VENDOR_WRITE_UUID:
-                    self.write_char = ch
-                elif uuid == RAZER_VENDOR_NOTIFY_UUID:
-                    self.notify_char = ch
-            if self.write_char is not None and self.notify_char is not None and not self._notify_enabled:
-                peripheral.setNotifyValue_forCharacteristic_(True, self.notify_char)
-
-        def _on_notify_state(self, characteristic, error):
-            if error is not None:
-                self._on_error(f"notify enable failed: {error}")
-                return
-            if characteristic.isNotifying():
-                self._notify_enabled = True
-
-        def _on_notify(self, characteristic, error):
-            if error is not None:
-                self._on_error(f"notify update failed: {error}")
-                return
-            value = characteristic.value()
-            if value is None:
-                return
-            self.notifs.append(bytes(value))
-
-        def _drain(self, duration_s: float):
-            end = time.time() + duration_s
-            while time.time() < end and not self.done.is_set():
-                NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.015))
-
-        def run(self, writes: List[bytes], timeout_s: float = 2.0) -> Tuple[Optional[str], List[bytes]]:
-            self._write_queue = list(writes)
-            self.notifs = []
-            self.done.clear()
-            self.error = None
-            self._notify_enabled = False
-
-            self._delegate = _CBVendorTxnDelegate.alloc().initWithOwner_(self)
-            self.manager = CBCentralManager.alloc().initWithDelegate_queue_(self._delegate, None)
-
-            start = time.time()
-            while time.time() - start < timeout_s and not self.done.is_set():
-                self._drain(0.02)
-                if self._notify_enabled and self._write_queue:
-                    chunk = self._write_queue.pop(0)
-                    data = NSData.dataWithBytes_length_(chunk, len(chunk))
-                    self.peripheral.writeValue_forCharacteristic_type_(data, self.write_char, 0)
-                    self._last_write_at = time.time()
-                    self._drain(0.06)
-                if self._notify_enabled and not self._write_queue and time.time() - self._last_write_at > 0.55:
-                    break
-
-            return (self.error, self.notifs)
+from cb_vendor_transport import HAS_CB_VENDOR, _CBVendorTxn
+from razer_cli import build_common_parser, dispatch_common_commands
+from razer_common import (
+    BT_VENDOR_ID_RAZER,
+    CMD_CLASS_CONFIG,
+    CMD_CLASS_DPI,
+    CMD_CLASS_MATRIX,
+    CMD_CLASS_MISC,
+    CMD_CLASS_STANDARD,
+    CMD_GET_BATTERY,
+    CMD_GET_DEVICE_MODE,
+    CMD_GET_DPI_STAGES,
+    CMD_GET_DPI_XY,
+    CMD_GET_FIRMWARE,
+    CMD_GET_IDLE_TIME,
+    CMD_GET_LOW_BATTERY_THRESHOLD,
+    CMD_GET_MATRIX_BRIGHTNESS,
+    CMD_GET_POLL_RATE,
+    CMD_GET_SCROLL_ACCELERATION,
+    CMD_GET_SCROLL_MODE,
+    CMD_GET_SCROLL_SMART_REEL,
+    CMD_SET_BUTTON_ACTION_NON_ANALOG,
+    CMD_SET_DEVICE_MODE,
+    CMD_SET_DPI_STAGES,
+    CMD_SET_DPI_XY,
+    CMD_SET_IDLE_TIME,
+    CMD_SET_LOW_BATTERY_THRESHOLD,
+    CMD_SET_MATRIX_BRIGHTNESS,
+    CMD_SET_MATRIX_EFFECT,
+    CMD_SET_POLL_RATE,
+    CMD_SET_SCROLL_ACCELERATION,
+    CMD_SET_SCROLL_MODE,
+    CMD_SET_SCROLL_SMART_REEL,
+    HAS_COREBLUETOOTH,
+    KNOWN_MICE,
+    LED_SCROLL_WHEEL,
+    NOSTORE,
+    RAZER_STATUS_BUSY,
+    RAZER_USB_REPORT_LEN,
+    RAZER_VENDOR_NOTIFY_UUID,
+    RAZER_VENDOR_SERVICE_UUID,
+    RAZER_VENDOR_WRITE_UUID,
+    STATUS_NAMES,
+    STATUS_SUCCESS,
+    TRANSACTION_ID_CANDIDATES,
+    USB_VENDOR_ID_RAZER,
+    VARSTORE,
+    parse_rgb_hex,
+    print_status,
+    read_razer_battery_ble,
+)
 
 
 class RazerMouse:
@@ -478,7 +301,12 @@ class RazerMouse:
         if self.vendor_id != BT_VENDOR_ID_RAZER or not HAS_CB_VENDOR:
             return None
         try:
-            txn = _CBVendorTxn(debug=self.debug_hid)
+            txn = _CBVendorTxn(
+                RAZER_VENDOR_SERVICE_UUID,
+                RAZER_VENDOR_WRITE_UUID,
+                RAZER_VENDOR_NOTIFY_UUID,
+                debug=self.debug_hid,
+            )
             err, notifs = txn.run(writes, timeout_s=timeout_s)
             if err is not None:
                 self._dbg(f"bt vendor exchange error: {err}")
@@ -1449,219 +1277,34 @@ def find_razer_mouse(debug_hid: bool = False, enable_vendor_gatt: bool = True) -
 
     return None
 
-
-def print_status(mouse: RazerMouse):
-    """Print current mouse status."""
-    print("\n" + "=" * 50)
-    print("  Current Settings")
-    print("=" * 50)
-
-    serial = mouse.get_serial()
-    if serial:
-        print(f"\n  Serial:         {serial}")
-
-    fw = mouse.get_firmware()
-    if fw:
-        print(f"\n  Firmware:       v{fw[0]}.{fw[1]}")
-
-    # DPI
-    dpi = mouse.get_dpi()
-    if dpi:
-        print(f"\n  Current DPI:    {dpi[0]}" + (f" x {dpi[1]}" if dpi[0] != dpi[1] else ""))
-
-    # DPI Stages
-    stages = mouse.get_dpi_stages()
-    if stages:
-        active, stage_list = stages
-        print(f"\n  DPI Stages:     {len(stage_list)} configured")
-        for i, dpi in enumerate(stage_list):
-            marker = "  <-- active" if i == active else ""
-            print(f"    Stage {i+1}:      {dpi}{marker}")
-
-    # Poll Rate
-    poll = mouse.get_poll_rate()
-    if poll:
-        print(f"\n  Poll Rate:      {poll} Hz")
-
-    mode = mouse.get_device_mode()
-    if mode is not None:
-        mode_name = "driver" if mode[0] == 0x03 else "normal"
-        print(f"\n  Device Mode:    {mode_name} ({mode[0]}:{mode[1]})")
-
-    idle = mouse.get_idle_time()
-    if idle is not None:
-        print(f"\n  Idle Time:      {idle}s")
-
-    low_batt = mouse.get_low_battery_threshold()
-    if low_batt is not None:
-        pct = int((low_batt / 255.0) * 100)
-        print(f"\n  Low Battery:    raw {low_batt} (~{pct}%)")
-
-    smode = mouse.get_scroll_mode()
-    if smode is not None:
-        smode_name = "freespin" if smode == 1 else "tactile"
-        print(f"\n  Scroll Mode:    {smode_name} ({smode})")
-
-    sacc = mouse.get_scroll_acceleration()
-    if sacc is not None:
-        print(f"\n  Scroll Accel:   {'on' if sacc else 'off'}")
-
-    ssr = mouse.get_scroll_smart_reel()
-    if ssr is not None:
-        print(f"\n  Smart Reel:     {'on' if ssr else 'off'}")
-
-    scroll_led = mouse.get_scroll_led_brightness()
-    if scroll_led is not None:
-        print(f"\n  Scroll LED:     brightness {scroll_led}/255")
-
-    # Battery
-    battery = mouse.get_battery()
-    if battery:
-        level, charging = battery
-        status = " (charging)" if charging else ""
-        print(f"\n  Battery:        {level}%{status}")
-
-    if mouse.vendor_id == BT_VENDOR_ID_RAZER:
-        power16 = mouse.get_power_timeout_raw()
-        sleep8 = mouse.get_sleep_timeout_raw()
-        light8 = mouse.get_lighting_value_raw()
-        batt_raw = mouse.get_battery_vendor_raw()
-        batt_status = mouse.get_battery_status_vendor_raw()
-        if power16 is not None or sleep8 is not None or light8 is not None or batt_raw is not None or batt_status is not None:
-            print("\n  BLE Raw:")
-            if power16 is not None:
-                print(f"    Power Timeout (u16): {power16} (0x{power16:04x})")
-            if sleep8 is not None:
-                print(f"    Sleep Timeout (u8):  {sleep8} (0x{sleep8:02x})")
-            if light8 is not None:
-                print(f"    Lighting Value (u8): {light8} (0x{light8:02x})")
-            if batt_raw is not None:
-                print(f"    Battery Raw (u8):    {batt_raw} (0x{batt_raw:02x})")
-            if batt_status is not None:
-                print(f"    Battery Status (u8): {batt_status} (0x{batt_status:02x})")
-
-    print()
-
-
-def _parse_rgb_hex(value: str) -> Optional[Tuple[int, int, int]]:
-    s = (value or "").strip().lower().replace("#", "")
-    if len(s) != 6:
-        return None
-    try:
-        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
-    except Exception:
-        return None
-
-
 def main():
-    parser = argparse.ArgumentParser(
-        description="Configure Razer mouse settings on macOS",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s                              Show current settings
-  %(prog)s --dpi 1600                   Set DPI to 1600
-  %(prog)s --stages 400,800,1600,3200   Set 4 DPI stages
-  %(prog)s --stages 800,1600,3200 --active-stage 2
-                                        Set stages with stage 2 active
-  %(prog)s --single-dpi 1600            Use one fixed DPI stage
-  %(prog)s --poll-rate 1000             Set polling rate to 1000 Hz
-
-Note: This script targets Bluetooth transport.
-        """
-    )
-    parser.add_argument('--dpi', type=int, metavar='DPI',
-                        help='Set current DPI (100-30000)')
-    parser.add_argument('--stages', type=str, metavar='DPI,DPI,...',
-                        help='Set DPI stages (comma-separated, 1-5 values)')
-    parser.add_argument('--active-stage', type=int, metavar='N',
-                        help='Set active DPI stage (1-5)')
-    parser.add_argument('--single-dpi', type=int, metavar='DPI',
-                        help='Set single fixed DPI mode (1 stage)')
-    parser.add_argument('--poll-rate', type=int, choices=[125, 500, 1000],
-                        metavar='HZ', help='Set polling rate (125/500/1000 Hz)')
-    parser.add_argument('--device-mode', choices=['normal', 'driver'],
-                        help='Set device mode')
-    parser.add_argument('--idle-time', type=int, metavar='SECONDS',
-                        help='Set idle timeout seconds (60-900)')
-    parser.add_argument('--low-battery-threshold', type=int, metavar='RAW',
-                        help='Set low battery threshold raw value (0x0c-0x3f)')
-    parser.add_argument('--scroll-mode', choices=['tactile', 'freespin'],
-                        help='Set scroll wheel mode')
-    parser.add_argument('--scroll-acceleration', choices=['on', 'off'],
-                        help='Set scroll acceleration')
-    parser.add_argument('--scroll-smart-reel', choices=['on', 'off'],
-                        help='Set scroll smart reel')
-    parser.add_argument('--scroll-led-brightness', type=int, metavar='0-255',
-                        help='Set scroll wheel LED brightness')
-    parser.add_argument('--scroll-led-effect', choices=['none', 'spectrum', 'wave-left', 'wave-right', 'breath-random'],
-                        help='Set scroll wheel LED effect')
-    parser.add_argument('--scroll-led-static', type=str, metavar='RRGGBB',
-                        help='Set static scroll LED color (hex)')
-    parser.add_argument('--scroll-led-reactive', type=str, metavar='SPEED:RRGGBB',
-                        help='Set reactive scroll LED (speed 1-4)')
-    parser.add_argument('--scroll-led-breath-single', type=str, metavar='RRGGBB',
-                        help='Set breathing single-color scroll LED')
-    parser.add_argument('--scroll-led-breath-dual', type=str, metavar='RRGGBB:RRGGBB',
-                        help='Set breathing dual-color scroll LED')
-    parser.add_argument('--usb-button-action', type=str, metavar='PROFILE:BTN:TYPE:PARAMHEX[:FN]',
-                        help='Experimental USB button action write (class 0x02 id 0x0D)')
-    parser.add_argument('--power-timeout-raw', type=int, metavar='N',
-                        help='BLE raw u16 write (key 0504/0584)')
-    parser.add_argument('--sleep-timeout-raw', type=int, metavar='N',
-                        help='BLE raw u8 write (key 0502/0582)')
-    parser.add_argument('--lighting-value-raw', type=int, metavar='N',
-                        help='BLE raw u8 write (key 1005/1085)')
-    parser.add_argument('--lighting-rgb', type=str, metavar='RRGGBB',
-                        help='BLE vendor key 1004 color frame write (capture-backed)')
-    parser.add_argument('--lighting-frame-raw', type=str, metavar='MMRRGGBB',
-                        help='BLE vendor key 1004 raw 4-byte frame (marker+RGB)')
-    parser.add_argument('--lighting-mode-raw', type=int, metavar='N',
-                        help='BLE raw u32 write (key 1003), capture-backed mode selector')
-    parser.add_argument('--lighting-spectrum-seconds', type=float, metavar='N',
-                        help='BLE vendor key 1004 stream: run one spectrum cycle over N seconds')
-    parser.add_argument('--button-bind-raw', type=str, metavar='SLOT:HEX',
-                        help='BLE raw button bind write (10-byte payload hex)')
-    parser.add_argument('--button-default', type=int, metavar='SLOT',
-                        help='Set button slot to default mouse action (capture-backed)')
-    parser.add_argument('--button-mouse', type=str, metavar='SLOT:BTN',
-                        help='Set button slot to mouse-button action (BTN id; 1=left, 2=right, 3=middle, 9=scroll up, 10=scroll down)')
-    parser.add_argument('--button-left-click', type=int, metavar='SLOT',
-                        help='Set button slot to left-click mouse action')
-    parser.add_argument('--button-right-click', type=int, metavar='SLOT',
-                        help='Set button slot to right-click mouse action')
-    parser.add_argument('--button-middle-click', type=int, metavar='SLOT',
-                        help='Set button slot to middle-click mouse action')
-    parser.add_argument('--button-scroll-up', type=int, metavar='SLOT',
-                        help='Set button slot to scroll-up mouse action (capture-backed id 0x09)')
-    parser.add_argument('--button-scroll-down', type=int, metavar='SLOT',
-                        help='Set button slot to scroll-down mouse action (capture-backed id 0x0A)')
-    parser.add_argument('--button-mouse-turbo', type=str, metavar='SLOT:BTN:RATE',
-                        help='Set button slot to turbo mouse action (BTN id + turbo rate 1-255)')
-    parser.add_argument('--button-keyboard', type=str, metavar='SLOT:KEY',
-                        help='Set button slot to simple keyboard action (hid key code)')
-    parser.add_argument('--button-keyboard-turbo', type=str, metavar='SLOT:KEY:RATE',
-                        help='Set button slot to turbo keyboard action (hid key + turbo rate 1-255)')
-    parser.add_argument('--button-keyboard-ext', type=str, metavar='SLOT:K1:K2',
-                        help='Set button slot to extended keyboard action (capture-backed action 0x0d)')
-    parser.add_argument('--button-action-u16', type=str, metavar='SLOT:TYPE:P0:P1:P2',
-                        help='Generic action payload using 3x u16 params')
-    parser.add_argument('--button-clear-layer', type=str, metavar='SLOT:LAYER',
-                        help='Clear button override entry on a layer (capture-backed action 0x00)')
-    parser.add_argument('--vendor-key-get', type=str, metavar='KEY4HEX',
-                        help='Read arbitrary BLE vendor key (8 hex chars, read-only)')
-    parser.add_argument('--quiet', '-q', action='store_true',
-                        help='Minimal output')
-    parser.add_argument('--debug-hid', action='store_true',
-                        help='Enable verbose HID transport debug output')
-    parser.add_argument('--disable-vendor-gatt', action='store_true',
-                        help='Disable BLE vendor GATT path (enabled by default)')
-    parser.add_argument('--battery-ble', action='store_true',
-                        help='Read battery level via BLE Battery Service (macOS only)')
-    parser.add_argument('--battery-vendor', action='store_true',
-                        help='Read battery via BLE vendor keys')
-    parser.add_argument('--sniff-dpi', nargs='?', const=8.0, type=float, metavar='SECONDS',
-                        help='Bluetooth: sniff passive DPI reports for N seconds (default: 8)')
+    parser = build_common_parser(note="This script targets Bluetooth transport.")
+    parser.add_argument("--power-timeout-raw", type=int, metavar="N", help="BLE raw u16 write (key 0504/0584)")
+    parser.add_argument("--sleep-timeout-raw", type=int, metavar="N", help="BLE raw u8 write (key 0502/0582)")
+    parser.add_argument("--lighting-value-raw", type=int, metavar="N", help="BLE raw u8 write (key 1005/1085)")
+    parser.add_argument("--lighting-rgb", type=str, metavar="RRGGBB", help="BLE vendor key 1004 color frame write (capture-backed)")
+    parser.add_argument("--lighting-frame-raw", type=str, metavar="MMRRGGBB", help="BLE vendor key 1004 raw 4-byte frame (marker+RGB)")
+    parser.add_argument("--lighting-mode-raw", type=int, metavar="N", help="BLE raw u32 write (key 1003), capture-backed mode selector")
+    parser.add_argument("--lighting-spectrum-seconds", type=float, metavar="N", help="BLE vendor key 1004 stream: run one spectrum cycle over N seconds")
+    parser.add_argument("--button-bind-raw", type=str, metavar="SLOT:HEX", help="BLE raw button bind write (10-byte payload hex)")
+    parser.add_argument("--button-default", type=int, metavar="SLOT", help="Set button slot to default mouse action (capture-backed)")
+    parser.add_argument("--button-mouse", type=str, metavar="SLOT:BTN", help="Set button slot to mouse-button action (BTN id; 1=left, 2=right, 3=middle, 9=scroll up, 10=scroll down)")
+    parser.add_argument("--button-left-click", type=int, metavar="SLOT", help="Set button slot to left-click mouse action")
+    parser.add_argument("--button-right-click", type=int, metavar="SLOT", help="Set button slot to right-click mouse action")
+    parser.add_argument("--button-middle-click", type=int, metavar="SLOT", help="Set button slot to middle-click mouse action")
+    parser.add_argument("--button-scroll-up", type=int, metavar="SLOT", help="Set button slot to scroll-up mouse action (capture-backed id 0x09)")
+    parser.add_argument("--button-scroll-down", type=int, metavar="SLOT", help="Set button slot to scroll-down mouse action (capture-backed id 0x0A)")
+    parser.add_argument("--button-mouse-turbo", type=str, metavar="SLOT:BTN:RATE", help="Set button slot to turbo mouse action (BTN id + turbo rate 1-255)")
+    parser.add_argument("--button-keyboard", type=str, metavar="SLOT:KEY", help="Set button slot to simple keyboard action (hid key code)")
+    parser.add_argument("--button-keyboard-turbo", type=str, metavar="SLOT:KEY:RATE", help="Set button slot to turbo keyboard action (hid key + turbo rate 1-255)")
+    parser.add_argument("--button-keyboard-ext", type=str, metavar="SLOT:K1:K2", help="Set button slot to extended keyboard action (capture-backed action 0x0d)")
+    parser.add_argument("--button-action-u16", type=str, metavar="SLOT:TYPE:P0:P1:P2", help="Generic action payload using 3x u16 params")
+    parser.add_argument("--button-clear-layer", type=str, metavar="SLOT:LAYER", help="Clear button override entry on a layer (capture-backed action 0x00)")
+    parser.add_argument("--vendor-key-get", type=str, metavar="KEY4HEX", help="Read arbitrary BLE vendor key (8 hex chars, read-only)")
+    parser.add_argument("--disable-vendor-gatt", action="store_true", help="Disable BLE vendor GATT path (enabled by default)")
+    parser.add_argument("--battery-ble", action="store_true", help="Read battery level via BLE Battery Service (macOS only)")
+    parser.add_argument("--battery-vendor", action="store_true", help="Read battery via BLE vendor keys")
+    parser.add_argument("--sniff-dpi", nargs="?", const=8.0, type=float, metavar="SECONDS", help="Bluetooth: sniff passive DPI reports for N seconds (default: 8)")
 
     args = parser.parse_args()
 
@@ -1683,260 +1326,10 @@ Note: This script targets Bluetooth transport.
         name, max_dpi = KNOWN_MICE.get(mouse.product_id, ("Razer Mouse", 30000))
         print(f"Found: {name}")
 
-    # Handle commands
+    exit_code, _made_changes = dispatch_common_commands(mouse, args)
+    if exit_code != 0:
+        return exit_code
     made_changes = False
-
-    if args.single_dpi:
-        val = max(100, min(30000, int(args.single_dpi)))
-        print(f"\nSetting single fixed DPI mode: {val}")
-        if mouse.set_dpi_stages([val], 0):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    elif args.stages:
-        try:
-            stages = [int(x.strip()) for x in args.stages.split(',')]
-            if len(stages) < 1 or len(stages) > 5:
-                print("Error: Specify 1-5 DPI stages")
-                return 1
-
-            active = (args.active_stage - 1) if args.active_stage else 0
-            active = max(0, min(len(stages) - 1, active))
-
-            print(f"\nSetting DPI stages: {stages}")
-            print(f"Active stage: {active + 1}")
-
-            if mouse.set_dpi_stages(stages, active):
-                print("  Success!")
-                made_changes = True
-            else:
-                print("  Failed!")
-                return 1
-        except ValueError:
-            print("Error: Invalid DPI values. Use comma-separated numbers.")
-            return 1
-
-    elif args.active_stage:
-        print(f"\nSetting active stage to: {args.active_stage}")
-        if mouse.set_active_stage(args.active_stage):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed! (Stage out of range?)")
-            return 1
-
-    if args.dpi:
-        print(f"\nSetting DPI to: {args.dpi}")
-        if mouse.set_dpi(args.dpi):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.poll_rate:
-        print(f"\nSetting poll rate to: {args.poll_rate} Hz")
-        if mouse.set_poll_rate(args.poll_rate):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.device_mode:
-        mode = 0x03 if args.device_mode == "driver" else 0x00
-        print(f"\nSetting device mode to: {args.device_mode}")
-        if mouse.set_device_mode(mode, 0x00):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.idle_time is not None:
-        print(f"\nSetting idle time to: {args.idle_time}s")
-        if mouse.set_idle_time(args.idle_time):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.low_battery_threshold is not None:
-        print(f"\nSetting low battery threshold raw to: {args.low_battery_threshold}")
-        if mouse.set_low_battery_threshold(args.low_battery_threshold):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_mode:
-        mode = 1 if args.scroll_mode == "freespin" else 0
-        print(f"\nSetting scroll mode to: {args.scroll_mode}")
-        if mouse.get_scroll_mode() is None:
-            print("  Unsupported on this device/transport; skipping.")
-            mode = None
-        if mode is None:
-            pass
-        elif mouse.set_scroll_mode(mode):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_acceleration:
-        enabled = args.scroll_acceleration == "on"
-        print(f"\nSetting scroll acceleration: {args.scroll_acceleration}")
-        if mouse.get_scroll_acceleration() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_acceleration(enabled):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_smart_reel:
-        enabled = args.scroll_smart_reel == "on"
-        print(f"\nSetting scroll smart reel: {args.scroll_smart_reel}")
-        if mouse.get_scroll_smart_reel() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_smart_reel(enabled):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_led_brightness is not None:
-        print(f"\nSetting scroll LED brightness to: {args.scroll_led_brightness}")
-        if mouse.get_scroll_led_brightness() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_led_brightness(args.scroll_led_brightness):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_led_effect:
-        print(f"\nSetting scroll LED effect to: {args.scroll_led_effect}")
-        if mouse.get_scroll_led_brightness() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        else:
-            ok = False
-            if args.scroll_led_effect == "none":
-                ok = mouse.set_scroll_led_effect_none()
-            elif args.scroll_led_effect == "spectrum":
-                ok = mouse.set_scroll_led_effect_spectrum()
-            elif args.scroll_led_effect == "wave-left":
-                ok = mouse.set_scroll_led_effect_wave(1)
-            elif args.scroll_led_effect == "wave-right":
-                ok = mouse.set_scroll_led_effect_wave(2)
-            elif args.scroll_led_effect == "breath-random":
-                ok = mouse.set_scroll_led_effect_breath_random()
-            if ok:
-                print("  Success!")
-                made_changes = True
-            else:
-                print("  Failed!")
-                return 1
-
-    if args.scroll_led_static:
-        rgb = _parse_rgb_hex(args.scroll_led_static)
-        if rgb is None:
-            print("\nInvalid --scroll-led-static; expected RRGGBB.")
-            return 1
-        print(f"\nSetting scroll LED static color to: #{args.scroll_led_static.strip().lstrip('#')}")
-        if mouse.get_scroll_led_brightness() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_led_effect_static(*rgb):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_led_reactive:
-        try:
-            speed_s, rgb_s = args.scroll_led_reactive.split(':', 1)
-            speed = int(speed_s, 0)
-            rgb = _parse_rgb_hex(rgb_s)
-            if rgb is None:
-                raise ValueError("bad rgb")
-        except Exception:
-            print("\nInvalid --scroll-led-reactive; expected SPEED:RRGGBB.")
-            return 1
-        print(f"\nSetting scroll LED reactive effect speed={speed} color=#{rgb_s.strip().lstrip('#')}")
-        if mouse.get_scroll_led_brightness() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_led_effect_reactive(speed, *rgb):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_led_breath_single:
-        rgb = _parse_rgb_hex(args.scroll_led_breath_single)
-        if rgb is None:
-            print("\nInvalid --scroll-led-breath-single; expected RRGGBB.")
-            return 1
-        print(f"\nSetting scroll LED breathing single color to: #{args.scroll_led_breath_single.strip().lstrip('#')}")
-        if mouse.get_scroll_led_brightness() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_led_effect_breath_single(*rgb):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.scroll_led_breath_dual:
-        try:
-            c1, c2 = args.scroll_led_breath_dual.split(':', 1)
-            rgb1 = _parse_rgb_hex(c1)
-            rgb2 = _parse_rgb_hex(c2)
-            if rgb1 is None or rgb2 is None:
-                raise ValueError("bad rgb")
-        except Exception:
-            print("\nInvalid --scroll-led-breath-dual; expected RRGGBB:RRGGBB.")
-            return 1
-        print(f"\nSetting scroll LED breathing dual colors to: #{c1.strip().lstrip('#')} and #{c2.strip().lstrip('#')}")
-        if mouse.get_scroll_led_brightness() is None:
-            print("  Unsupported on this device/transport; skipping.")
-        elif mouse.set_scroll_led_effect_breath_dual(*rgb1, *rgb2):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
-
-    if args.usb_button_action:
-        try:
-            parts = args.usb_button_action.split(':')
-            if len(parts) not in (4, 5):
-                raise ValueError("bad part count")
-            profile = int(parts[0], 0)
-            button_id = int(parts[1], 0)
-            action_type = int(parts[2], 0)
-            param_bytes = bytes.fromhex(parts[3].strip()) if parts[3].strip() else b""
-            fn_flag = bool(int(parts[4], 0)) if len(parts) == 5 else False
-        except Exception:
-            print("\nInvalid --usb-button-action format. Use PROFILE:BTN:TYPE:PARAMHEX[:FN].")
-            return 1
-        print(f"\nSetting USB button action profile={profile} button={button_id} type=0x{action_type:02x} params={param_bytes.hex()} fn={int(fn_flag)}")
-        if mouse.set_usb_button_action(profile, button_id, action_type, param_bytes, fn_hypershift=fn_flag):
-            print("  Success!")
-            made_changes = True
-        else:
-            print("  Failed!")
-            return 1
 
     if args.power_timeout_raw is not None:
         val = max(0, min(0xFFFF, int(args.power_timeout_raw)))
@@ -1969,7 +1362,7 @@ Note: This script targets Bluetooth transport.
             return 1
 
     if args.lighting_rgb:
-        rgb = _parse_rgb_hex(args.lighting_rgb)
+        rgb = parse_rgb_hex(args.lighting_rgb)
         if rgb is None:
             print("\nInvalid --lighting-rgb; expected RRGGBB.")
             return 1
@@ -2273,7 +1666,29 @@ Note: This script targets Bluetooth transport.
         or args.lighting_spectrum_seconds is not None
     )
     if not args.quiet and not did_lighting_write:
-        print_status(mouse)
+        def ble_extra_status(bound_mouse: RazerMouse):
+            if bound_mouse.vendor_id != BT_VENDOR_ID_RAZER:
+                return
+            power16 = bound_mouse.get_power_timeout_raw()
+            sleep8 = bound_mouse.get_sleep_timeout_raw()
+            light8 = bound_mouse.get_lighting_value_raw()
+            batt_raw = bound_mouse.get_battery_vendor_raw()
+            batt_status = bound_mouse.get_battery_status_vendor_raw()
+            if power16 is None and sleep8 is None and light8 is None and batt_raw is None and batt_status is None:
+                return
+            print("\n  BLE Raw:")
+            if power16 is not None:
+                print(f"    Power Timeout (u16): {power16} (0x{power16:04x})")
+            if sleep8 is not None:
+                print(f"    Sleep Timeout (u8):  {sleep8} (0x{sleep8:02x})")
+            if light8 is not None:
+                print(f"    Lighting Value (u8): {light8} (0x{light8:02x})")
+            if batt_raw is not None:
+                print(f"    Battery Raw (u8):    {batt_raw} (0x{batt_raw:02x})")
+            if batt_status is not None:
+                print(f"    Battery Status (u8): {batt_status} (0x{batt_status:02x})")
+
+        print_status(mouse, extra_status=ble_extra_status)
 
     return 0
 
