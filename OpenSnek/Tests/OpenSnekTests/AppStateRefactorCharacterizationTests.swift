@@ -705,6 +705,9 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         }
 
         await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.refreshButtonProfilePresentation()
+        }
 
         try await waitForRefactorCondition(timeout: 2.0) {
             await MainActor.run {
