@@ -27,10 +27,12 @@ final class EditorStore {
     var editableSecondaryColor = RGBColor(r: 0, g: 170, b: 255)
     var editableButtonBindings: [Int: ButtonBindingDraft] = [:]
     var isEditingDpiControl = false
+    var isButtonProfileOperationInFlight = false
     var usbButtonProfilesRevision = 0
 
     @ObservationIgnored private weak var editorControllerStorage: AppStateEditorController?
     @ObservationIgnored private weak var applyControllerStorage: AppStateApplyController?
+    @ObservationIgnored private var buttonProfileOperationDepth = 0
 
     init(deviceStore: DeviceStore) {
         self.deviceStore = deviceStore
@@ -56,6 +58,18 @@ final class EditorStore {
             preconditionFailure("EditorStore accessed before applyController was bound")
         }
         return applyControllerStorage
+    }
+
+    private func withButtonProfileOperation<T>(
+        _ operation: @escaping @MainActor () async -> T
+    ) async -> T {
+        buttonProfileOperationDepth += 1
+        isButtonProfileOperationInFlight = true
+        defer {
+            buttonProfileOperationDepth = max(0, buttonProfileOperationDepth - 1)
+            isButtonProfileOperationInFlight = buttonProfileOperationDepth > 0
+        }
+        return await operation()
     }
 
     var visibleUSBLightingZones: [USBLightingZoneDescriptor] {
@@ -315,7 +329,9 @@ final class EditorStore {
     }
 
     func loadButtonProfileSourceIntoLive(_ source: ButtonProfileSource) async {
-        await editorController.loadButtonProfileSourceIntoLive(source)
+        await withButtonProfileOperation { [self] in
+            await self.editorController.loadButtonProfileSourceIntoLive(source)
+        }
     }
 
     func selectNextOnboardButtonProfile() {
@@ -323,35 +339,51 @@ final class EditorStore {
     }
 
     func duplicateSelectedUSBButtonProfile() async {
-        await applyController.duplicateSelectedUSBButtonProfile()
+        await withButtonProfileOperation { [self] in
+            await self.applyController.duplicateSelectedUSBButtonProfile()
+        }
     }
 
     func duplicateSelectedUSBButtonProfile(to targetProfile: Int) async {
-        await applyController.duplicateSelectedUSBButtonProfile(to: targetProfile)
+        await withButtonProfileOperation { [self] in
+            await self.applyController.duplicateSelectedUSBButtonProfile(to: targetProfile)
+        }
     }
 
     func resetSelectedUSBButtonProfile() async {
-        await applyController.resetSelectedUSBButtonProfile()
+        await withButtonProfileOperation { [self] in
+            await self.applyController.resetSelectedUSBButtonProfile()
+        }
     }
 
     func projectSelectedUSBButtonProfileToDirectLayer() async {
-        await applyController.projectSelectedUSBButtonProfileToDirectLayer()
+        await withButtonProfileOperation { [self] in
+            await self.applyController.projectSelectedUSBButtonProfileToDirectLayer()
+        }
     }
 
     func saveSelectedUSBButtonProfile(activateAfterSave: Bool = false) async {
-        await applyController.saveSelectedUSBButtonProfile(activateAfterSave: activateAfterSave)
+        await withButtonProfileOperation { [self] in
+            await self.applyController.saveSelectedUSBButtonProfile(activateAfterSave: activateAfterSave)
+        }
     }
 
     func applyCurrentButtonWorkspaceToLive() async {
-        await applyController.applyCurrentButtonWorkspaceToLive()
+        await withButtonProfileOperation { [self] in
+            await self.applyController.applyCurrentButtonWorkspaceToLive()
+        }
     }
 
     func writeCurrentButtonWorkspaceToMouseSlot(_ slot: Int) async {
-        await applyController.writeCurrentButtonWorkspaceToMouseSlot(slot)
+        await withButtonProfileOperation { [self] in
+            await self.applyController.writeCurrentButtonWorkspaceToMouseSlot(slot)
+        }
     }
 
     func resetLiveButtonsToDeviceDefaultSlot() async {
-        await applyController.resetLiveButtonsToDeviceDefaultSlot()
+        await withButtonProfileOperation { [self] in
+            await self.applyController.resetLiveButtonsToDeviceDefaultSlot()
+        }
     }
 
     func revertButtonWorkspaceToSource() {

@@ -1416,6 +1416,68 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
     }
 
+    func testLoadingButtonProfileIntoLiveMarksProfileOperationBusyUntilApplyFinishes() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-profile-load-busy-device",
+            transport: .usb,
+            serial: "USB-PROFILE-LOAD-BUSY-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let saved = preferenceStore.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        defer {
+            clearSavedButtonProfiles()
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 82,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ],
+            holdFirstApply: true
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let loadTask = Task {
+            await appState.editorStore.loadButtonProfileSourceIntoLive(.openSnekProfile(saved.id))
+        }
+
+        await backend.waitForFirstApplyToStart()
+
+        let busyDuringApply = await MainActor.run { appState.editorStore.isButtonProfileOperationInFlight }
+        XCTAssertTrue(busyDuringApply)
+
+        await MainActor.run { XCTAssertEqual(appState.editorStore.buttonBindingKind(for: 4), .rightClick) }
+
+        await backend.releaseFirstApply()
+        await loadTask.value
+
+        try await waitForRefactorCondition(timeout: 2.0) {
+            await MainActor.run { !appState.editorStore.isButtonProfileOperationInFlight }
+        }
+    }
+
     func testSelectingSavedButtonProfileHydratesWorkingCopy() async throws {
         let device = makeRefactorTestDevice(
             id: "saved-button-profile-device",

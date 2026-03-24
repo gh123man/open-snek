@@ -1378,6 +1378,10 @@ struct ButtonMappingTableCard: View {
     let editorStore: EditorStore
     let title: String
 
+    private var isBusy: Bool {
+        deviceStore.isApplying || editorStore.isButtonProfileOperationInFlight
+    }
+
     private var rows: [ButtonBindingRowModel] {
         deviceStore.visibleButtonSlots.map { slot in
             let kind = editorStore.buttonBindingKind(for: slot.slot)
@@ -1386,7 +1390,7 @@ struct ButtonMappingTableCard: View {
             return ButtonBindingRowModel(
                 slot: slot.slot,
                 friendlyName: slot.friendlyName,
-                isEditable: deviceStore.isButtonSlotEditable(slot.slot),
+                isEditable: deviceStore.isButtonSlotEditable(slot.slot) && !isBusy,
                 selectedKind: kind,
                 turboEligible: kind != .default && kind.supportsTurbo,
                 clutchDPI: editorStore.buttonBindingClutchDPI(for: slot.slot),
@@ -1401,7 +1405,11 @@ struct ButtonMappingTableCard: View {
     var body: some View {
         Card(title: title) {
             VStack(alignment: .leading, spacing: 12) {
-                ButtonProfileWorkspaceStrip(editorStore: editorStore)
+                ButtonProfileWorkspaceStrip(
+                    deviceStore: deviceStore,
+                    editorStore: editorStore,
+                    isBusy: isBusy
+                )
 
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(rows) { row in
@@ -1418,7 +1426,9 @@ struct ButtonMappingTableCard: View {
 }
 
 private struct ButtonProfileWorkspaceStrip: View {
+    let deviceStore: DeviceStore
     let editorStore: EditorStore
+    let isBusy: Bool
 
     @State private var saveProfileName = ""
     @State private var showsLoadPopover = false
@@ -1440,6 +1450,16 @@ private struct ButtonProfileWorkspaceStrip: View {
         return loadedFromDisplayLabel(for: currentSource)
     }
 
+    private var statusLabel: String? {
+        if editorStore.isButtonProfileOperationInFlight {
+            return "Applying to mouse…"
+        }
+        if deviceStore.isApplying {
+            return "Writing to mouse…"
+        }
+        return nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
@@ -1448,6 +1468,16 @@ private struct ButtonProfileWorkspaceStrip: View {
                     .foregroundStyle(.white.opacity(0.62))
 
                 headerControls
+            }
+
+            if let statusLabel {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(statusLabel)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.64))
+                }
             }
 
             if let loadedFromLabel {
@@ -1508,6 +1538,13 @@ private struct ButtonProfileWorkspaceStrip: View {
                 showsManageProfiles = true
             }
             .buttonStyle(.bordered)
+            .disabled(isBusy)
+
+            if isBusy {
+                Spacer(minLength: 0)
+                ProgressView()
+                    .controlSize(.small)
+            }
         }
     }
 
@@ -1518,6 +1555,7 @@ private struct ButtonProfileWorkspaceStrip: View {
             Text("Load")
         }
         .buttonStyle(.bordered)
+        .disabled(isBusy)
         .popover(isPresented: $showsLoadPopover, arrowEdge: .bottom) {
             LoadButtonProfilePopover(
                 editorStore: editorStore,
@@ -1546,6 +1584,7 @@ private struct ButtonProfileWorkspaceStrip: View {
             Text("Store")
         }
         .buttonStyle(.bordered)
+        .disabled(isBusy)
         .popover(isPresented: $showsStorePopover, arrowEdge: .bottom) {
             StoreButtonProfilePopover(
                 editorStore: editorStore,
