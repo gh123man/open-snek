@@ -119,6 +119,69 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(secondReadOrder, [bluetoothDevice.id, unavailableDongle.id, bluetoothDevice.id])
     }
 
+    func testSelectingVisibleDeviceWithoutCachedStateStartsImmediateRefresh() async throws {
+        let alphaDevice = makeTestDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .bluetooth,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [alphaDevice],
+            stateByDeviceID: [
+                alphaDevice.id: makeTestState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 0,
+                    dpiValue: 1200
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.setState(
+            makeTestState(
+                device: betaDevice,
+                connection: "bluetooth",
+                batteryPercent: 72,
+                dpiValues: [3200, 4800, 6400],
+                activeStage: 1,
+                dpiValue: 4800
+            ),
+            for: betaDevice.id
+        )
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([alphaDevice, betaDevice], source: "test")
+            appState.deviceStore.selectDevice(betaDevice.id)
+        }
+
+        try await waitForAppStateCondition {
+            await backend.readCount(for: betaDevice.id) == 1
+        }
+
+        let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+
+        XCTAssertEqual(selectedDeviceID, betaDevice.id)
+        XCTAssertEqual(selectedDpi, 4800)
+    }
+
     func testSelectedUnavailableDeviceClearsPresentedStateInsteadOfShowingStaleCache() async {
         let usbDevice = makeTestDevice(
             id: "usb-dongle",

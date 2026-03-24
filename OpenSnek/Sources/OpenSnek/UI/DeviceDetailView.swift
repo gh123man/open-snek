@@ -422,6 +422,77 @@ struct DeviceUnavailableDetailView: View {
     }
 }
 
+struct DeviceConnectingDetailView: View {
+    let deviceStore: DeviceStore
+    let selected: MouseDevice
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                GenericDeviceOverviewBar(deviceStore: deviceStore, selected: selected)
+
+                VStack(spacing: 18) {
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(.white.opacity(0.92))
+
+                    VStack(spacing: 8) {
+                        Text(headline)
+                            .font(.system(size: 24, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+
+                        Text(subtitle)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.68))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 320)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 28)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 28)
+                                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        )
+                )
+
+                DiagnosticsFooter(deviceStore: deviceStore, device: selected, state: nil)
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WindowDragBlocker())
+        .task(id: selected.id) {
+            await deviceStore.refreshConnectionDiagnostics(for: selected)
+        }
+    }
+
+    private var headline: String {
+        switch selected.transport {
+        case .bluetooth:
+            "Connecting to \(selected.product_name)"
+        case .usb:
+            "Loading \(selected.product_name)"
+        }
+    }
+
+    private var subtitle: String {
+        switch selected.transport {
+        case .bluetooth:
+            "Establishing the Bluetooth control link and reading your settings."
+        case .usb:
+            "Reading device settings and preparing controls."
+        }
+    }
+}
+
 struct GenericDeviceOverviewBar: View {
     let deviceStore: DeviceStore
     let selected: MouseDevice

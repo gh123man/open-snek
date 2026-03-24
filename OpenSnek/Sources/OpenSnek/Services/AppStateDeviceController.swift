@@ -383,6 +383,10 @@ final class AppStateDeviceController {
         if environment.usesRemoteServiceTransport, previousSelectedID != deviceStore.selectedDeviceID {
             runtimeController.sendRemoteClientPresence()
         }
+
+        if let selectedDevice = deviceStore.selectedDevice {
+            requestSelectedDeviceRefreshIfNeeded(for: selectedDevice)
+        }
         return changed
     }
 
@@ -429,6 +433,7 @@ final class AppStateDeviceController {
         deviceStore.selectedDeviceID = deviceID
         syncSelectedDevicePresentation(deviceID: deviceID)
         if let selectedDevice = deviceStore.selectedDevice {
+            requestSelectedDeviceRefreshIfNeeded(for: selectedDevice)
             Task { [weak self] in
                 await self?.refreshConnectionDiagnostics(for: selectedDevice)
             }
@@ -495,6 +500,20 @@ final class AppStateDeviceController {
                 return
             }
             await editorController.hydrateButtonBindingsIfNeeded(device: device)
+        }
+    }
+
+    private func requestSelectedDeviceRefreshIfNeeded(for device: MouseDevice) {
+        guard !isTearingDown else { return }
+        guard !environment.usesRemoteServiceTransport else { return }
+        guard !isStrictlyUnsupported(device) else { return }
+        guard deviceStore.selectedDeviceID == device.id else { return }
+        guard !unavailableDeviceIDs.contains(device.id) else { return }
+        guard stateCacheByDeviceID[device.id] == nil else { return }
+        guard !refreshingStateDeviceIDs.contains(device.id) else { return }
+
+        Task { [weak self] in
+            await self?.refreshState(for: device)
         }
     }
 

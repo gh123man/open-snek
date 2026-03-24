@@ -64,6 +64,8 @@ struct ContentView: View {
                         selected: selected,
                         state: state
                     )
+                } else if shouldShowLoadingDetail(for: selected) {
+                    DeviceConnectingDetailView(deviceStore: deviceStore, selected: selected)
                 } else {
                     DeviceUnavailableDetailView(deviceStore: deviceStore, selected: selected)
                 }
@@ -89,6 +91,20 @@ struct ContentView: View {
                 .padding(.leading, 12)
                 .frame(maxWidth: 520, alignment: .leading)
             }
+        }
+    }
+
+    private func shouldShowLoadingDetail(for selected: MouseDevice) -> Bool {
+        guard deviceStore.selectedDeviceID == selected.id else { return false }
+        if deviceStore.isRefreshingState {
+            return true
+        }
+
+        switch deviceStore.connectionState(for: selected) {
+        case .connected, .reconnecting:
+            return true
+        case .disconnected, .unsupported, .error:
+            return false
         }
     }
 
