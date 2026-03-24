@@ -15,7 +15,8 @@ final class AppStateRuntimeController {
     private let environment: AppEnvironment
     private let deviceStore: DeviceStore
     private let runtimeStore: RuntimeStore
-    private weak var deviceControllerStorage: AppStateDeviceController?
+    @WeakBound("AppStateRuntimeController", dependency: "deviceController")
+    private var deviceController: AppStateDeviceController
 
     private var runtimeTask: Task<Void, Never>?
     private var didStartRuntime = false
@@ -59,14 +60,7 @@ final class AppStateRuntimeController {
     }
 
     func bind(deviceController: AppStateDeviceController) {
-        self.deviceControllerStorage = deviceController
-    }
-
-    private var deviceController: AppStateDeviceController {
-        guard let deviceControllerStorage else {
-            preconditionFailure("AppStateRuntimeController accessed before deviceController was bound")
-        }
-        return deviceControllerStorage
+        _deviceController.bind(deviceController)
     }
 
     var compactStatusMessage: String? {

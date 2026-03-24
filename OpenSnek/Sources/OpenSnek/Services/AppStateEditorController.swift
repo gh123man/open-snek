@@ -8,7 +8,8 @@ final class AppStateEditorController {
     private let deviceStore: DeviceStore
     private let editorStore: EditorStore
     private let buttonSlots: [ButtonSlotDescriptor]
-    private weak var applyControllerStorage: AppStateApplyController?
+    @WeakBound("AppStateEditorController", dependency: "applyController")
+    private var applyController: AppStateApplyController
 
     private let preferenceStore = DevicePreferenceStore()
     private(set) var isHydrating = false
@@ -37,14 +38,7 @@ final class AppStateEditorController {
     }
 
     func bind(applyController: AppStateApplyController) {
-        self.applyControllerStorage = applyController
-    }
-
-    private var applyController: AppStateApplyController {
-        guard let applyControllerStorage else {
-            preconditionFailure("AppStateEditorController accessed before applyController was bound")
-        }
-        return applyControllerStorage
+        _applyController.bind(applyController)
     }
 
     struct PersistedLightingRestorePlan {
