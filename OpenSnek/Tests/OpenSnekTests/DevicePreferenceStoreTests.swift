@@ -3,6 +3,38 @@ import OpenSnekAppSupport
 import OpenSnekCore
 
 final class DevicePreferenceStoreTests: XCTestCase {
+    func testOpenSnekButtonProfileLibrarySupportsSaveUpdateAndDelete() {
+        let suiteName = "DevicePreferenceStoreTests.Library.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = DevicePreferenceStore(defaults: defaults)
+        let saved = store.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .keyboardSimple, hidKey: 9, turboEnabled: false, turboRate: 0x8E)
+            ]
+        )
+
+        XCTAssertEqual(store.loadOpenSnekButtonProfiles().map(\.name), ["Travel"])
+        XCTAssertEqual(store.loadOpenSnekButtonProfiles().first?.bindings[4]?.hidKey, 9)
+
+        let updated = store.updateOpenSnekButtonProfile(
+            id: saved.id,
+            name: "Travel 2",
+            bindings: [
+                4: ButtonBindingDraft(kind: .mouseForward, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
+            ]
+        )
+
+        XCTAssertEqual(updated?.name, "Travel 2")
+        XCTAssertEqual(store.loadOpenSnekButtonProfiles().first?.bindings[4]?.kind, .mouseForward)
+
+        store.deleteOpenSnekButtonProfile(id: saved.id)
+        XCTAssertTrue(store.loadOpenSnekButtonProfiles().isEmpty)
+    }
+
     func testButtonBindingPersistencePreservesNonTextKeyboardHidKeys() {
         let suiteName = "DevicePreferenceStoreTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

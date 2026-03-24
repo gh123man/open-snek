@@ -1034,6 +1034,275 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(summaries.first(where: { $0.profile == 1 })?.isHardwareActive, true)
     }
 
+    func testSelectingSavedButtonProfileHydratesWorkingCopy() async throws {
+        let device = makeRefactorTestDevice(
+            id: "saved-button-profile-device",
+            transport: .usb,
+            serial: "SAVED-BUTTON-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let saved = preferenceStore.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        defer {
+            clearSavedButtonProfiles()
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 84,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.selectButtonProfileSource(.openSnekProfile(saved.id))
+        }
+
+        let binding = await MainActor.run { appState.editorStore.buttonBindingKind(for: 4) }
+        let displayName = await MainActor.run { appState.editorStore.currentButtonProfileDisplayName }
+        XCTAssertEqual(binding, .rightClick)
+        XCTAssertEqual(displayName, "Travel")
+    }
+
+    func testApplyCurrentButtonWorkspaceToLiveUsesDirectLayerWithoutOverwritingSavedProfileSource() async throws {
+        let device = makeRefactorTestDevice(
+            id: "saved-button-apply-device",
+            transport: .usb,
+            serial: "SAVED-APPLY-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let saved = preferenceStore.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        defer {
+            clearSavedButtonProfiles()
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 74,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.selectButtonProfileSource(.openSnekProfile(saved.id))
+        }
+        await appState.editorStore.applyCurrentButtonWorkspaceToLive()
+
+        let patches = await backend.recordedPatches()
+        let slotPatch = try XCTUnwrap(patches.last(where: { $0.buttonBinding?.slot == 4 }))
+        let liveDisplayName = await MainActor.run { appState.editorStore.liveButtonProfileDisplayName }
+        let currentSource = await MainActor.run { appState.editorStore.currentButtonProfileSource }
+
+        XCTAssertEqual(slotPatch.buttonBinding?.kind, .rightClick)
+        XCTAssertEqual(slotPatch.buttonBinding?.writePersistentLayer, false)
+        XCTAssertEqual(slotPatch.buttonBinding?.writeDirectLayer, true)
+        XCTAssertEqual(currentSource, .openSnekProfile(saved.id))
+        XCTAssertEqual(liveDisplayName, "Travel")
+    }
+
+    func testWriteCurrentButtonWorkspaceToMouseSlotPersistsWithoutChangingCurrentSource() async throws {
+        let device = makeRefactorTestDevice(
+            id: "saved-button-write-slot-device",
+            transport: .usb,
+            serial: "SAVED-WRITE-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let saved = preferenceStore.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        defer {
+            clearSavedButtonProfiles()
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 74,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.selectButtonProfileSource(.openSnekProfile(saved.id))
+        }
+        await appState.editorStore.writeCurrentButtonWorkspaceToMouseSlot(2)
+
+        let patches = await backend.recordedPatches()
+        let slotPatch = try XCTUnwrap(patches.last(where: { $0.buttonBinding?.slot == 4 }))
+        let currentSource = await MainActor.run { appState.editorStore.currentButtonProfileSource }
+
+        XCTAssertEqual(slotPatch.buttonBinding?.kind, .rightClick)
+        XCTAssertEqual(slotPatch.buttonBinding?.persistentProfile, 2)
+        XCTAssertEqual(slotPatch.buttonBinding?.writePersistentLayer, true)
+        XCTAssertEqual(slotPatch.buttonBinding?.writeDirectLayer, false)
+        XCTAssertEqual(currentSource, .openSnekProfile(saved.id))
+
+        await MainActor.run {
+            appState.editorStore.selectButtonProfileSource(.mouseSlot(2))
+        }
+
+        try await waitForRefactorCondition {
+            await MainActor.run { appState.editorStore.buttonBindingKind(for: 4) == .rightClick }
+        }
+    }
+
+    func testSelectingNextOnboardButtonProfileFollowsVisibleSlotOrder() async throws {
+        let device = makeRefactorTestDevice(
+            id: "saved-button-next-slot-device",
+            transport: .usb,
+            serial: "SAVED-NEXT-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let saved = preferenceStore.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        preferenceStore.savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                4: ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ],
+            profile: 1
+        )
+        preferenceStore.savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                4: ButtonBindingDraft(kind: .mouseForward, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ],
+            profile: 2
+        )
+        preferenceStore.savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                4: ButtonBindingDraft(kind: .mouseBack, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ],
+            profile: 3
+        )
+        defer {
+            clearSavedButtonProfiles()
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 74,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.selectButtonProfileSource(.openSnekProfile(saved.id))
+            appState.editorStore.selectNextOnboardButtonProfile()
+        }
+
+        try await waitForRefactorCondition {
+            await MainActor.run {
+                appState.editorStore.currentButtonProfileSource == .mouseSlot(2) &&
+                    appState.editorStore.buttonBindingKind(for: 4) == .mouseForward
+            }
+        }
+
+        await MainActor.run {
+            appState.editorStore.selectNextOnboardButtonProfile()
+        }
+        try await waitForRefactorCondition {
+            await MainActor.run {
+                appState.editorStore.currentButtonProfileSource == .mouseSlot(3) &&
+                    appState.editorStore.buttonBindingKind(for: 4) == .mouseBack
+            }
+        }
+
+        await MainActor.run {
+            appState.editorStore.selectNextOnboardButtonProfile()
+        }
+        try await waitForRefactorCondition {
+            await MainActor.run {
+                appState.editorStore.currentButtonProfileSource == .mouseSlot(1) &&
+                    appState.editorStore.buttonBindingKind(for: 4) == .default
+            }
+        }
+    }
+
     func testSwitchingBetweenUSBDevicesReusesSessionButtonBindingCache() async throws {
         let alphaDevice = makeRefactorTestDevice(
             id: "usb-alpha-device",
@@ -1389,6 +1658,11 @@ private func clearRefactorPreferences(for device: MouseDevice) {
             defaults.removeObject(forKey: storedKey)
         }
     }
+    clearSavedButtonProfiles()
+}
+
+private func clearSavedButtonProfiles() {
+    UserDefaults.standard.removeObject(forKey: "openSnekButtonProfiles")
 }
 
 private func waitForRefactorCondition(
