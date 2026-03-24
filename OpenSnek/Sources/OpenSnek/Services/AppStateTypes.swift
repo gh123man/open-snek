@@ -148,6 +148,8 @@ enum RuntimeWakeSchedule {
     static func nextSleepInterval(
         now: Date,
         profile: PollingProfile,
+        refreshStateIntervalOverride: TimeInterval? = nil,
+        devicePresenceIntervalOverride: TimeInterval? = nil,
         fastDpiInterval: TimeInterval?,
         usesRemoteServiceTransport: Bool,
         lastDevicePresencePollAt: Date,
@@ -162,8 +164,10 @@ enum RuntimeWakeSchedule {
         if usesRemoteServiceTransport {
             intervals.append(max(0, 1.0 - now.timeIntervalSince(lastRemoteClientPresencePingAt)))
         } else {
-            intervals.append(max(0, profile.devicePresenceInterval - now.timeIntervalSince(lastDevicePresencePollAt)))
-            intervals.append(max(0, profile.refreshStateInterval - now.timeIntervalSince(lastRefreshStatePollAt)))
+            let devicePresenceInterval = devicePresenceIntervalOverride ?? profile.devicePresenceInterval
+            let refreshStateInterval = refreshStateIntervalOverride ?? profile.refreshStateInterval
+            intervals.append(max(0, devicePresenceInterval - now.timeIntervalSince(lastDevicePresencePollAt)))
+            intervals.append(max(0, refreshStateInterval - now.timeIntervalSince(lastRefreshStatePollAt)))
             if let fastInterval = fastDpiInterval {
                 intervals.append(max(0, fastInterval - now.timeIntervalSince(lastFastDpiPollAt)))
             }

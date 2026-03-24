@@ -99,6 +99,46 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(pollRate, 1000)
     }
 
+    func testApplyRemoteServiceSnapshotWithoutStateTriggersImmediateRemoteRead() async throws {
+        let device = makeSnapshotDevice(
+            id: "snapshot-remote-read-device",
+            productName: "Snapshot Remote Mouse",
+            transport: .usb,
+            serial: "SNAPSHOT-READ",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let state = makeSnapshotState(
+            device: device,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [800, 2400, 6400],
+            activeStage: 1,
+            dpiValue: 2400
+        )
+        let backend = SnapshotReadbackRemoteBackend(stateByDeviceID: [device.id: state])
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        let snapshot = SharedServiceSnapshot(
+            devices: [device],
+            stateByDeviceID: [:],
+            lastUpdatedByDeviceID: [:]
+        )
+
+        await MainActor.run {
+            appState.deviceStore.applyRemoteServiceSnapshot(snapshot)
+        }
+
+        try await waitUntil {
+            await backend.readCount(for: device.id) == 1
+        }
+
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+        XCTAssertEqual(selectedDpi, 2400)
+    }
+
     func testApplyRemoteServiceSnapshotHydratesPersistedButtonBindingsForSelectedDevice() async throws {
         let device = makeSnapshotDevice(
             id: "snapshot-button-device",
@@ -578,6 +618,50 @@ private final class SnapshotTestRemoteBackend: DeviceBackend {
     func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState { throw SnapshotBackendError.unimplemented }
     func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { nil }
     func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? { nil }
+}
+
+private actor SnapshotReadbackRemoteBackend: DeviceBackend {
+    nonisolated var usesRemoteServiceTransport: Bool { true }
+
+    private let stateByDeviceID: [String: MouseState]
+    private var readCountsByDeviceID: [String: Int] = [:]
+
+    init(stateByDeviceID: [String: MouseState]) {
+        self.stateByDeviceID = stateByDeviceID
+    }
+
+    func listDevices() async throws -> [MouseDevice] { [] }
+
+    func readState(device: MouseDevice) async throws -> MouseState {
+        readCountsByDeviceID[device.id, default: 0] += 1
+        guard let state = stateByDeviceID[device.id] else {
+            throw SnapshotBackendError.unimplemented
+        }
+        return state
+    }
+
+    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? { nil }
+    func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool { false }
+    func hidAccessStatus() async -> HIDAccessStatus {
+        HIDAccessStatus(
+            authorization: .granted,
+            hostLabel: "Test Host (io.opensnek.OpenSnek)",
+            bundleIdentifier: "io.opensnek.OpenSnek",
+            detail: nil
+        )
+    }
+    func stateUpdates() async -> AsyncStream<BackendStateUpdate> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+    func apply(device _: MouseDevice, patch _: DevicePatch) async throws -> MouseState { throw SnapshotBackendError.unimplemented }
+    func readLightingColor(device _: MouseDevice) async throws -> RGBPatch? { nil }
+    func debugUSBReadButtonBinding(device _: MouseDevice, slot _: Int, profile _: Int) async throws -> [UInt8]? { nil }
+
+    func readCount(for deviceID: String) -> Int {
+        readCountsByDeviceID[deviceID] ?? 0
+    }
 }
 
 private actor RemoteBootstrapServiceBackend: DeviceBackend {

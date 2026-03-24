@@ -221,6 +221,50 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(status, "Disconnected")
     }
 
+    func testSelectedUnavailableDeviceRecoveryStartsImmediateRefresh() async throws {
+        let usbDevice = makeTestDevice(
+            id: "usb-recovery",
+            productName: "Zeta Mouse",
+            transport: .usb,
+            serial: "USB-RECOVER",
+            locationID: 2,
+            profile: .basiliskV3Pro
+        )
+        let restoredState = makeTestState(
+            device: usbDevice,
+            connection: "usb",
+            batteryPercent: 72,
+            dpiValues: [800, 900, 2000, 1100, 1200],
+            activeStage: 2,
+            dpiValue: 2000
+        )
+        let backend = DisconnectingMultiDeviceStubBackend(
+            devices: [usbDevice],
+            stateByDeviceID: [usbDevice.id: restoredState]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.setUnavailable(true)
+        await appState.deviceStore.refreshState()
+        await backend.setUnavailable(false)
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([usbDevice], source: "test")
+        }
+
+        try await waitForAppStateCondition {
+            await MainActor.run {
+                appState.deviceStore.state?.dpi?.x == 2000
+            }
+        }
+
+        let status = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator.label }
+        XCTAssertEqual(status, "Connected")
+    }
+
     func testDiagnosticsExposePollingVsRealtimeHIDAndDisableControlsWhenDisconnected() async throws {
         let usbDevice = makeTestDevice(
             id: "usb-diagnostics",

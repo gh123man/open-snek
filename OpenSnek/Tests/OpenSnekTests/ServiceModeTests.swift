@@ -18,6 +18,27 @@ final class ServiceModeTests: XCTestCase {
         XCTAssertEqual(PollingProfile.serviceInteractive.fastDpiInterval, 0.25)
     }
 
+    @MainActor
+    func testServiceIdleRecoveryUsesInteractiveCadenceWhileSelectedDeviceIsUnhydrated() async {
+        let backend = ServiceModeTransportBackend(transportStatus: .realTimeHID)
+        let appState = AppState(launchRole: .service, backend: backend, autoStart: false)
+        let device = backend.device
+        let now = Date(timeIntervalSince1970: 1_773_400_050)
+
+        _ = appState.deviceController.applyDeviceList([device], source: "test")
+
+        XCTAssertEqual(
+            appState.runtimeController.effectiveDevicePresenceInterval(at: now, profile: .serviceIdle),
+            PollingProfile.serviceInteractive.devicePresenceInterval,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            appState.runtimeController.effectiveRefreshStateInterval(at: now, profile: .serviceIdle),
+            PollingProfile.serviceInteractive.refreshStateInterval,
+            accuracy: 0.001
+        )
+    }
+
     func testServiceRoleTransitionsBetweenIdleAndInteractiveProfiles() async {
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let coordinator = await MainActor.run {

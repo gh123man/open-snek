@@ -505,12 +505,14 @@ final class AppStateDeviceController {
 
     private func requestSelectedDeviceRefreshIfNeeded(for device: MouseDevice) {
         guard !isTearingDown else { return }
-        guard !environment.usesRemoteServiceTransport else { return }
         guard !isStrictlyUnsupported(device) else { return }
         guard deviceStore.selectedDeviceID == device.id else { return }
-        guard !unavailableDeviceIDs.contains(device.id) else { return }
-        guard stateCacheByDeviceID[device.id] == nil else { return }
         guard !refreshingStateDeviceIDs.contains(device.id) else { return }
+
+        let hasNoCachedState = stateCacheByDeviceID[device.id] == nil
+        let lacksPresentedState = deviceStore.state == nil
+        let needsRecoveryRefresh = hasNoCachedState || lacksPresentedState || unavailableDeviceIDs.contains(device.id)
+        guard needsRecoveryRefresh else { return }
 
         Task { [weak self] in
             await self?.refreshState(for: device)
