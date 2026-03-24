@@ -530,6 +530,109 @@ extension BridgeClient {
         return wroteAny
     }
 
+    func writableUSBButtonSlots(for device: MouseDevice) -> [UInt8] {
+        let layout = device.button_layout
+        let slots = layout?.writableSlots ?? ButtonSlotDescriptor.defaults.map(\.slot)
+        return slots.map { UInt8(max(0, min(255, $0))) }
+    }
+
+    func projectUSBButtonProfileToDirectLayer(
+        _ session: USBHIDControlSession,
+        _ device: MouseDevice,
+        profile: UInt8
+    ) throws -> Bool {
+        let slots = writableUSBButtonSlots(for: device)
+        guard !slots.isEmpty else { return false }
+
+        for slot in slots {
+            guard let block = try getButtonBindingUSBRaw(
+                session,
+                device,
+                profile: profile,
+                slot: slot,
+                hypershift: 0x00
+            ) else {
+                return false
+            }
+            guard try setButtonBindingUSBRaw(
+                session,
+                device,
+                profile: 0x00,
+                slot: slot,
+                hypershift: 0x00,
+                functionBlock: block
+            ) else {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    func duplicateUSBButtonProfile(
+        _ session: USBHIDControlSession,
+        _ device: MouseDevice,
+        sourceProfile: UInt8,
+        targetProfile: UInt8
+    ) throws -> Bool {
+        let slots = writableUSBButtonSlots(for: device)
+        guard !slots.isEmpty else { return false }
+
+        for slot in slots {
+            guard let block = try getButtonBindingUSBRaw(
+                session,
+                device,
+                profile: sourceProfile,
+                slot: slot,
+                hypershift: 0x00
+            ) else {
+                return false
+            }
+            guard try setButtonBindingUSBRaw(
+                session,
+                device,
+                profile: targetProfile,
+                slot: slot,
+                hypershift: 0x00,
+                functionBlock: block
+            ) else {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    func resetUSBButtonProfile(
+        _ session: USBHIDControlSession,
+        _ device: MouseDevice,
+        profile: UInt8
+    ) throws -> Bool {
+        let slots = writableUSBButtonSlots(for: device)
+        guard !slots.isEmpty else { return false }
+
+        for slot in slots {
+            guard let block = ButtonBindingSupport.defaultUSBFunctionBlock(
+                for: Int(slot),
+                profileID: device.profile_id
+            ) else {
+                return false
+            }
+            guard try setButtonBindingUSBRaw(
+                session,
+                device,
+                profile: profile,
+                slot: slot,
+                hypershift: 0x00,
+                functionBlock: block
+            ) else {
+                return false
+            }
+        }
+
+        return true
+    }
+
     func setButtonBindingUSBRaw(
         _ session: USBHIDControlSession,
         _ device: MouseDevice,
@@ -564,6 +667,7 @@ extension BridgeClient {
         turboRate: Int,
         clutchDPI: Int?,
         persistentProfile: Int,
+        writePersistentLayer: Bool,
         writeDirectLayer: Bool
     ) throws -> Bool {
         guard let bindingKind = ButtonBindingKind(rawValue: kind) else { return false }
@@ -580,14 +684,19 @@ extension BridgeClient {
 
         let clampedPersistentProfile = UInt8(max(1, min(5, persistentProfile)))
 
-        let wrotePersistent = try setButtonBindingUSBRaw(
-            session,
-            device,
-            profile: clampedPersistentProfile,
-            slot: clampedSlot,
-            hypershift: 0x00,
-            functionBlock: functionBlock
-        )
+        let wrotePersistent: Bool
+        if writePersistentLayer {
+            wrotePersistent = try setButtonBindingUSBRaw(
+                session,
+                device,
+                profile: clampedPersistentProfile,
+                slot: clampedSlot,
+                hypershift: 0x00,
+                functionBlock: functionBlock
+            )
+        } else {
+            wrotePersistent = false
+        }
         let wroteDirect: Bool
         if writeDirectLayer {
             wroteDirect = try setButtonBindingUSBRaw(

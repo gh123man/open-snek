@@ -337,6 +337,7 @@ public enum DeviceProfiles {
         ButtonSlotDescriptor(slot: 5, friendlyName: "Forward Button", defaultKind: .mouseForward),
         ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
         ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
+        ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
         ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
         ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
         ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Button", defaultKind: .default),
@@ -360,11 +361,6 @@ public enum DeviceProfiles {
             descriptor: ButtonSlotDescriptor(slot: 14, friendlyName: "Scroll Mode Toggle", defaultKind: .default),
             access: .protocolReadOnly,
             note: "OpenSnek can see this button, but the mouse does not let apps remap it yet."
-        ),
-        DocumentedButtonSlot(
-            descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
-            access: .softwareReadOnly,
-            note: "This button is handled separately by the mouse, so OpenSnek cannot reassign it yet."
         ),
         DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
@@ -418,7 +414,7 @@ public enum DeviceProfiles {
         supportedProducts: [0x00CB],
         buttonLayout: ButtonSlotLayout(
             visibleSlots: basiliskV335KUSBButtonSlots,
-            writableSlots: [1, 2, 3, 4, 5, 9, 10, 52, 53, 96],
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 15, 52, 53, 96],
             documentedSlots: basiliskV335KUSBDocumentedReadOnlySlots
         ),
         supportsAdvancedLightingEffects: true,
@@ -458,7 +454,7 @@ public enum DeviceProfiles {
             minInputReportSize: 5,
             maximumDPI: 30_000
         ),
-        onboardProfileCount: 3
+        onboardProfileCount: 5
     )
 
     public static let basiliskV3XBluetooth = DeviceProfile(

@@ -103,6 +103,11 @@ final class DeviceStore {
         return deviceController.connectionState(for: selectedDevice).allowsInteraction
     }
 
+    func connectionState(for device: MouseDevice) -> DeviceConnectionState {
+        _ = connectionDiagnosticsRevision
+        return deviceController.connectionState(for: device)
+    }
+
     var selectedDeviceSupportsPassiveDPIInput: Bool {
         guard let selectedDevice else { return false }
         return resolvedProfile(for: selectedDevice)?.passiveDPIInput != nil

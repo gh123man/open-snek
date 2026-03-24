@@ -119,6 +119,69 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(secondReadOrder, [bluetoothDevice.id, unavailableDongle.id, bluetoothDevice.id])
     }
 
+    func testSelectingVisibleDeviceWithoutCachedStateStartsImmediateRefresh() async throws {
+        let alphaDevice = makeTestDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .bluetooth,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [alphaDevice],
+            stateByDeviceID: [
+                alphaDevice.id: makeTestState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 0,
+                    dpiValue: 1200
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.setState(
+            makeTestState(
+                device: betaDevice,
+                connection: "bluetooth",
+                batteryPercent: 72,
+                dpiValues: [3200, 4800, 6400],
+                activeStage: 1,
+                dpiValue: 4800
+            ),
+            for: betaDevice.id
+        )
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([alphaDevice, betaDevice], source: "test")
+            appState.deviceStore.selectDevice(betaDevice.id)
+        }
+
+        try await waitForAppStateCondition {
+            await backend.readCount(for: betaDevice.id) == 1
+        }
+
+        let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+
+        XCTAssertEqual(selectedDeviceID, betaDevice.id)
+        XCTAssertEqual(selectedDpi, 4800)
+    }
+
     func testSelectedUnavailableDeviceClearsPresentedStateInsteadOfShowingStaleCache() async {
         let usbDevice = makeTestDevice(
             id: "usb-dongle",
@@ -156,6 +219,50 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertNil(selectedDpi)
         XCTAssertNil(lastUpdated)
         XCTAssertEqual(status, "Disconnected")
+    }
+
+    func testSelectedUnavailableDeviceRecoveryStartsImmediateRefresh() async throws {
+        let usbDevice = makeTestDevice(
+            id: "usb-recovery",
+            productName: "Zeta Mouse",
+            transport: .usb,
+            serial: "USB-RECOVER",
+            locationID: 2,
+            profile: .basiliskV3Pro
+        )
+        let restoredState = makeTestState(
+            device: usbDevice,
+            connection: "usb",
+            batteryPercent: 72,
+            dpiValues: [800, 900, 2000, 1100, 1200],
+            activeStage: 2,
+            dpiValue: 2000
+        )
+        let backend = DisconnectingMultiDeviceStubBackend(
+            devices: [usbDevice],
+            stateByDeviceID: [usbDevice.id: restoredState]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.setUnavailable(true)
+        await appState.deviceStore.refreshState()
+        await backend.setUnavailable(false)
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([usbDevice], source: "test")
+        }
+
+        try await waitForAppStateCondition {
+            await MainActor.run {
+                appState.deviceStore.state?.dpi?.x == 2000
+            }
+        }
+
+        let status = await MainActor.run { appState.deviceStore.currentDeviceStatusIndicator.label }
+        XCTAssertEqual(status, "Connected")
     }
 
     func testDiagnosticsExposePollingVsRealtimeHIDAndDisableControlsWhenDisconnected() async throws {
@@ -539,6 +646,66 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(activeStage, 2)
     }
 
+    func testUSBReconnectWithNewDeviceIDSeedsPreviousState() async throws {
+        let originalDevice = makeTestDevice(
+            id: "usb-reconnect-original",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "USB-RECONNECT-SERIAL",
+            locationID: 1,
+            profile: .basiliskV335K
+        )
+        let replacementDevice = makeTestDevice(
+            id: "usb-reconnect-replacement",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "USB-RECONNECT-SERIAL",
+            locationID: 2,
+            profile: .basiliskV335K
+        )
+        let originalState = makeTestState(
+            device: originalDevice,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 0,
+            dpiValue: 800
+        )
+        let replacementState = makeTestState(
+            device: replacementDevice,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 2,
+            dpiValue: 3200
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [originalDevice],
+            stateByDeviceID: [
+                originalDevice.id: originalState,
+                replacementDevice.id: replacementState,
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.setTransientReadFailures([
+            "USB device telemetry unavailable. Feature-report interface did not return usable responses.",
+        ], for: replacementDevice.id)
+        await backend.emitDeviceListUpdate([replacementDevice])
+
+        try await waitForAppStateCondition {
+            await MainActor.run { appState.deviceStore.selectedDeviceID == replacementDevice.id }
+        }
+
+        let seededDeviceID = await MainActor.run { appState.deviceStore.state?.device.id }
+        let seededDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+        XCTAssertEqual(seededDeviceID, replacementDevice.id)
+        XCTAssertEqual(seededDpi, 800)
+    }
+
     func testBackendDeviceListUpdateRearmsLightingRestoreForStableReconnect() async throws {
         let usbDevice = makeTestDevice(
             id: "usb-lighting-reconnect",
@@ -546,12 +713,12 @@ final class AppStateMultiDeviceTests: XCTestCase {
             transport: .usb,
             serial: "USB-LIGHTING-RECONNECT",
             locationID: 1,
-            profile: .basiliskV3Pro
+            profile: .basiliskV3XHyperspeed
         )
         let persistedColor = RGBColor(r: 11, g: 22, b: 33)
         let preferenceStore = DevicePreferenceStore()
         preferenceStore.persistLightingColor(persistedColor, device: usbDevice)
-        preferenceStore.persistLightingZoneID("logo", device: usbDevice)
+        preferenceStore.persistLightingZoneID("scroll_wheel", device: usbDevice)
         defer { clearMultiDeviceLightingPreferences(for: usbDevice) }
 
         let backend = DeviceListUpdatingStubBackend(
@@ -596,7 +763,7 @@ final class AppStateMultiDeviceTests: XCTestCase {
             transport: .usb,
             serial: "ALPHA-SELECTED",
             locationID: 1,
-            profile: .basiliskV3Pro
+            profile: .basiliskV3XHyperspeed
         )
         let betaDevice = makeTestDevice(
             id: "beta-restore",
@@ -604,12 +771,12 @@ final class AppStateMultiDeviceTests: XCTestCase {
             transport: .usb,
             serial: "BETA-RESTORE",
             locationID: 2,
-            profile: .basiliskV3Pro
+            profile: .basiliskV3XHyperspeed
         )
         let persistedColor = RGBColor(r: 21, g: 31, b: 41)
         let preferenceStore = DevicePreferenceStore()
         preferenceStore.persistLightingColor(persistedColor, device: betaDevice)
-        preferenceStore.persistLightingZoneID("logo", device: betaDevice)
+        preferenceStore.persistLightingZoneID("scroll_wheel", device: betaDevice)
         defer {
             clearMultiDeviceLightingPreferences(for: alphaDevice)
             clearMultiDeviceLightingPreferences(for: betaDevice)
@@ -1342,6 +1509,7 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
     private var dpiUpdateTransportStatusOverride: DpiUpdateTransportStatus?
     private var hidAccessAuthorization: HIDAccessAuthorization
     private var readCountByDeviceID: [String: Int] = [:]
+    private var transientReadFailuresByDeviceID: [String: [String]] = [:]
     private var applyPatches: [DevicePatch] = []
     private var applyDeviceIDs: [String] = []
     private let stateUpdateStreamPair = AsyncStream.makeStream(of: BackendStateUpdate.self)
@@ -1366,6 +1534,13 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
 
     func readState(device: MouseDevice) async throws -> MouseState {
         readCountByDeviceID[device.id, default: 0] += 1
+        if var failures = transientReadFailuresByDeviceID[device.id], !failures.isEmpty {
+            let message = failures.removeFirst()
+            transientReadFailuresByDeviceID[device.id] = failures
+            throw NSError(domain: "AppStateMultiDeviceTests", code: 8, userInfo: [
+                NSLocalizedDescriptionKey: message
+            ])
+        }
         guard let state = stateByDeviceID[device.id] else {
             throw NSError(domain: "AppStateMultiDeviceTests", code: 9, userInfo: [
                 NSLocalizedDescriptionKey: "Missing stub state for \(device.id)"
@@ -1427,6 +1602,10 @@ private actor DeviceListUpdatingStubBackend: DeviceBackend {
 
     func setState(_ state: MouseState, for deviceID: String) {
         stateByDeviceID[deviceID] = state
+    }
+
+    func setTransientReadFailures(_ messages: [String], for deviceID: String) {
+        transientReadFailuresByDeviceID[deviceID] = messages
     }
 
     func emitDeviceListUpdate(_ devices: [MouseDevice], updatedAt: Date = Date()) {

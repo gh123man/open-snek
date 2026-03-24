@@ -573,9 +573,12 @@ final class AppStateRuntimeController {
         if powerState == .sleeping {
             return RuntimeWakeSchedule.suspendedForSleepInterval
         }
+        let profile = pollingProfile(at: now)
         return RuntimeWakeSchedule.nextSleepInterval(
             now: now,
-            profile: pollingProfile(at: now),
+            profile: profile,
+            refreshStateIntervalOverride: effectiveRefreshStateInterval(at: now, profile: profile),
+            devicePresenceIntervalOverride: effectiveDevicePresenceInterval(at: now, profile: profile),
             fastDpiInterval: effectiveFastDpiInterval(at: now),
             usesRemoteServiceTransport: environment.usesRemoteServiceTransport,
             lastDevicePresencePollAt: lastDevicePresencePollAt,
@@ -596,6 +599,8 @@ final class AppStateRuntimeController {
         guard powerState == .active else { return }
         let now = Date()
         let profile = pollingProfile(at: now)
+        let effectiveDevicePresenceInterval = effectiveDevicePresenceInterval(at: now, profile: profile)
+        let effectiveRefreshStateInterval = effectiveRefreshStateInterval(at: now, profile: profile)
         pruneExpiredRemoteClientPresence(now: now)
 
         if environment.usesRemoteServiceTransport {
@@ -611,12 +616,12 @@ final class AppStateRuntimeController {
         }
 
         if DeveloperRuntimeOptions.pollingEnabled() {
-            if now.timeIntervalSince(lastDevicePresencePollAt) >= profile.devicePresenceInterval {
+            if now.timeIntervalSince(lastDevicePresencePollAt) >= effectiveDevicePresenceInterval {
                 lastDevicePresencePollAt = now
                 await deviceController.pollDevicePresence()
             }
 
-            if now.timeIntervalSince(lastRefreshStatePollAt) >= profile.refreshStateInterval {
+            if now.timeIntervalSince(lastRefreshStatePollAt) >= effectiveRefreshStateInterval {
                 lastRefreshStatePollAt = now
                 await deviceController.refreshAllDeviceStates()
             }
@@ -629,6 +634,32 @@ final class AppStateRuntimeController {
         }
 
         clearTransientStatusIfExpired(now: now)
+    }
+
+    func effectiveRefreshStateInterval(at now: Date, profile: PollingProfile) -> TimeInterval {
+        guard profile == .serviceIdle, shouldPrioritizeSelectedDeviceRecovery(at: now) else {
+            return profile.refreshStateInterval
+        }
+        return PollingProfile.serviceInteractive.refreshStateInterval
+    }
+
+    func effectiveDevicePresenceInterval(at now: Date, profile: PollingProfile) -> TimeInterval {
+        guard profile == .serviceIdle, shouldPrioritizeSelectedDeviceRecovery(at: now) else {
+            return profile.devicePresenceInterval
+        }
+        return PollingProfile.serviceInteractive.devicePresenceInterval
+    }
+
+    private func shouldPrioritizeSelectedDeviceRecovery(at now: Date) -> Bool {
+        guard !environment.usesRemoteServiceTransport else { return false }
+        guard let selectedDevice = deviceStore.selectedDevice else { return false }
+        let connectionState = deviceController.connectionState(for: selectedDevice)
+        if connectionState != .connected {
+            return true
+        }
+        guard deviceStore.state != nil else { return true }
+        guard let lastUpdated = deviceController.lastUpdatedTimestamp(for: selectedDevice) else { return true }
+        return now.timeIntervalSince(lastUpdated) > PollingProfile.serviceInteractive.refreshStateInterval
     }
 
     func developerTransportSettingsDidChange() async {

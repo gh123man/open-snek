@@ -78,10 +78,15 @@ final class AppState {
     }
 
     deinit {
+        let autoStartRuntimeTask = self.autoStartRuntimeTask
+        let deviceController = self.deviceController
+        let applyController = self.applyController
+        let editorController = self.editorController
+        let runtimeController = self.runtimeController
+
         @MainActor
         func tearDownControllers() {
             autoStartRuntimeTask?.cancel()
-            autoStartRuntimeTask = nil
             deviceController.tearDown()
             applyController.tearDown()
             editorController.tearDown()

@@ -16,7 +16,8 @@ final class DevicePatchMergeTests: XCTestCase {
             ledBrightness: 120,
             ledRGB: RGBPatch(r: 10, g: 20, b: 30),
             lightingEffect: LightingEffectPatch(kind: .spectrum),
-            buttonBinding: ButtonBindingPatch(slot: 2, kind: .rightClick, hidKey: nil, turboEnabled: true, turboRate: 142)
+            buttonBinding: ButtonBindingPatch(slot: 2, kind: .rightClick, hidKey: nil, turboEnabled: true, turboRate: 142),
+            usbButtonProfileAction: USBButtonProfileActionPatch(kind: .resetPersistentSlot, targetProfile: 2)
         )
         let newer = DevicePatch(
             pollRate: 1000,
@@ -31,7 +32,8 @@ final class DevicePatchMergeTests: XCTestCase {
             ledBrightness: 200,
             ledRGB: RGBPatch(r: 1, g: 2, b: 3),
             lightingEffect: LightingEffectPatch(kind: .reactive, primary: RGBPatch(r: 9, g: 8, b: 7), reactiveSpeed: 4),
-            buttonBinding: ButtonBindingPatch(slot: 3, kind: .keyboardSimple, hidKey: 40, turboEnabled: false, turboRate: nil)
+            buttonBinding: ButtonBindingPatch(slot: 3, kind: .keyboardSimple, hidKey: 40, turboEnabled: false, turboRate: nil),
+            usbButtonProfileAction: USBButtonProfileActionPatch(kind: .projectToDirectLayer, targetProfile: 3)
         )
 
         let merged = older.merged(with: newer)
@@ -51,6 +53,8 @@ final class DevicePatchMergeTests: XCTestCase {
         XCTAssertEqual(merged.buttonBinding?.slot, 3)
         XCTAssertEqual(merged.buttonBinding?.kind, .keyboardSimple)
         XCTAssertEqual(merged.buttonBinding?.turboEnabled, false)
+        XCTAssertEqual(merged.usbButtonProfileAction?.kind, .projectToDirectLayer)
+        XCTAssertEqual(merged.usbButtonProfileAction?.targetProfile, 3)
     }
 
     func testMergedKeepsExistingFieldsWhenNewestPatchPartial() {
@@ -67,7 +71,8 @@ final class DevicePatchMergeTests: XCTestCase {
             ledBrightness: 150,
             ledRGB: RGBPatch(r: 100, g: 120, b: 140),
             lightingEffect: LightingEffectPatch(kind: .pulseDual, primary: RGBPatch(r: 1, g: 2, b: 3), secondary: RGBPatch(r: 4, g: 5, b: 6)),
-            buttonBinding: ButtonBindingPatch(slot: 4, kind: .mouseBack, hidKey: nil, turboEnabled: true, turboRate: 62)
+            buttonBinding: ButtonBindingPatch(slot: 4, kind: .mouseBack, hidKey: nil, turboEnabled: true, turboRate: 62),
+            usbButtonProfileAction: USBButtonProfileActionPatch(kind: .duplicateToPersistentSlot, sourceProfile: 1, targetProfile: 2)
         )
         let newer = DevicePatch(activeStage: 0)
 
@@ -88,5 +93,8 @@ final class DevicePatchMergeTests: XCTestCase {
         XCTAssertEqual(merged.buttonBinding?.kind, .mouseBack)
         XCTAssertEqual(merged.buttonBinding?.turboEnabled, true)
         XCTAssertEqual(merged.buttonBinding?.turboRate, 62)
+        XCTAssertEqual(merged.usbButtonProfileAction?.kind, .duplicateToPersistentSlot)
+        XCTAssertEqual(merged.usbButtonProfileAction?.sourceProfile, 1)
+        XCTAssertEqual(merged.usbButtonProfileAction?.targetProfile, 2)
     }
 }

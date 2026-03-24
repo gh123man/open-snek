@@ -1,4 +1,5 @@
 import AppKit
+import OpenSnekAppSupport
 import SwiftUI
 import OpenSnekCore
 
@@ -103,7 +104,7 @@ struct DeviceDetailView: View {
         case .scrollControls:
             ScrollControlsCard(editorStore: editorStore, state: state)
         case .buttonRemap:
-            ButtonMappingTableCard(deviceStore: deviceStore, editorStore: editorStore, title: "Button Remap")
+            ButtonMappingTableCard(deviceStore: deviceStore, editorStore: editorStore, title: "Buttons")
         }
     }
 
@@ -418,6 +419,77 @@ struct DeviceUnavailableDetailView: View {
         .background(WindowDragBlocker())
         .task(id: selected.id) {
             await deviceStore.refreshConnectionDiagnostics(for: selected)
+        }
+    }
+}
+
+struct DeviceConnectingDetailView: View {
+    let deviceStore: DeviceStore
+    let selected: MouseDevice
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                GenericDeviceOverviewBar(deviceStore: deviceStore, selected: selected)
+
+                VStack(spacing: 18) {
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(.white.opacity(0.92))
+
+                    VStack(spacing: 8) {
+                        Text(headline)
+                            .font(.system(size: 24, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+
+                        Text(subtitle)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.68))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 320)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 28)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 28)
+                                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        )
+                )
+
+                DiagnosticsFooter(deviceStore: deviceStore, device: selected, state: nil)
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WindowDragBlocker())
+        .task(id: selected.id) {
+            await deviceStore.refreshConnectionDiagnostics(for: selected)
+        }
+    }
+
+    private var headline: String {
+        switch selected.transport {
+        case .bluetooth:
+            "Connecting to \(selected.product_name)"
+        case .usb:
+            "Loading \(selected.product_name)"
+        }
+    }
+
+    private var subtitle: String {
+        switch selected.transport {
+        case .bluetooth:
+            "Establishing the Bluetooth control link and reading your settings."
+        case .usb:
+            "Reading device settings and preparing controls."
         }
     }
 }
@@ -1306,6 +1378,10 @@ struct ButtonMappingTableCard: View {
     let editorStore: EditorStore
     let title: String
 
+    private var isBusy: Bool {
+        editorStore.isButtonProfileOperationInFlight
+    }
+
     private var rows: [ButtonBindingRowModel] {
         deviceStore.visibleButtonSlots.map { slot in
             let kind = editorStore.buttonBindingKind(for: slot.slot)
@@ -1314,7 +1390,7 @@ struct ButtonMappingTableCard: View {
             return ButtonBindingRowModel(
                 slot: slot.slot,
                 friendlyName: slot.friendlyName,
-                isEditable: deviceStore.isButtonSlotEditable(slot.slot),
+                isEditable: deviceStore.isButtonSlotEditable(slot.slot) && !isBusy,
                 selectedKind: kind,
                 turboEligible: kind != .default && kind.supportsTurbo,
                 clutchDPI: editorStore.buttonBindingClutchDPI(for: slot.slot),
@@ -1329,6 +1405,12 @@ struct ButtonMappingTableCard: View {
     var body: some View {
         Card(title: title) {
             VStack(alignment: .leading, spacing: 12) {
+                ButtonProfileWorkspaceStrip(
+                    deviceStore: deviceStore,
+                    editorStore: editorStore,
+                    isBusy: isBusy
+                )
+
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(rows) { row in
                         ButtonBindingRow(editorStore: editorStore, row: row)
@@ -1338,6 +1420,648 @@ struct ButtonMappingTableCard: View {
                 if !deviceStore.hiddenUnsupportedButtonSlots.isEmpty {
                     UnsupportedButtonsFootnote(entries: deviceStore.hiddenUnsupportedButtonSlots)
                 }
+            }
+        }
+    }
+}
+
+private struct ButtonProfileWorkspaceStrip: View {
+    let deviceStore: DeviceStore
+    let editorStore: EditorStore
+    let isBusy: Bool
+
+    @State private var saveProfileName = ""
+    @State private var showsLoadPopover = false
+    @State private var showsManageProfiles = false
+    @State private var showsSaveProfileSheet = false
+    @State private var showsStorePopover = false
+
+    private var currentSource: ButtonProfileSource? {
+        editorStore.currentButtonProfileSource
+    }
+
+    private var currentMouseSlot: Int? {
+        guard case .mouseSlot(let slot)? = currentSource else { return nil }
+        return slot
+    }
+
+    private var loadedFromLabel: String? {
+        guard let currentSource else { return nil }
+        return loadedFromDisplayLabel(for: currentSource)
+    }
+
+    private var statusLabel: String? {
+        editorStore.buttonProfileOperationStatusText
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Profiles")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                headerControls
+            }
+
+            if let statusLabel {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(statusLabel)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.64))
+                }
+            }
+
+            if let loadedFromLabel {
+                Text("Loaded from \(loadedFromLabel)")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if editorStore.currentButtonProfileHasUnsupportedBindings {
+                Text("Some bindings in this saved profile aren't available on this mouse. OpenSnek will keep them in the profile, but only supported buttons can be applied here.")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.035))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+        )
+        .sheet(isPresented: $showsSaveProfileSheet) {
+            SaveButtonProfileSheet(
+                initialName: saveProfileName,
+                existingProfiles: editorStore.savedButtonProfiles,
+                onSaveNew: { name in
+                    _ = editorStore.saveCurrentButtonWorkspaceAsNewProfile(name: name)
+                },
+                onOverwrite: { id in
+                    _ = editorStore.updateOpenSnekButtonProfile(id: id)
+                }
+            )
+        }
+        .sheet(isPresented: $showsManageProfiles) {
+            ManageButtonProfilesSheet(
+                profiles: editorStore.savedButtonProfiles,
+                onRename: { id, name in
+                    _ = editorStore.renameOpenSnekButtonProfile(id: id, name: name)
+                },
+                onDelete: { id in
+                    editorStore.deleteOpenSnekButtonProfile(id: id)
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var headerControls: some View {
+        HStack(alignment: .center, spacing: 10) {
+            loadButton
+            storeButton
+            Button("Manage") {
+                showsManageProfiles = true
+            }
+            .buttonStyle(.bordered)
+            .disabled(isBusy)
+        }
+    }
+
+    private var loadButton: some View {
+        Button {
+            showsLoadPopover.toggle()
+        } label: {
+            Text("Load")
+        }
+        .buttonStyle(.bordered)
+        .disabled(isBusy)
+        .popover(isPresented: $showsLoadPopover, arrowEdge: .bottom) {
+            LoadButtonProfilePopover(
+                editorStore: editorStore,
+                pickerLabel: { source in
+                    sourceDisplayLabel(for: source)
+                },
+                onSelect: { source in
+                    Task {
+                        await MainActor.run { showsLoadPopover = false }
+                        await editorStore.loadButtonProfileSourceIntoLive(source)
+                    }
+                }
+            )
+        }
+        .onChange(of: showsLoadPopover) { _, isPresented in
+            if isPresented {
+                editorStore.refreshButtonProfilePresentation()
+            }
+        }
+    }
+
+    private var storeButton: some View {
+        Button {
+            showsStorePopover.toggle()
+        } label: {
+            Text("Store")
+        }
+        .buttonStyle(.bordered)
+        .disabled(isBusy)
+        .popover(isPresented: $showsStorePopover, arrowEdge: .bottom) {
+            StoreButtonProfilePopover(
+                editorStore: editorStore,
+                currentMouseSlot: currentMouseSlot,
+                pickerLabel: { source in
+                    pickerLabel(for: source)
+                },
+                onSave: {
+                    showsStorePopover = false
+                    prepareSaveProfileSheet()
+                },
+                onWriteStoredSlot: { slot in
+                    showsStorePopover = false
+                    Task {
+                        await editorStore.writeCurrentButtonWorkspaceToMouseSlot(slot)
+                    }
+                },
+                onReplaceCurrentSlot: {
+                    guard let currentMouseSlot else { return }
+                    showsStorePopover = false
+                    Task {
+                        await editorStore.writeCurrentButtonWorkspaceToMouseSlot(currentMouseSlot)
+                    }
+                },
+                onRevertToSource: {
+                    showsStorePopover = false
+                    editorStore.revertButtonWorkspaceToSource()
+                }
+            )
+        }
+    }
+
+    private func prepareSaveProfileSheet() {
+        saveProfileName = suggestedProfileName()
+        showsSaveProfileSheet = true
+    }
+
+    private func suggestedProfileName() -> String {
+        if let currentSource {
+            return editorStore.buttonProfileSourceDisplayName(currentSource)
+        }
+        return "Live Buttons"
+    }
+
+    private func pickerLabel(for source: ButtonProfileSource) -> String {
+        switch source {
+        case .openSnekProfile:
+            return sourceDisplayLabel(for: source)
+        case .mouseSlot(let slot):
+            return sourceDisplayLabel(for: .mouseSlot(slot))
+        }
+    }
+
+    private func sourceDisplayLabel(for source: ButtonProfileSource) -> String {
+        let baseLabel: String
+        switch source {
+        case .openSnekProfile:
+            baseLabel = editorStore.buttonProfileSourceDisplayName(source)
+        case .mouseSlot(let slot):
+            baseLabel = slot == 1 ? "Current Buttons (Slot 1)" : "Stored Slot \(slot)"
+        }
+
+        if source == currentSource, editorStore.buttonWorkspaceHasUnsavedSourceChanges {
+            return baseLabel
+        }
+
+        guard let matchDescription = editorStore.buttonProfileSourceMatchDescription(source) else {
+            return baseLabel
+        }
+        return "\(baseLabel) (\(matchDescription))"
+    }
+
+    private func loadedFromDisplayLabel(for source: ButtonProfileSource) -> String {
+        switch source {
+        case .openSnekProfile:
+            return editorStore.buttonProfileSourceDisplayName(source)
+        case .mouseSlot(let slot):
+            return slot == 1 ? "Current Buttons" : "Stored Slot \(slot)"
+        }
+    }
+
+}
+
+private struct LoadButtonProfilePopover: View {
+    let editorStore: EditorStore
+    let pickerLabel: (ButtonProfileSource) -> String
+    let onSelect: (ButtonProfileSource) -> Void
+    @State private var showsSavedProfiles = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if showsSavedProfiles {
+                savedProfilesView
+            } else {
+                rootView
+            }
+        }
+        .padding(14)
+        .frame(width: 320, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+    }
+
+    private var rootView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Saved in OpenSnek")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                if editorStore.savedButtonProfiles.isEmpty {
+                    Text("No saved local profiles yet.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.58))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                } else {
+                    loadActionButton(
+                        "Saved Profiles",
+                        trailingDetail: "\(editorStore.savedButtonProfiles.count)",
+                        trailingSystemImage: "chevron.right"
+                    ) {
+                        showsSavedProfiles = true
+                    }
+                }
+            }
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("On This Mouse")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                ForEach(editorStore.loadableMouseButtonSources, id: \.id) { source in
+                    loadActionButton(
+                        pickerLabel(source),
+                        isDisabled: source == .mouseSlot(1)
+                    ) {
+                        onSelect(source)
+                    }
+                }
+            }
+        }
+    }
+
+    private var savedProfilesView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                showsSavedProfiles = false
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Saved Profiles")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(.white.opacity(0.72))
+            }
+            .buttonStyle(.plain)
+
+            ForEach(editorStore.savedButtonProfiles) { profile in
+                let source = ButtonProfileSource.openSnekProfile(profile.id)
+                loadActionButton(pickerLabel(source)) {
+                    onSelect(source)
+                }
+            }
+        }
+    }
+
+    private func loadActionButton(
+        _ title: String,
+        isDisabled: Bool = false,
+        trailingDetail: String? = nil,
+        trailingSystemImage: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            popoverRowLabel(
+                title,
+                trailingDetail: trailingDetail,
+                trailingSystemImage: trailingSystemImage
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1.0)
+    }
+
+    private func popoverRowLabel(
+        _ title: String,
+        trailingDetail: String? = nil,
+        trailingSystemImage: String? = nil
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Spacer(minLength: 8)
+            if let trailingDetail {
+                Text(trailingDetail)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+            if let trailingSystemImage {
+                Image(systemName: trailingSystemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.52))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.05))
+        )
+    }
+}
+
+private struct StoreButtonProfilePopover: View {
+    let editorStore: EditorStore
+    let currentMouseSlot: Int?
+    let pickerLabel: (ButtonProfileSource) -> String
+    let onSave: () -> Void
+    let onWriteStoredSlot: (Int) -> Void
+    let onReplaceCurrentSlot: () -> Void
+    let onRevertToSource: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Saved in OpenSnek")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                storeActionButton("Save", action: onSave)
+            }
+
+            if editorStore.supportsMultipleOnboardProfiles {
+                Divider().overlay(Color.white.opacity(0.08))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Stored Slots")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+
+                    ForEach(editorStore.writableMouseButtonSources, id: \.id) { source in
+                        if case .mouseSlot(let slot) = source {
+                            storeActionButton(pickerLabel(source)) {
+                                onWriteStoredSlot(slot)
+                            }
+                        }
+                    }
+
+                    if let currentMouseSlot, currentMouseSlot > 1, editorStore.canReplaceCurrentMouseSlot {
+                        storeActionButton("Replace Current Stored Slot", action: onReplaceCurrentSlot)
+                    }
+                }
+            }
+
+            if editorStore.buttonWorkspaceHasUnsavedSourceChanges {
+                Divider().overlay(Color.white.opacity(0.08))
+                storeActionButton("Revert to Source", action: onRevertToSource)
+            }
+        }
+        .padding(14)
+        .frame(width: 280, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+    }
+
+    private func storeActionButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(title)
+                Spacer(minLength: 8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.05))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SaveButtonProfileSheet: View {
+    let initialName: String
+    let existingProfiles: [OpenSnekButtonProfile]
+    let onSaveNew: (String) -> Void
+    let onOverwrite: (UUID) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var mode: SaveButtonProfileMode = .newProfile
+    @State private var name = ""
+    @State private var selectedProfileID: UUID?
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSave: Bool {
+        switch mode {
+        case .newProfile:
+            return !trimmedName.isEmpty
+        case .overwriteExisting:
+            return selectedProfileID != nil
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Save Button Profile")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+
+            Text("Saved profiles live in OpenSnek and can be reused across devices.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.68))
+
+            Picker("Save Mode", selection: $mode) {
+                Text("New").tag(SaveButtonProfileMode.newProfile)
+                Text("Overwrite").tag(SaveButtonProfileMode.overwriteExisting)
+            }
+            .pickerStyle(.segmented)
+
+            if mode == .newProfile {
+                TextField("Profile Name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            } else {
+                Picker(
+                    "Existing Profile",
+                    selection: Binding(
+                        get: { selectedProfileID ?? existingProfiles.first?.id },
+                        set: { selectedProfileID = $0 }
+                    )
+                ) {
+                    ForEach(existingProfiles) { profile in
+                        Text(profile.name).tag(Optional(profile.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+            HStack {
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
+                }
+
+                Button("Save") {
+                    switch mode {
+                    case .newProfile:
+                        onSaveNew(trimmedName)
+                    case .overwriteExisting:
+                        if let selectedProfileID {
+                            onOverwrite(selectedProfileID)
+                        }
+                    }
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSave)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            if name.isEmpty {
+                name = initialName
+            }
+            if selectedProfileID == nil {
+                selectedProfileID = existingProfiles.first?.id
+            }
+            if existingProfiles.isEmpty {
+                mode = .newProfile
+            }
+        }
+    }
+}
+
+private enum SaveButtonProfileMode: Hashable {
+    case newProfile
+    case overwriteExisting
+}
+
+private struct ManageButtonProfilesSheet: View {
+    let profiles: [OpenSnekButtonProfile]
+    let onRename: (UUID, String) -> Void
+    let onDelete: (UUID) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var draftNames: [UUID: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Saved Button Profiles")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text("Manage your OpenSnek profile library.")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                }
+
+                Spacer()
+
+                Button("Done") {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if profiles.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No saved profiles yet.")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text("Use Store to save the current button layout into OpenSnek.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.04))
+                )
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(profiles) { profile in
+                            HStack(spacing: 10) {
+                                TextField(
+                                    "Profile Name",
+                                    text: Binding(
+                                        get: { draftNames[profile.id] ?? profile.name },
+                                        set: { draftNames[profile.id] = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                Button("Rename") {
+                                    onRename(profile.id, draftNames[profile.id] ?? profile.name)
+                                }
+                                .disabled((draftNames[profile.id] ?? profile.name).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                                Button("Delete", role: .destructive) {
+                                    onDelete(profile.id)
+                                }
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 560, minHeight: 300)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            draftNames = profiles.reduce(into: [:]) { partialResult, profile in
+                partialResult[profile.id] = profile.name
+            }
+        }
+        .onChange(of: profiles) { _, newValue in
+            draftNames = newValue.reduce(into: [:]) { partialResult, profile in
+                partialResult[profile.id] = draftNames[profile.id] ?? profile.name
             }
         }
     }
@@ -1421,10 +2145,6 @@ private struct ButtonBindingRow: View {
     let editorStore: EditorStore
     let row: ButtonBindingRowModel
 
-    private var showsInlineTurboToggle: Bool {
-        row.selectedKind == .keyboardSimple && row.turboEligible
-    }
-
     var body: some View {
         let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
         let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
@@ -1461,10 +2181,6 @@ private struct ButtonBindingRow: View {
                         isEditable: row.isEditable,
                         onSelect: { editorStore.updateButtonBindingHidKey(slot: row.slot, hidKey: $0) }
                     )
-
-                    if showsInlineTurboToggle {
-                        turboToggle
-                    }
                 }
             }
 
@@ -1525,11 +2241,9 @@ private struct ButtonBindingRow: View {
             }
 
             if row.turboEligible {
-                if !showsInlineTurboToggle {
-                    HStack(spacing: 8) {
-                        Spacer()
-                        turboToggle
-                    }
+                HStack(spacing: 8) {
+                    Spacer()
+                    turboToggle
                 }
 
                 if row.turboEnabled {

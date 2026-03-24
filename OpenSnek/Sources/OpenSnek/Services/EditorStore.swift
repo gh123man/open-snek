@@ -1,4 +1,6 @@
+import Foundation
 import Observation
+import OpenSnekAppSupport
 import OpenSnekCore
 
 @MainActor
@@ -25,9 +27,13 @@ final class EditorStore {
     var editableSecondaryColor = RGBColor(r: 0, g: 170, b: 255)
     var editableButtonBindings: [Int: ButtonBindingDraft] = [:]
     var isEditingDpiControl = false
+    var isButtonProfileOperationInFlight = false
+    var buttonProfileOperationStatusText: String?
+    var usbButtonProfilesRevision = 0
 
     @ObservationIgnored private weak var editorControllerStorage: AppStateEditorController?
     @ObservationIgnored private weak var applyControllerStorage: AppStateApplyController?
+    @ObservationIgnored private var buttonProfileOperationDepth = 0
 
     init(deviceStore: DeviceStore) {
         self.deviceStore = deviceStore
@@ -53,6 +59,23 @@ final class EditorStore {
             preconditionFailure("EditorStore accessed before applyController was bound")
         }
         return applyControllerStorage
+    }
+
+    private func withButtonProfileOperation<T>(
+        statusText: String,
+        _ operation: @escaping @MainActor () async -> T
+    ) async -> T {
+        buttonProfileOperationDepth += 1
+        isButtonProfileOperationInFlight = true
+        buttonProfileOperationStatusText = statusText
+        defer {
+            buttonProfileOperationDepth = max(0, buttonProfileOperationDepth - 1)
+            isButtonProfileOperationInFlight = buttonProfileOperationDepth > 0
+            if buttonProfileOperationDepth == 0 {
+                buttonProfileOperationStatusText = nil
+            }
+        }
+        return await operation()
     }
 
     var visibleUSBLightingZones: [USBLightingZoneDescriptor] {
@@ -91,8 +114,139 @@ final class EditorStore {
         max(1, min(visibleOnboardProfileCount, deviceStore.state?.active_onboard_profile ?? 1))
     }
 
+    var liveUSBButtonProfile: Int {
+        editorController.liveUSBButtonProfile()
+    }
+
     var supportsMultipleOnboardProfiles: Bool {
         deviceStore.selectedDevice?.transport == .usb && visibleOnboardProfileCount > 1
+    }
+
+    var visibleUSBButtonProfiles: [USBButtonProfileSummary] {
+        _ = usbButtonProfilesRevision
+        return editorController.usbButtonProfileSummaries()
+    }
+
+    var savedButtonProfiles: [OpenSnekButtonProfile] {
+        _ = usbButtonProfilesRevision
+        return editorController.savedButtonProfiles()
+    }
+
+    var currentButtonProfileSource: ButtonProfileSource? {
+        _ = usbButtonProfilesRevision
+        return editorController.currentButtonProfileSource()
+    }
+
+    var currentButtonProfileDisplayName: String {
+        _ = usbButtonProfilesRevision
+        return editorController.currentButtonProfileDisplayName()
+    }
+
+    var liveButtonProfileDisplayName: String {
+        _ = usbButtonProfilesRevision
+        return editorController.liveButtonProfileDisplayName()
+    }
+
+    var deviceDefaultButtonProfileDisplayName: String {
+        _ = usbButtonProfilesRevision
+        return editorController.deviceDefaultButtonProfileDisplayName()
+    }
+
+    var currentButtonProfileHasUnsupportedBindings: Bool {
+        _ = usbButtonProfilesRevision
+        return editorController.currentButtonProfileHasUnsupportedBindings()
+    }
+
+    var buttonWorkspaceHasUnsavedSourceChanges: Bool {
+        _ = usbButtonProfilesRevision
+        guard let selectedDevice = deviceStore.selectedDevice else { return false }
+        return editorController.buttonWorkspaceHasUnsavedSourceChanges(device: selectedDevice)
+    }
+
+    var buttonWorkspaceHasUnappliedLiveChanges: Bool {
+        _ = usbButtonProfilesRevision
+        guard let selectedDevice = deviceStore.selectedDevice else { return false }
+        return editorController.buttonWorkspaceHasUnappliedLiveChanges(device: selectedDevice)
+    }
+
+    var canApplyCurrentButtonWorkspace: Bool {
+        buttonWorkspaceHasUnappliedLiveChanges
+    }
+
+    var canUpdateCurrentSavedButtonProfile: Bool {
+        _ = usbButtonProfilesRevision
+        return editorController.canUpdateCurrentSavedButtonProfile()
+    }
+
+    var canReplaceCurrentMouseSlot: Bool {
+        _ = usbButtonProfilesRevision
+        return editorController.canReplaceCurrentMouseSlot()
+    }
+
+    var onThisMouseButtonSources: [ButtonProfileSource] {
+        _ = usbButtonProfilesRevision
+        return editorController.onThisMouseButtonSources()
+    }
+
+    var loadableMouseButtonSources: [ButtonProfileSource] {
+        _ = usbButtonProfilesRevision
+        return editorController.loadableMouseButtonSources()
+    }
+
+    var storedMouseButtonSources: [ButtonProfileSource] {
+        _ = usbButtonProfilesRevision
+        return editorController.storedMouseButtonSources()
+    }
+
+    var writableMouseButtonSources: [ButtonProfileSource] {
+        _ = usbButtonProfilesRevision
+        return editorController.writableMouseButtonSources()
+    }
+
+    var isEditingMouseBaseButtonProfile: Bool {
+        _ = usbButtonProfilesRevision
+        return editorController.isEditingMouseBaseButtonProfile()
+    }
+
+    func buttonProfileSourceDisplayName(_ source: ButtonProfileSource) -> String {
+        editorController.buttonProfileSourceDisplayName(source)
+    }
+
+    func buttonProfileSourceMatchDescription(_ source: ButtonProfileSource) -> String? {
+        _ = usbButtonProfilesRevision
+        return editorController.buttonProfileSourceMatchDescription(source)
+    }
+
+    func refreshButtonProfilePresentation() {
+        editorController.refreshButtonProfilePresentation()
+    }
+
+    var canDuplicateSelectedUSBButtonProfile: Bool {
+        visibleUSBButtonProfiles.contains { $0.profile != editableUSBButtonProfile }
+    }
+
+    var canResetSelectedUSBButtonProfile: Bool {
+        supportsMultipleOnboardProfiles && (
+            selectedUSBButtonProfileHasUnsavedChanges ||
+            visibleUSBButtonProfiles.contains { $0.profile == editableUSBButtonProfile && $0.isCustomized != false }
+        )
+    }
+
+    var selectedUSBButtonProfileHasUnsavedChanges: Bool {
+        _ = usbButtonProfilesRevision
+        return editorController.selectedUSBButtonProfileHasUnsavedChanges()
+    }
+
+    var canSaveSelectedUSBButtonProfile: Bool {
+        supportsMultipleOnboardProfiles && selectedUSBButtonProfileHasUnsavedChanges
+    }
+
+    var canActivateSelectedUSBButtonProfile: Bool {
+        supportsMultipleOnboardProfiles && editableUSBButtonProfile != liveUSBButtonProfile
+    }
+
+    var duplicateTargetProfiles: [USBButtonProfileSummary] {
+        visibleUSBButtonProfiles.filter { $0.profile != editableUSBButtonProfile }
     }
 
     var compactActiveStageIndex: Int {
@@ -179,6 +333,95 @@ final class EditorStore {
 
     func updateUSBButtonProfile(_ profile: Int) {
         editorController.updateUSBButtonProfile(profile)
+    }
+
+    func selectButtonProfileSource(_ source: ButtonProfileSource) {
+        editorController.selectButtonProfileSource(source)
+    }
+
+    func loadButtonProfileSourceIntoLive(_ source: ButtonProfileSource) async {
+        await withButtonProfileOperation(statusText: "Loading profile…") { [self] in
+            await self.editorController.loadButtonProfileSourceIntoLive(source)
+        }
+    }
+
+    func selectNextOnboardButtonProfile() {
+        editorController.selectNextOnboardButtonProfile()
+    }
+
+    func duplicateSelectedUSBButtonProfile() async {
+        await withButtonProfileOperation(statusText: "Saving profile…") { [self] in
+            await self.applyController.duplicateSelectedUSBButtonProfile()
+        }
+    }
+
+    func duplicateSelectedUSBButtonProfile(to targetProfile: Int) async {
+        await withButtonProfileOperation(statusText: "Saving profile…") { [self] in
+            await self.applyController.duplicateSelectedUSBButtonProfile(to: targetProfile)
+        }
+    }
+
+    func resetSelectedUSBButtonProfile() async {
+        await withButtonProfileOperation(statusText: "Removing profile…") { [self] in
+            await self.applyController.resetSelectedUSBButtonProfile()
+        }
+    }
+
+    func projectSelectedUSBButtonProfileToDirectLayer() async {
+        await withButtonProfileOperation(statusText: "Applying profile…") { [self] in
+            await self.applyController.projectSelectedUSBButtonProfileToDirectLayer()
+        }
+    }
+
+    func saveSelectedUSBButtonProfile(activateAfterSave: Bool = false) async {
+        await withButtonProfileOperation(statusText: "Saving profile…") { [self] in
+            await self.applyController.saveSelectedUSBButtonProfile(activateAfterSave: activateAfterSave)
+        }
+    }
+
+    func applyCurrentButtonWorkspaceToLive() async {
+        await withButtonProfileOperation(statusText: "Applying profile…") { [self] in
+            await self.applyController.applyCurrentButtonWorkspaceToLive()
+        }
+    }
+
+    func writeCurrentButtonWorkspaceToMouseSlot(_ slot: Int) async {
+        await withButtonProfileOperation(statusText: "Saving profile…") { [self] in
+            await self.applyController.writeCurrentButtonWorkspaceToMouseSlot(slot)
+        }
+    }
+
+    func resetLiveButtonsToDeviceDefaultSlot() async {
+        await withButtonProfileOperation(statusText: "Resetting profile…") { [self] in
+            await self.applyController.resetLiveButtonsToDeviceDefaultSlot()
+        }
+    }
+
+    func revertButtonWorkspaceToSource() {
+        editorController.revertButtonWorkspaceToSource()
+    }
+
+    @discardableResult
+    func saveCurrentButtonWorkspaceAsNewProfile(name: String) -> OpenSnekButtonProfile {
+        editorController.saveCurrentButtonWorkspaceAsNewProfile(name: name)
+    }
+
+    @discardableResult
+    func updateCurrentOpenSnekButtonProfile() -> OpenSnekButtonProfile? {
+        editorController.updateCurrentOpenSnekButtonProfile()
+    }
+
+    func updateOpenSnekButtonProfile(id: UUID) -> OpenSnekButtonProfile? {
+        editorController.updateOpenSnekButtonProfile(id: id, bindings: editableButtonBindings)
+    }
+
+    @discardableResult
+    func renameOpenSnekButtonProfile(id: UUID, name: String) -> OpenSnekButtonProfile? {
+        editorController.renameOpenSnekButtonProfile(id: id, name: name)
+    }
+
+    func deleteOpenSnekButtonProfile(id: UUID) {
+        editorController.deleteOpenSnekButtonProfile(id: id)
     }
 
     func updateLightingWaveDirection(_ direction: LightingWaveDirection) {

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-24]
+
+### Added
+- OpenSnek now has a saved button-profile library. Button layouts can be named, reused across devices, loaded into the live editor, and written into onboard mouse storage slots.
+
+### Fixed
+- USB button-profile support on the Basilisk V3 Pro and Basilisk V3 35K now follows the same five-slot model: slot 1 is the live/base profile and slots 2 through 5 are stored button layouts.
+- The macOS button-remap UI now uses an explicit `Profiles` load/store workflow with local saved profiles, onboard slot loading, slot-to-profile name matching, and direct editing of the live/base profile.
+- Button remap edits now auto-apply only the slot you changed, keep the editor stable during readback, and show profile-operation busy state only for full profile loads and saves.
+- Turbo configuration now works consistently for turbo-capable mouse bindings as well as keyboard bindings, and the 35K now exposes `DPI Clutch` like the V3 Pro.
+- USB button hydration and reconnect recovery are more reliable: switching devices or reconnecting no longer leaves stale/default bindings on screen, reconnects no longer wait as long for usable state, and USB multi-profile mice no longer eagerly sweep every stored slot on connect.
+- Connect-time lighting restore is now limited to the Basilisk V3 X HyperSpeed. The Basilisk V3 Pro and Basilisk V3 35K keep their own hardware lighting state, while the app hydrates their lighting UI from remembered color/effect values without writing that state back on connect.
+- Choosing `Default` for special USB button slots now writes the correct semantic default action, so device-specific defaults such as the 35K DPI-cycle button behave correctly without manually reassigning them.
+
 ## [2026-03-23]
 
 ### Fixed
@@ -10,6 +24,7 @@ All notable changes to this project are documented in this file.
 ## [2026-03-22]
 
 ### Fixed
+- When a device appears in the sidebar before its first live state read finishes, the detail pane now shows a lighter-weight loading screen with a spinner instead of the old text-heavy unavailable screen, and selected devices without cached state now kick off their first refresh immediately from controller-side selection handling to reduce connect-to-controls delay.
 - Passive HID DPI fallback/correction scheduling now tracks every visible local device instead of only the selected one, so concurrent USB and Bluetooth mice can both keep their passive-stream upgrade path and real-time watchdog active in the same app/service session.
 - Switching device tabs no longer blocks on fresh USB button-binding readback for a device that was already hydrated earlier in the session. The UI now reuses cached per-device editor state immediately and refreshes any USB button readback in the background instead of tying tab selection responsiveness to control-transport reads.
 - Keyboard button-remap rows now keep the `Turbo` toggle inline with the key picker, while the turbo-rate slider stays on its own line underneath so enabling turbo does not reshuffle the key-selection controls.
@@ -134,7 +149,7 @@ All notable changes to this project are documented in this file.
 ## [2026-03-11]
 
 ### Added
-- USB device-profile support for Razer Basilisk V3 Pro (`0x00AB`) in the shared Swift registry and macOS app, with the observed 3-profile / 3-zone layout, validated wheel-tilt slots, and documented fixed clutch/profile controls.
+- USB device-profile support for Razer Basilisk V3 Pro (`0x00AB`) in the shared Swift registry and macOS app, with the observed lighting-zone layout, validated wheel-tilt slots, and documented fixed clutch/profile controls.
 - `OpenSnekProbe` USB commands now accept `--pid 0x....` so bring-up and raw probes can target one attached Razer USB device without hopping between multiple mice.
 
 ### Fixed

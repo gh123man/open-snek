@@ -911,13 +911,52 @@ actor BridgeClient {
                 }
             }
 
+            if let usbButtonProfileAction = patch.usbButtonProfileAction {
+                switch usbButtonProfileAction.kind {
+                case .projectToDirectLayer:
+                    guard try runUSBWrite({
+                        try projectUSBButtonProfileToDirectLayer(
+                            $0,
+                            device,
+                            profile: UInt8(usbButtonProfileAction.targetProfile)
+                        )
+                    }) else {
+                        throw BridgeError.commandFailed("Failed to project USB button profile to direct layer")
+                    }
+                case .duplicateToPersistentSlot:
+                    guard let sourceProfile = usbButtonProfileAction.sourceProfile else {
+                        throw BridgeError.commandFailed("Missing source USB button profile")
+                    }
+                    guard try runUSBWrite({
+                        try duplicateUSBButtonProfile(
+                            $0,
+                            device,
+                            sourceProfile: UInt8(sourceProfile),
+                            targetProfile: UInt8(usbButtonProfileAction.targetProfile)
+                        )
+                    }) else {
+                        throw BridgeError.commandFailed("Failed to duplicate USB button profile")
+                    }
+                case .resetPersistentSlot:
+                    guard try runUSBWrite({
+                        try resetUSBButtonProfile(
+                            $0,
+                            device,
+                            profile: UInt8(usbButtonProfileAction.targetProfile)
+                        )
+                    }) else {
+                        throw BridgeError.commandFailed("Failed to reset USB button profile")
+                    }
+                }
+            }
+
             if let binding = patch.buttonBinding {
                 let slot = binding.slot
                 let kind = binding.kind.rawValue
                 let hidKey = binding.hidKey ?? 4
                 let turboEnabled = binding.kind.supportsTurbo && binding.turboEnabled
                 let turboRate = max(1, min(255, binding.turboRate ?? 0x8E))
-                let clutchDPI = binding.kind == .dpiClutch ? DeviceProfiles.clampDPI(binding.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI, device: device) : nil
+                let clutchDPI = binding.kind == .dpiClutch ? DeviceProfiles.clampDPI(binding.clutchDPI ?? ButtonBindingSupport.defaultBasiliskDPIClutchDPI, device: device) : nil
                 guard try runUSBWrite({
                     try setButtonBindingUSB(
                         $0,
@@ -929,6 +968,7 @@ actor BridgeClient {
                         turboRate: turboRate,
                         clutchDPI: clutchDPI,
                         persistentProfile: binding.persistentProfile,
+                        writePersistentLayer: binding.writePersistentLayer,
                         writeDirectLayer: binding.writeDirectLayer
                     )
                 }) else {
@@ -1010,6 +1050,8 @@ actor BridgeClient {
             scroll_mode: patch.scrollMode ?? base.scroll_mode,
             scroll_acceleration: patch.scrollAcceleration ?? base.scroll_acceleration,
             scroll_smart_reel: patch.scrollSmartReel ?? base.scroll_smart_reel,
+            active_onboard_profile: base.active_onboard_profile,
+            onboard_profile_count: base.onboard_profile_count,
             led_value: patch.ledBrightness ?? base.led_value,
             capabilities: base.capabilities
         )

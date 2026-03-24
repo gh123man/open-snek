@@ -1,17 +1,20 @@
 import Foundation
 
 public enum ButtonBindingSupport {
-    public static let defaultV3ProDPIClutchDPI = 400
+    public static let defaultBasiliskDPIClutchDPI = 400
 
-    private static func basiliskV3ProDPIClutchBlock(dpi: Int = defaultV3ProDPIClutchDPI) -> [UInt8] {
-        let clamped = UInt16(DeviceProfiles.clampDPI(dpi, profileID: .basiliskV3Pro))
+    private static func basiliskDPIClutchBlock(
+        dpi: Int = defaultBasiliskDPIClutchDPI,
+        profileID: DeviceProfileID = .basiliskV3Pro
+    ) -> [UInt8] {
+        let clamped = UInt16(DeviceProfiles.clampDPI(dpi, profileID: profileID))
         let hi = UInt8((clamped >> 8) & 0xFF)
         let lo = UInt8(clamped & 0xFF)
-        // Observed V3 Pro clutch payload encodes symmetric X/Y DPI.
+        // Observed Basilisk clutch payload encodes symmetric X/Y DPI.
         return [0x06, 0x05, 0x05, hi, lo, hi, lo]
     }
 
-    private static func v3ProDPIClutchDPI(from functionBlock: [UInt8]) -> Int? {
+    private static func basiliskDPIClutchDPI(from functionBlock: [UInt8], profileID: DeviceProfileID) -> Int? {
         guard functionBlock.count == 7,
               functionBlock[0] == 0x06,
               functionBlock[1] == 0x05,
@@ -22,11 +25,16 @@ public enum ButtonBindingSupport {
         let dpiX = (Int(functionBlock[3]) << 8) | Int(functionBlock[4])
         let dpiY = (Int(functionBlock[5]) << 8) | Int(functionBlock[6])
         guard dpiX == dpiY else { return nil }
-        return DeviceProfiles.clampDPI(dpiX, profileID: .basiliskV3Pro)
+        return DeviceProfiles.clampDPI(dpiX, profileID: profileID)
     }
 
     public static func defaultDPIClutchDPI(for profileID: DeviceProfileID?) -> Int? {
-        profileID == .basiliskV3Pro ? defaultV3ProDPIClutchDPI : nil
+        switch profileID {
+        case .basiliskV3Pro, .basiliskV335K:
+            return defaultBasiliskDPIClutchDPI
+        case .basiliskV3XHyperspeed, .none:
+            return nil
+        }
     }
 
     public static func defaultButtonBinding(for slot: Int, profileID: DeviceProfileID? = nil) -> ButtonBindingDraft {
@@ -34,6 +42,46 @@ public enum ButtonBindingSupport {
         let visibleSlots = buttonSlotDescriptors(for: profileID)
         guard visibleSlots.contains(where: { $0.slot == slot }) else { return fallback }
         return fallback
+    }
+
+    public static func semanticDefaultButtonBinding(
+        for slot: Int,
+        profileID: DeviceProfileID? = nil
+    ) -> ButtonBindingDraft? {
+        let fallbackRate = 0x8E
+        switch slot {
+        case 15 where profileID == .basiliskV3Pro || profileID == .basiliskV335K:
+            return ButtonBindingDraft(
+                kind: .dpiClutch,
+                hidKey: 4,
+                turboEnabled: false,
+                turboRate: fallbackRate,
+                clutchDPI: defaultDPIClutchDPI(for: profileID)
+            )
+        case 96:
+            switch profileID {
+            case .basiliskV335K, .basiliskV3XHyperspeed, .none:
+                return ButtonBindingDraft(kind: .dpiCycle, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+            case .basiliskV3Pro:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    public static func normalizedDefaultRepresentation(
+        for slot: Int,
+        draft: ButtonBindingDraft,
+        profileID: DeviceProfileID? = nil
+    ) -> ButtonBindingDraft {
+        guard let semanticDefault = semanticDefaultButtonBinding(for: slot, profileID: profileID) else {
+            return draft
+        }
+        guard draft == semanticDefault || draft.kind == .default else {
+            return draft
+        }
+        return defaultButtonBinding(for: slot, profileID: profileID)
     }
 
     public static func buttonBindingDraftFromUSBFunctionBlock(
@@ -45,7 +93,20 @@ public enum ButtonBindingSupport {
         let fallbackRate = 0x8E
 
         if let defaultBlock = defaultUSBFunctionBlock(for: slot, profileID: profileID), functionBlock == defaultBlock {
-            return ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+            return defaultButtonBinding(for: slot, profileID: profileID)
+        }
+
+        if let semanticDefault = semanticDefaultButtonBinding(for: slot, profileID: profileID),
+           functionBlock == buildUSBFunctionBlock(
+               slot: slot,
+               kind: semanticDefault.kind,
+               hidKey: semanticDefault.hidKey,
+               turboEnabled: semanticDefault.turboEnabled,
+               turboRate: semanticDefault.turboRate,
+               clutchDPI: semanticDefault.clutchDPI,
+               profileID: profileID
+           ) {
+            return defaultButtonBinding(for: slot, profileID: profileID)
         }
 
         let fnClass = functionBlock[0]
@@ -65,7 +126,9 @@ public enum ButtonBindingSupport {
             if functionBlock == [0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00] {
                 return ButtonBindingDraft(kind: .dpiCycle, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
             }
-            if profileID == .basiliskV3Pro, let dpi = v3ProDPIClutchDPI(from: functionBlock) {
+            if let profileID,
+               [.basiliskV3Pro, .basiliskV335K].contains(profileID),
+               let dpi = basiliskDPIClutchDPI(from: functionBlock, profileID: profileID) {
                 return ButtonBindingDraft(
                     kind: .dpiClutch,
                     hidKey: 4,
@@ -211,7 +274,10 @@ public enum ButtonBindingSupport {
         case .dpiCycle:
             return [0x06, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00]
         case .dpiClutch:
-            return basiliskV3ProDPIClutchBlock(dpi: clutchDPI ?? defaultV3ProDPIClutchDPI)
+            return basiliskDPIClutchBlock(
+                dpi: clutchDPI ?? defaultBasiliskDPIClutchDPI,
+                profileID: profileID ?? .basiliskV3Pro
+            )
         case .clearLayer:
             return [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
         case .keyboardSimple:
@@ -232,8 +298,10 @@ public enum ButtonBindingSupport {
 
     public static func defaultUSBFunctionBlock(for slot: Int, profileID: DeviceProfileID? = nil) -> [UInt8]? {
         switch slot {
+        case 15 where profileID == .basiliskV335K:
+            return [0x06, 0x01, 0x05, 0x01, 0x90, 0x01, 0x90]
         case 15 where profileID == .basiliskV3Pro:
-            return basiliskV3ProDPIClutchBlock()
+            return basiliskDPIClutchBlock(profileID: .basiliskV3Pro)
         case 52 where usesExtendedBasiliskUSBReadLayout(profileID),
              53 where usesExtendedBasiliskUSBReadLayout(profileID):
             return [0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00]
@@ -269,7 +337,7 @@ public enum ButtonBindingSupport {
         let length = Int(min(5, block[1]))
         let data = Array(block[2..<(2 + length)])
         let dataHex = data.map { String(format: "%02x", $0) }.joined()
-        if let clutchDPI = v3ProDPIClutchDPI(from: block) {
+        if let clutchDPI = basiliskDPIClutchDPI(from: block, profileID: .basiliskV3Pro) {
             return "block=\(hex) class=0x\(String(format: "%02x", classID)) len=\(length) data=\(dataHex) dpi_clutch=\(clutchDPI)"
         }
         return "block=\(hex) class=0x\(String(format: "%02x", classID)) len=\(length) data=\(dataHex)"
@@ -279,7 +347,7 @@ public enum ButtonBindingSupport {
         ButtonBindingKind.allCases.filter { kind in
             switch kind {
             case .dpiClutch:
-                return profileID == .basiliskV3Pro
+                return profileID == .basiliskV3Pro || profileID == .basiliskV335K
             default:
                 return true
             }

@@ -1,11 +1,71 @@
 import Foundation
 import OpenSnekCore
 
+public struct OpenSnekButtonProfile: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var bindings: [Int: ButtonBindingDraft]
+
+    public init(id: UUID = UUID(), name: String, bindings: [Int: ButtonBindingDraft]) {
+        self.id = id
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.bindings = bindings
+    }
+}
+
 public final class DevicePreferenceStore: @unchecked Sendable {
     private let defaults: UserDefaults
+    private let openSnekButtonProfilesKey = "openSnekButtonProfiles"
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+    }
+
+    public func loadOpenSnekButtonProfiles() -> [OpenSnekButtonProfile] {
+        guard
+            let data = defaults.data(forKey: openSnekButtonProfilesKey),
+            let decoded = try? JSONDecoder().decode([OpenSnekButtonProfile].self, from: data)
+        else {
+            return []
+        }
+        return decoded
+    }
+
+    @discardableResult
+    public func saveOpenSnekButtonProfile(name: String, bindings: [Int: ButtonBindingDraft]) -> OpenSnekButtonProfile {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profile = OpenSnekButtonProfile(
+            name: trimmed.isEmpty ? "Untitled Profile" : trimmed,
+            bindings: bindings
+        )
+        var profiles = loadOpenSnekButtonProfiles()
+        profiles.append(profile)
+        persistOpenSnekButtonProfiles(profiles)
+        return profile
+    }
+
+    @discardableResult
+    public func updateOpenSnekButtonProfile(
+        id: UUID,
+        name: String? = nil,
+        bindings: [Int: ButtonBindingDraft]? = nil
+    ) -> OpenSnekButtonProfile? {
+        var profiles = loadOpenSnekButtonProfiles()
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        if let name {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            profiles[index].name = trimmed.isEmpty ? profiles[index].name : trimmed
+        }
+        if let bindings {
+            profiles[index].bindings = bindings
+        }
+        persistOpenSnekButtonProfiles(profiles)
+        return profiles[index]
+    }
+
+    public func deleteOpenSnekButtonProfile(id: UUID) {
+        let filtered = loadOpenSnekButtonProfiles().filter { $0.id != id }
+        persistOpenSnekButtonProfiles(filtered)
     }
 
     public func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
@@ -89,12 +149,16 @@ public final class DevicePreferenceStore: @unchecked Sendable {
 
     public func persistButtonBinding(_ binding: ButtonBindingPatch, device: MouseDevice, profile: Int? = nil) {
         var persisted = loadPersistedButtonBindings(device: device, profile: profile)
-        persisted[binding.slot] = ButtonBindingDraft(
-            kind: binding.kind,
-            hidKey: binding.kind == .keyboardSimple ? max(4, min(231, binding.hidKey ?? 4)) : 4,
-            turboEnabled: binding.kind.supportsTurbo ? binding.turboEnabled : false,
-            turboRate: max(1, min(255, binding.turboRate ?? 0x8E)),
-            clutchDPI: binding.kind == .dpiClutch ? DeviceProfiles.clampDPI(binding.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI, device: device) : nil
+        persisted[binding.slot] = ButtonBindingSupport.normalizedDefaultRepresentation(
+            for: binding.slot,
+            draft: ButtonBindingDraft(
+                kind: binding.kind,
+                hidKey: binding.kind == .keyboardSimple ? max(4, min(231, binding.hidKey ?? 4)) : 4,
+                turboEnabled: binding.kind.supportsTurbo ? binding.turboEnabled : false,
+                turboRate: max(1, min(255, binding.turboRate ?? 0x8E)),
+                clutchDPI: binding.kind == .dpiClutch ? DeviceProfiles.clampDPI(binding.clutchDPI ?? ButtonBindingSupport.defaultBasiliskDPIClutchDPI, device: device) : nil
+            ),
+            profileID: device.profile_id
         )
         savePersistedButtonBindings(device: device, bindings: persisted, profile: profile)
     }
@@ -135,12 +199,16 @@ public final class DevicePreferenceStore: @unchecked Sendable {
             else {
                 return
             }
-            partialResult[slot] = ButtonBindingDraft(
-                kind: kind,
-                hidKey: max(4, min(231, pair.value.hidKey)),
-                turboEnabled: kind.supportsTurbo ? pair.value.turboEnabled : false,
-                turboRate: max(1, min(255, pair.value.turboRate)),
-                clutchDPI: kind == .dpiClutch ? DeviceProfiles.clampDPI(pair.value.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI, device: device) : nil
+            partialResult[slot] = ButtonBindingSupport.normalizedDefaultRepresentation(
+                for: slot,
+                draft: ButtonBindingDraft(
+                    kind: kind,
+                    hidKey: max(4, min(231, pair.value.hidKey)),
+                    turboEnabled: kind.supportsTurbo ? pair.value.turboEnabled : false,
+                    turboRate: max(1, min(255, pair.value.turboRate)),
+                    clutchDPI: kind == .dpiClutch ? DeviceProfiles.clampDPI(pair.value.clutchDPI ?? ButtonBindingSupport.defaultBasiliskDPIClutchDPI, device: device) : nil
+                ),
+                profileID: device.profile_id
             )
         }
     }
@@ -185,6 +253,11 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         let trimmed = zoneID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty, trimmed != "all" else { return nil }
         return trimmed
+    }
+
+    private func persistOpenSnekButtonProfiles(_ profiles: [OpenSnekButtonProfile]) {
+        guard let data = try? JSONEncoder().encode(profiles) else { return }
+        defaults.set(data, forKey: openSnekButtonProfilesKey)
     }
 }
 

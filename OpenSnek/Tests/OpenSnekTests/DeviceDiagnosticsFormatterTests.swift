@@ -60,7 +60,7 @@ final class DeviceDiagnosticsFormatterTests: XCTestCase {
 
         XCTAssertTrue(dump.contains("Support status: Validated profile"))
         XCTAssertTrue(dump.contains("Resolved profile: basilisk_v3_35k"))
-        XCTAssertTrue(dump.contains("Writable slots: 1, 2, 3, 4, 5, 9, 10, 52, 53, 96"))
+        XCTAssertTrue(dump.contains("Writable slots: 1, 2, 3, 4, 5, 9, 10, 15, 52, 53, 96"))
         XCTAssertTrue(dump.contains("Hidden unsupported buttons:"))
         XCTAssertTrue(dump.contains("Scroll Mode Toggle"))
         XCTAssertTrue(dump.contains("Supported effects: Off, Static, Spectrum, Wave"))

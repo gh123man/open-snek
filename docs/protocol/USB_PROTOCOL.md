@@ -196,7 +196,7 @@ Observed control labels on `0x00AB`:
 Validated slot ids on Basilisk V3 35K (`0x00CB`): `0x01..0x05`, `0x09`, `0x0A`, `0x0E`, `0x0F`, `0x34`, `0x35`, `0x60`, `0x6A`.
 Observed control labels on `0x00CB`:
 - `0x0E`: scroll-mode toggle
-- `0x0F`: sensitivity clutch
+- `0x0F`: sensitivity clutch / DPI clutch
 - `0x34`: wheel tilt left
 - `0x35`: wheel tilt right
 - `0x60`: top DPI button
@@ -212,7 +212,7 @@ Validated function block examples:
 - Basilisk V3 Pro DPI clutch action at 800 DPI: `06 05 05 03 20 03 20`
 - Basilisk V3 Pro sensitivity-clutch default (`0x0F`): `06 05 05 01 90 01 90`
 - Basilisk V3 Pro / 35K wheel-tilt defaults (`0x34`, `0x35`): `01 01 02 00 00 00 00`
-- Basilisk V3 35K sensitivity-clutch default (`0x0F`): `02 02 00 09 00 00 00`
+- Basilisk V3 35K sensitivity-clutch default (`0x0F`): `06 01 05 01 90 01 90`
 - Basilisk V3 Pro / 35K profile-button default (`0x6A`): `12 01 01 00 00 00 00`
 - Basilisk V3 35K observed alternate DPI-button block (`0x60`): `04 02 0F 7B 00 00 00`
 
@@ -225,13 +225,15 @@ Client note:
 - OpenSnek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
 - On the observed V3 Pro clutch slot (`0x0F`), the default block is not a simple mouse/keyboard payload; preserve `06 05 05 01 90 01 90` when restoring the native clutch behavior.
 - For the observed V3 Pro clutch payload `06 05 05 <xhi> <xlo> <yhi> <ylo>`, the trailing four bytes are configurable DPI values. OpenSnek currently writes one user-facing DPI scalar and mirrors it to X/Y.
-- The same V3 Pro clutch block was also written/read back successfully on slot `0x04`, so OpenSnek exposes `DPI Clutch` as a V3 Pro-only remap action for other writable USB slots.
+- The same `DPI Clutch` block was also written/read back successfully on other writable Basilisk USB slots (`0x04` on both the V3 Pro and 35K), so OpenSnek exposes `DPI Clutch` as a remap action on both supported Basilisk USB profiles.
+- On the attached Basilisk V3 35K (`0x00CB`) on March 24, 2026, the native clutch slot `0x0F` accepted both a right-click remap and the same `06 05 05 03 20 03 20` 800-DPI clutch payload on persistent profile `0x01`, and slot `0x04` also accepted the `DPI Clutch` payload on direct/live profile `0x00`.
+- Preserve the observed 35K native clutch restore block `06 01 05 01 90 01 90` when restoring slot `0x0F`; the 35K default differs from the V3 Pro default even though both devices accept the same `DPI Clutch` action payload.
 - On the observed V3 Pro profile-button slot (`0x6A`), remap writes can land, but repeated `0x02:0x0C` / `0x02:0x8C` cycles eventually returned timeout/no-response frames during probing. Keep this slot out of shipped UI until that write/readback path is stable.
 - Treat button access as three separate categories during new-device bring-up:
   - `editable`: validated over `0x02:0x0C`
   - `protocol-read-only`: readable from `0x02:0x8C`, but no validated writable path
   - `software-read-only`: fixed control exposed to software through auxiliary HID input/report paths rather than button-function writes
-- On Basilisk V3 35K, OpenRazer documents keyboard-interface report-4 codes `0x50 = profile` and `0x51 = sensitivity clutch`. Those controls should be tracked as software-read-only even if their fixed defaults are also visible through `0x02:0x8C`.
+- On Basilisk V3 35K, OpenRazer documents keyboard-interface report-4 codes `0x50 = profile` and `0x51 = sensitivity clutch`. The profile button still behaves like a software-read-only control, but the native clutch slot also has a validated USB button-function write path, so do not blanket-mark `0x0F` as software-read-only on this device.
 
 #### Get Onboard Profile Summary
 ```
@@ -244,11 +246,33 @@ TxnID:    0x1F
 
 Observed on Basilisk V3 35K (`0x00CB`):
 - response payload `01 00 05` on USB, indicating active profile `1` and `5` onboard profiles
-- the corresponding low-bit write candidate (`0x00:0x07`) is not yet validated for active-profile switching
+- tested write candidates `0x00:0x07` with payloads `02`, `02 00`, `02 00 05`, and `02 00 00` all returned status `0x05` (`not supported`) on the attached device
+- the hardware active-profile write path therefore remains unresolved
+- confirmed profile-model behavior from live write/readback on slot `0x04`:
+  - writing persistent profile `0x05` is isolated storage: profile `0x05` reads back the new block while persistent profile `0x01` and direct/live profile `0x00` stay unchanged
+  - writing persistent profile `0x01` while the device reports active profile `1` also changes direct/live profile `0x00`
+  - writing direct/live profile `0x00` afterward does not write back into persistent profile `0x01`
+- practical interpretation:
+  - profile `1` is the hardware-default active backing store
+  - profiles `2...5` behave like dumb persistent storage slots
+  - profile `0` (`NOSTORE` / direct) is a writable live layer
+  - software can project a stored slot into the live layer, but that is not the same thing as changing a hardware-selected active profile number
+  - this slot-addressed model is currently validated only for button mappings; DPI and lighting use separate storage keys below and should not be assumed to participate in profiles `2...5`
 
 Observed on Basilisk V3 Pro (`0x00AB`):
 - response payload `01 00 03` on USB, indicating active profile `1` and `3` onboard profiles
 - the corresponding low-bit write candidate (`0x00:0x07`) is not yet validated for active-profile switching
+
+Client note:
+- OpenSnek's shipped multi-profile UI uses the validated per-slot button-function protocol (`0x02:0x8C` / `0x02:0x0C`) for profile inspection, duplication, reset-to-default, and software-side live projection into the direct layer (`profile 0x00`).
+- That gives reliable software-managed switching for button mappings without claiming that the device's hardware active-profile register can be written yet.
+
+Bring-up checklist for future devices:
+- read `0x00:0x87` before and after changing profiles in vendor software; if the reported active slot never changes, do not assume the device has a writable hardware active-profile register
+- test `0x02:0x0C` / `0x02:0x8C` on one non-active stored slot and confirm whether the write is isolated or leaks into direct/live state
+- test persistent profile `0x01` and direct/live profile `0x00` separately; some devices alias or mirror those paths when profile `1` is the hardware-default active store
+- test a direct/live write after a persistent profile `0x01` write to learn whether the mirroring is one-way or fully aliased
+- only claim true hardware profile switching after validating both the reported active-profile state and the effective live behavior across reconnects / vendor-software exit
 
 ---
 
@@ -263,6 +287,12 @@ Response: args[0] = storage
           args[3-4] = DPI Y (big-endian)
 TxnID:    0x1F (Basilisk V3 X), 0x3F or 0xFF (others)
 ```
+
+Observed on Basilisk V3 35K (`0x00CB`):
+- both `0x00` and `0x01` read back successfully
+- writing `0x01` updates the persisted DPI state and also mirrors into `0x00` live state
+- writing `0x00` updates only the live state and does not write back into `0x01`
+- no slot-indexed DPI storage path is currently known beyond this `0x00`/`0x01` live-vs-persisted split
 
 #### Set DPI
 ```
@@ -399,7 +429,7 @@ Validated on Basilisk V3 X HyperSpeed (`0x00B9`), Basilisk V3 Pro (`0x00AB`), an
 ```
 Get:      Class 0x0F, ID 0x84, Size 0x03
 Set:      Class 0x0F, ID 0x04, Size 0x03
-Args:     [0] = VARSTORE (0x01), [1] = LED ID (0x01 scroll wheel), [2] = brightness (0..255)
+Args:     [0] = storage (`0x00` direct/live observed on `0x00CB`, `0x01` persisted/VARSTORE), [1] = LED ID, [2] = brightness (0..255)
 ```
 
 Validated LED IDs on `0x00B9`:
@@ -418,6 +448,7 @@ Validated LED IDs on `0x00AB`:
 
 Client note:
 - For whole-device USB lighting on Basilisk V3 Pro and Basilisk V3 35K, apply brightness/effect writes to all validated LED IDs (`0x01`, `0x04`, and `0x0A`).
+- On the attached Basilisk V3 35K, brightness reads on `0x0F:0x84` succeed for both storage `0x00` and `0x01`. Treat lighting the same way as DPI until proven otherwise: a separate live/persisted layer, not a slot-addressed onboard-profile store.
 
 #### Set Scroll LED Effects
 ```
@@ -528,7 +559,7 @@ Effects:
 | DPI Stages | 5 |
 | Poll Rates | 125, 500, 1000 Hz |
 | Validated matrix LEDs | `0x01` scroll wheel, `0x04` logo, `0x0A` underglow |
-| Extra validated button slots | `0x0E` scroll mode (protocol-read-only), `0x0F` sensitivity clutch (software-read-only / report-4 `0x51`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x60` DPI button, `0x6A` profile button (software-read-only / report-4 `0x50`) |
+| Extra validated button slots | `0x0E` scroll mode (protocol-read-only), `0x0F` sensitivity clutch / DPI clutch (editable; default `06 01 05 01 90 01 90`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x60` DPI button, `0x6A` profile button (software-read-only / report-4 `0x50`) |
 
 ### Razer Basilisk V3 Pro (0x00AB)
 

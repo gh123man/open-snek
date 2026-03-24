@@ -28,6 +28,11 @@ public final class ApplyCoordinator: @unchecked Sendable {
         pendingPatch != nil
     }
 
+    public func clearPending() {
+        pendingPatch = nil
+        stateRevision &+= 1
+    }
+
     public func bumpRevision() {
         stateRevision &+= 1
     }

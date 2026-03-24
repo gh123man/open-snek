@@ -80,6 +80,32 @@ struct RemoteClientPresenceState {
     let selectedDeviceID: String?
 }
 
+enum ButtonProfileSource: Hashable, Codable, Identifiable {
+    case openSnekProfile(UUID)
+    case mouseSlot(Int)
+
+    var id: String {
+        switch self {
+        case .openSnekProfile(let id):
+            return "openSnek:\(id.uuidString)"
+        case .mouseSlot(let slot):
+            return "mouseSlot:\(slot)"
+        }
+    }
+}
+
+struct USBButtonProfileSummary: Identifiable, Hashable {
+    let profile: Int
+    let isSelected: Bool
+    let isHardwareActive: Bool
+    let isLiveActive: Bool
+    let isCustomized: Bool?
+    let hasPendingChanges: Bool
+
+    var id: Int { profile }
+    var isLoaded: Bool { isCustomized != nil }
+}
+
 enum PollingProfile: Equatable {
     case foreground
     case serviceIdle
@@ -122,6 +148,8 @@ enum RuntimeWakeSchedule {
     static func nextSleepInterval(
         now: Date,
         profile: PollingProfile,
+        refreshStateIntervalOverride: TimeInterval? = nil,
+        devicePresenceIntervalOverride: TimeInterval? = nil,
         fastDpiInterval: TimeInterval?,
         usesRemoteServiceTransport: Bool,
         lastDevicePresencePollAt: Date,
@@ -136,8 +164,10 @@ enum RuntimeWakeSchedule {
         if usesRemoteServiceTransport {
             intervals.append(max(0, 1.0 - now.timeIntervalSince(lastRemoteClientPresencePingAt)))
         } else {
-            intervals.append(max(0, profile.devicePresenceInterval - now.timeIntervalSince(lastDevicePresencePollAt)))
-            intervals.append(max(0, profile.refreshStateInterval - now.timeIntervalSince(lastRefreshStatePollAt)))
+            let devicePresenceInterval = devicePresenceIntervalOverride ?? profile.devicePresenceInterval
+            let refreshStateInterval = refreshStateIntervalOverride ?? profile.refreshStateInterval
+            intervals.append(max(0, devicePresenceInterval - now.timeIntervalSince(lastDevicePresencePollAt)))
+            intervals.append(max(0, refreshStateInterval - now.timeIntervalSince(lastRefreshStatePollAt)))
             if let fastInterval = fastDpiInterval {
                 intervals.append(max(0, fastInterval - now.timeIntervalSince(lastFastDpiPollAt)))
             }
@@ -192,7 +222,15 @@ extension DevicePatch {
                 detail += ",turbo=on,rate=\(buttonBinding.turboRate ?? 0x8E)"
             }
             if buttonBinding.kind == .dpiClutch {
-                detail += ",dpi=\(buttonBinding.clutchDPI ?? ButtonBindingSupport.defaultV3ProDPIClutchDPI)"
+                detail += ",dpi=\(buttonBinding.clutchDPI ?? ButtonBindingSupport.defaultBasiliskDPIClutchDPI)"
+            }
+            detail += ")"
+            parts.append(detail)
+        }
+        if let usbButtonProfileAction {
+            var detail = "usbProfileAction(kind=\(usbButtonProfileAction.kind.rawValue),target=\(usbButtonProfileAction.targetProfile)"
+            if let sourceProfile = usbButtonProfileAction.sourceProfile {
+                detail += ",source=\(sourceProfile)"
             }
             detail += ")"
             parts.append(detail)
