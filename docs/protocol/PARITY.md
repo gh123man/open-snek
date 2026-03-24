@@ -102,7 +102,7 @@ Validated in-session over USB:
 - observed profile-button remap behavior on `0x6A`: right-click writes/readback can succeed, but repeated write/readback cycles later returned timeout/no-response frames; OpenSnek keeps this slot hidden until the USB ACK/readback path is reliable
 - observed non-match on `0x60`: it does not read back like the 35K top DPI-button block and is not exposed as a validated V3 Pro slot
 - client note: `0x02:0x8C` response layout on the observed extended slots matches the 35K-style offset (`response[11..<18]`) rather than the Basilisk V3 X shape
-- observed profile summary getter on `0x00AB`: `0x00:0x87` -> `<active,0x00,count=3>`; active-profile write path remains unresolved
+- OpenSnek now ships the Basilisk V3 Pro USB profile with the same five-slot slot model as the Basilisk V3 35K: slot `1` is the live/base profile and slots `2...5` are stored button-profile slots. The hardware active-profile write path remains unresolved.
 
 ## Validated BT Profile (Basilisk V3 X HyperSpeed BT PID `0x00BA`, macOS stack)
 

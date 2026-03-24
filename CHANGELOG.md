@@ -13,7 +13,8 @@ All notable changes to this project are documented in this file.
 - Turbo controls in the macOS button editor now behave consistently for turbo-capable mouse actions as well as keyboard bindings.
 - The macOS `Profiles` flow now shows an explicit busy state while profile loads and slot writes are still reading from or applying to the mouse, and it temporarily disables the button-editing controls until the hardware catches up with the UI.
 - The macOS `Load` and `Store` popovers now use full-row hit targets, and saved local profiles are collapsed behind a compact drill-in row inside `Load` instead of expanding the popover vertically forever.
-- The macOS profile popovers now keep all reported stored mouse slots available in `Store` even when they are still factory-default, use clearer profile-operation status text such as `Loading profile…`, and expose a trash action in `Load` for clearing a customized stored slot back to defaults.
+- The macOS profile popovers now keep all reported stored mouse slots available in `Store` even when they are still factory-default and use clearer profile-operation status text such as `Loading profile…`.
+- The Basilisk V3 Pro USB profile now uses the same five-slot onboard button-profile model as the Basilisk V3 35K, so the shared profile UI exposes the same slot count and slot-1/live vs slot-2-through-5/storage behavior on both mice.
 - The macOS button-remap UI now uses a simpler live-editor flow. The `Buttons` card now exposes `Profiles`, `Load`, `Store`, and `Manage`, loading a saved OpenSnek profile or mouse slot immediately hydrates the live mouse layout, and the older transient activation/selection controls are gone.
 - OpenSnek can now duplicate a stored USB button profile into the next empty/default slot, reset any stored slot back to factory-default button mappings, and project the selected stored slot into the live direct layer for software-side profile switching without relying on the still-unresolved hardware active-profile setter.
 - The shared USB/device docs now record that the tested Basilisk V3 35K `0x00:0x07` active-profile write candidates (`02`, `02 00`, `02 00 05`, `02 00 00`) all returned `0x05` (`not supported`) on the attached device, so the shipped profile actions stay on the validated `0x02:0x8C` / `0x02:0x0C` path.
@@ -153,7 +154,7 @@ All notable changes to this project are documented in this file.
 ## [2026-03-11]
 
 ### Added
-- USB device-profile support for Razer Basilisk V3 Pro (`0x00AB`) in the shared Swift registry and macOS app, with the observed 3-profile / 3-zone layout, validated wheel-tilt slots, and documented fixed clutch/profile controls.
+- USB device-profile support for Razer Basilisk V3 Pro (`0x00AB`) in the shared Swift registry and macOS app, with the observed lighting-zone layout, validated wheel-tilt slots, and documented fixed clutch/profile controls.
 - `OpenSnekProbe` USB commands now accept `--pid 0x....` so bring-up and raw probes can target one attached Razer USB device without hopping between multiple mice.
 
 ### Fixed

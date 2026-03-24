@@ -63,7 +63,7 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.passiveDPIInput?.reportID, 0x05)
         XCTAssertEqual(profile?.passiveDPIInput?.subtype, 0x02)
         XCTAssertEqual(profile?.passiveDPIInput?.maximumDPI, 30_000)
-        XCTAssertEqual(profile?.onboardProfileCount, 3)
+        XCTAssertEqual(profile?.onboardProfileCount, 5)
     }
 
     func testBasiliskV3ProUSBLightingTargetsResolveAllZones() throws {

@@ -367,12 +367,6 @@ final class EditorStore {
         }
     }
 
-    func resetMouseButtonProfile(_ slot: Int) async {
-        await withButtonProfileOperation(statusText: "Removing profile…") { [self] in
-            await self.applyController.resetUSBButtonProfile(slot)
-        }
-    }
-
     func projectSelectedUSBButtonProfileToDirectLayer() async {
         await withButtonProfileOperation(statusText: "Applying profile…") { [self] in
             await self.applyController.projectSelectedUSBButtonProfileToDirectLayer()

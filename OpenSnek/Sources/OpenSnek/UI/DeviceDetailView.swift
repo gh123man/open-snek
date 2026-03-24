@@ -1555,11 +1555,6 @@ private struct ButtonProfileWorkspaceStrip: View {
                         await MainActor.run { showsLoadPopover = false }
                         await editorStore.loadButtonProfileSourceIntoLive(source)
                     }
-                },
-                onDeleteStoredSlot: { slot in
-                    Task {
-                        await editorStore.resetMouseButtonProfile(slot)
-                    }
                 }
             )
         }
@@ -1665,7 +1660,6 @@ private struct LoadButtonProfilePopover: View {
     let editorStore: EditorStore
     let pickerLabel: (ButtonProfileSource) -> String
     let onSelect: (ButtonProfileSource) -> Void
-    let onDeleteStoredSlot: (Int) -> Void
     @State private var showsSavedProfiles = false
 
     var body: some View {
@@ -1716,19 +1710,11 @@ private struct LoadButtonProfilePopover: View {
                     .foregroundStyle(.white.opacity(0.62))
 
                 ForEach(editorStore.loadableMouseButtonSources, id: \.id) { source in
-                    if case .mouseSlot(let slot) = source, slot > 1 {
-                        loadActionRow(
-                            pickerLabel(source),
-                            onSelect: { onSelect(source) },
-                            onDelete: { onDeleteStoredSlot(slot) }
-                        )
-                    } else {
-                        loadActionButton(
-                            pickerLabel(source),
-                            isDisabled: source == .mouseSlot(1)
-                        ) {
-                            onSelect(source)
-                        }
+                    loadActionButton(
+                        pickerLabel(source),
+                        isDisabled: source == .mouseSlot(1)
+                    ) {
+                        onSelect(source)
                     }
                 }
             }
@@ -1776,32 +1762,6 @@ private struct LoadButtonProfilePopover: View {
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.45 : 1.0)
-    }
-
-    private func loadActionRow(
-        _ title: String,
-        onSelect: @escaping () -> Void,
-        onDelete: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 8) {
-            Button(action: onSelect) {
-                popoverRowLabel(title)
-            }
-            .buttonStyle(.plain)
-
-            Button(action: onDelete) {
-                Image(systemName: "trash")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.58))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white.opacity(0.05))
-                    )
-            }
-            .buttonStyle(.plain)
-        }
     }
 
     private func popoverRowLabel(

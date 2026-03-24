@@ -851,60 +851,6 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(binding, expectedDefaultKind)
     }
 
-    func testResetMouseButtonProfileClearsStoredSlotAndRemovesItFromLoadableSources() async throws {
-        let device = makeRefactorTestDevice(
-            id: "usb-profile-reset-explicit-device",
-            transport: .usb,
-            serial: "USB-PROFILE-RESET-EXPLICIT-\(UUID().uuidString)",
-            onboardProfileCount: 3
-        )
-        let preferenceStore = DevicePreferenceStore()
-        preferenceStore.savePersistedButtonBindings(
-            device: device,
-            bindings: [
-                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
-            ],
-            profile: 2
-        )
-        defer { clearRefactorPreferences(for: device) }
-
-        let backend = AppStateRefactorStubBackend(
-            devices: [device],
-            stateByDeviceID: [
-                device.id: makeRefactorTestState(
-                    device: device,
-                    connection: "usb",
-                    batteryPercent: 78,
-                    dpiValues: [800, 1600, 2400],
-                    activeStage: 0,
-                    dpiValue: 800,
-                    pollRate: 1000,
-                    sleepTimeout: 300,
-                    activeOnboardProfile: 1,
-                    onboardProfileCount: 3
-                )
-            ]
-        )
-        let appState = await MainActor.run {
-            AppState(launchRole: .app, backend: backend, autoStart: false)
-        }
-
-        await appState.deviceStore.refreshDevices()
-        await appState.editorStore.resetMouseButtonProfile(2)
-
-        let patches = await backend.recordedPatches()
-        let loadableSlots = await MainActor.run {
-            appState.editorStore.loadableMouseButtonSources.compactMap { source -> Int? in
-                guard case .mouseSlot(let slot) = source else { return nil }
-                return slot
-            }
-        }
-
-        XCTAssertEqual(patches.last?.usbButtonProfileAction?.kind, .resetPersistentSlot)
-        XCTAssertEqual(patches.last?.usbButtonProfileAction?.targetProfile, 2)
-        XCTAssertEqual(loadableSlots, [1])
-    }
-
     func testProjectSelectedUSBButtonProfileToDirectLayerEnqueuesProjectAction() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-profile-project-device",

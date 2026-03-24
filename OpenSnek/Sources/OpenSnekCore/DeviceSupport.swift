@@ -454,7 +454,7 @@ public enum DeviceProfiles {
             minInputReportSize: 5,
             maximumDPI: 30_000
         ),
-        onboardProfileCount: 3
+        onboardProfileCount: 5
     )
 
     public static let basiliskV3XBluetooth = DeviceProfile(
