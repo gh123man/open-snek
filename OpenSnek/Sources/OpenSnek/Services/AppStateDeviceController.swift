@@ -4,6 +4,7 @@ import OpenSnekCore
 @MainActor
 final class AppStateDeviceController {
     private static let bluetoothPassiveHeartbeatConnectedInterval: TimeInterval = 1.5
+    static var usbInitialStateReadSettleInterval: TimeInterval = 2.0
 
     private let environment: AppEnvironment
     private let deviceStore: DeviceStore
@@ -31,6 +32,7 @@ final class AppStateDeviceController {
     private var pendingLightingRestoreDeviceIDs: Set<String> = []
     private var restoringLightingDeviceIDs: Set<String> = []
     private var seededReconnectStateDeviceIDs: Set<String> = []
+    private var usbDiscoveredAtByDeviceID: [String: Date] = [:]
     private var selectedRecoveryRefreshTask: Task<Void, Never>?
     private var selectedRecoveryRefreshDeviceID: String?
     private var isTearingDown = false
@@ -341,12 +343,19 @@ final class AppStateDeviceController {
                 pendingLightingRestoreDeviceIDs.remove(id)
                 restoringLightingDeviceIDs.remove(id)
                 seededReconnectStateDeviceIDs.remove(id)
+                usbDiscoveredAtByDeviceID[id] = nil
             }
         }
 
         let newlyVisibleIDs = newIDs.subtracting(previousIDs)
         if !newlyVisibleIDs.isEmpty {
             pendingLightingRestoreDeviceIDs.formUnion(newlyVisibleIDs)
+            if source != "refresh" && !environment.usesRemoteServiceTransport {
+                let discoveredAt = Date()
+                for device in sorted where newlyVisibleIDs.contains(device.id) && device.transport == .usb {
+                    usbDiscoveredAtByDeviceID[device.id] = discoveredAt
+                }
+            }
         }
         if source == "subscription", previousIDs == newIDs, !newIDs.isEmpty {
             pendingLightingRestoreDeviceIDs.formUnion(newIDs)
@@ -539,9 +548,11 @@ final class AppStateDeviceController {
         let needsRecoveryRefresh = hasNoCachedState || lacksPresentedState || unavailableDeviceIDs.contains(device.id)
         guard needsRecoveryRefresh else { return }
 
+        let settleDelay = remainingInitialUSBStateReadDelay(for: device)
+
         scheduleSelectedRecoveryRefresh(
             for: device,
-            delay: refreshingStateDeviceIDs.contains(device.id) ? 0.8 : 0
+            delay: max(refreshingStateDeviceIDs.contains(device.id) ? 0.8 : 0, settleDelay)
         )
     }
 
@@ -1008,6 +1019,14 @@ final class AppStateDeviceController {
         }
 
         let now = Date()
+        let initialUSBSettleDelay = remainingInitialUSBStateReadDelay(for: device, now: now)
+        if initialUSBSettleDelay > 0 {
+            AppLog.debug(
+                "AppState",
+                "refreshState deferred initial-usb-settle device=\(device.id) delay=\(String(format: "%.3f", initialUSBSettleDelay))s"
+            )
+            return false
+        }
         if Self.shouldDelayBluetoothRealtimeStateRefresh(
             transport: device.transport,
             transportStatus: dpiUpdateTransportStatusByDeviceID[device.id],
@@ -1067,6 +1086,8 @@ final class AppStateDeviceController {
             cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
             seededReconnectStateDeviceIDs.remove(refreshDeviceID)
             seededReconnectStateDeviceIDs.remove(presentationDeviceID)
+            usbDiscoveredAtByDeviceID[refreshDeviceID] = nil
+            usbDiscoveredAtByDeviceID[presentationDeviceID] = nil
             lastFullStateRefreshAtByDeviceID[refreshDeviceID] = updatedAt
             lastFullStateRefreshAtByDeviceID[presentationDeviceID] = updatedAt
             refreshFailureCountByDeviceID[refreshDeviceID] = 0
@@ -1165,6 +1186,16 @@ final class AppStateDeviceController {
             }
             return false
         }
+    }
+
+    private func remainingInitialUSBStateReadDelay(for device: MouseDevice, now: Date = Date()) -> TimeInterval {
+        guard !environment.usesRemoteServiceTransport else { return 0 }
+        guard device.transport == .usb else { return 0 }
+        guard let discoveredAt = usbDiscoveredAtByDeviceID[device.id] else { return 0 }
+        let settleInterval = max(0, Self.usbInitialStateReadSettleInterval)
+        guard settleInterval > 0 else { return 0 }
+        let remaining = settleInterval - now.timeIntervalSince(discoveredAt)
+        return max(0, remaining)
     }
 
     func refreshDpiFast() async {

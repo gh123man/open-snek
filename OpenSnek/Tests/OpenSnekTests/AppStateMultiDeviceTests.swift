@@ -182,6 +182,71 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(selectedDpi, 4800)
     }
 
+    @MainActor
+    func testNewlyVisibleUSBDeviceDefersInitialRefreshUntilSettleWindow() async throws {
+        let originalSettleInterval = AppStateDeviceController.usbInitialStateReadSettleInterval
+        AppStateDeviceController.usbInitialStateReadSettleInterval = 0.2
+        defer {
+            AppStateDeviceController.usbInitialStateReadSettleInterval = originalSettleInterval
+        }
+
+        let existingBluetoothDevice = makeTestDevice(
+            id: "existing-bt-device",
+            productName: "Existing BT Mouse",
+            transport: .bluetooth,
+            serial: "BT-EXISTING",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let usbDevice = makeTestDevice(
+            id: "usb-settle-device",
+            productName: "Settle Mouse",
+            transport: .usb,
+            serial: "USB-SETTLE",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let backend = DeviceListUpdatingStubBackend(
+            devices: [existingBluetoothDevice],
+            stateByDeviceID: [
+                existingBluetoothDevice.id: makeTestState(
+                    device: existingBluetoothDevice,
+                    connection: "bluetooth",
+                    batteryPercent: 75,
+                    dpiValues: [1000, 2000, 3000],
+                    activeStage: 0,
+                    dpiValue: 1000
+                ),
+                usbDevice.id: makeTestState(
+                    device: usbDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 0,
+                    dpiValue: 1200
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        _ = appState.deviceController.applyDeviceList([existingBluetoothDevice, usbDevice], source: "test")
+        appState.deviceStore.selectDevice(usbDevice.id)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let earlyReadCount = await backend.readCount(for: usbDevice.id)
+        XCTAssertEqual(earlyReadCount, 0)
+
+        try await waitForAppStateCondition(timeout: 1.0) {
+            await backend.readCount(for: usbDevice.id) == 1
+        }
+
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+        XCTAssertEqual(selectedDpi, 1200)
+    }
+
     func testSelectedUnavailableDeviceClearsPresentedStateInsteadOfShowingStaleCache() async {
         let usbDevice = makeTestDevice(
             id: "usb-dongle",

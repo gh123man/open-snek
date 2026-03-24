@@ -13,6 +13,7 @@ All notable changes to this project are documented in this file.
 - Button remap edits now auto-apply only the slot you changed, keep the editor stable during readback, and show profile-operation busy state only for full profile loads and saves.
 - Turbo configuration now works consistently for turbo-capable mouse bindings as well as keyboard bindings, and the 35K now exposes `DPI Clutch` like the V3 Pro.
 - USB button hydration and reconnect recovery are more reliable: switching devices or reconnecting no longer leaves stale/default bindings on screen, reconnects no longer wait as long for usable state, and USB multi-profile mice no longer eagerly sweep every stored slot on connect.
+- Newly connected USB devices now wait briefly before the first full state read, which reduces connect-time hangs on devices that are slow to settle after macOS enumeration.
 - Connect-time lighting restore is now limited to the Basilisk V3 X HyperSpeed. The Basilisk V3 Pro and Basilisk V3 35K keep their own hardware lighting state, while the app hydrates their lighting UI from remembered color/effect values without writing that state back on connect.
 - Choosing `Default` for special USB button slots now writes the correct semantic default action, so device-specific defaults such as the 35K DPI-cycle button behave correctly without manually reassigning them.
 
