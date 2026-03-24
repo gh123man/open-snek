@@ -1225,6 +1225,10 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, false)
         XCTAssertNil(patch.usbButtonProfileAction)
 
+        try await waitForRefactorCondition(timeout: 2.0) {
+            await MainActor.run { !appState.editorStore.selectedUSBButtonProfileHasUnsavedChanges }
+        }
+
         let liveProfile = await MainActor.run { appState.editorStore.liveUSBButtonProfile }
         let pendingChanges = await MainActor.run { appState.editorStore.selectedUSBButtonProfileHasUnsavedChanges }
         XCTAssertEqual(liveProfile, 1)
@@ -1347,6 +1351,69 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(patch.buttonBinding?.writePersistentLayer, true)
         XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
         XCTAssertEqual(binding, .rightClick)
+        XCTAssertEqual(patches.compactMap(\.buttonBinding).map(\.slot), [4])
+    }
+
+    func testEditingMouseTurboBindingAutoAppliesToBaseProfile() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-profile-mouse-turbo-device",
+            transport: .usb,
+            serial: "USB-PROFILE-MOUSE-TURBO-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 79,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        let expectedRate = ButtonBindingSupport.turboPressesPerSecondToRaw(7)
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.updateButtonBindingKind(slot: 4, kind: .rightClick)
+            appState.editorStore.updateButtonBindingTurboEnabled(slot: 4, enabled: true)
+            appState.editorStore.updateButtonBindingTurboPressesPerSecond(slot: 4, pressesPerSecond: 7)
+        }
+
+        try await waitForRefactorCondition(timeout: 2.0) {
+            await backend.recordedPatches().contains(where: {
+                $0.buttonBinding?.slot == 4 &&
+                    $0.buttonBinding?.kind == .rightClick &&
+                    $0.buttonBinding?.turboEnabled == true
+            })
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.last(where: { $0.buttonBinding?.slot == 4 }))
+        let turboEnabled = await MainActor.run { appState.editorStore.buttonBindingTurboEnabled(for: 4) }
+        let kind = await MainActor.run { appState.editorStore.buttonBindingKind(for: 4) }
+
+        XCTAssertEqual(kind, .rightClick)
+        XCTAssertTrue(turboEnabled)
+        XCTAssertEqual(patch.buttonBinding?.kind, .rightClick)
+        XCTAssertEqual(patch.buttonBinding?.turboEnabled, true)
+        XCTAssertEqual(patch.buttonBinding?.turboRate, expectedRate)
+        XCTAssertEqual(patch.buttonBinding?.persistentProfile, 1)
+        XCTAssertEqual(patch.buttonBinding?.writePersistentLayer, true)
+        XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
     }
 
     func testSelectingSavedButtonProfileHydratesWorkingCopy() async throws {

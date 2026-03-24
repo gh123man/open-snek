@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 - OpenSnek now has a saved button-profile library. Button layouts can be named, reused across devices, hydrated into the live working copy, and written back into mouse storage slots without treating onboard slots as the only source of truth.
 
 ### Fixed
+- Button remap edits in the macOS `Profiles` flow now auto-apply only the slot you actually changed instead of rewriting every writable button slot on the mouse, which cuts the visible delay when changing a binding and avoids extra UI churn.
+- Turbo controls in the macOS button editor now behave consistently for turbo-capable mouse actions as well as keyboard bindings.
 - The macOS button-remap UI now uses a simpler live-editor flow. The `Buttons` card now exposes `Profiles`, `Load`, `Store`, and `Manage`, loading a saved OpenSnek profile or mouse slot immediately hydrates the live mouse layout, and the older transient activation/selection controls are gone.
 - OpenSnek can now duplicate a stored USB button profile into the next empty/default slot, reset any stored slot back to factory-default button mappings, and project the selected stored slot into the live direct layer for software-side profile switching without relying on the still-unresolved hardware active-profile setter.
 - The shared USB/device docs now record that the tested Basilisk V3 35K `0x00:0x07` active-profile write candidates (`02`, `02 00`, `02 00 05`, `02 00 00`) all returned `0x05` (`not supported`) on the attached device, so the shipped profile actions stay on the validated `0x02:0x8C` / `0x02:0x0C` path.

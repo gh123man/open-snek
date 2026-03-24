@@ -1225,10 +1225,10 @@ final class AppStateEditorController {
         deviceStore.selectedDevice != nil
     }
 
-    private func handleButtonWorkspaceDidChange() {
+    private func handleButtonWorkspaceDidChange(slot: Int) {
         bumpUSBButtonProfilesRevision()
         guard shouldAutoApplyCurrentButtonWorkspaceAfterEdit() else { return }
-        applyController.scheduleAutoApplyCurrentButtonWorkspaceToLive()
+        applyController.scheduleAutoApplyButton(slot: slot)
     }
 
     func updateButtonBindingKind(slot: Int, kind: ButtonBindingKind) {
@@ -1245,7 +1245,7 @@ final class AppStateEditorController {
             next.turboEnabled = false
         }
         editorStore.editableButtonBindings[slot] = next
-        handleButtonWorkspaceDidChange()
+        handleButtonWorkspaceDidChange(slot: slot)
     }
 
     func updateButtonBindingHidKey(slot: Int, hidKey: Int) {
@@ -1254,7 +1254,7 @@ final class AppStateEditorController {
         next.kind = .keyboardSimple
         next.hidKey = max(4, min(231, hidKey))
         editorStore.editableButtonBindings[slot] = next
-        handleButtonWorkspaceDidChange()
+        handleButtonWorkspaceDidChange(slot: slot)
     }
 
     func updateButtonBindingTurboEnabled(slot: Int, enabled: Bool) {
@@ -1263,7 +1263,7 @@ final class AppStateEditorController {
         guard next.kind.supportsTurbo else { return }
         next.turboEnabled = enabled
         editorStore.editableButtonBindings[slot] = next
-        handleButtonWorkspaceDidChange()
+        handleButtonWorkspaceDidChange(slot: slot)
     }
 
     func updateButtonBindingTurboRate(slot: Int, rate: Int) {
@@ -1272,7 +1272,7 @@ final class AppStateEditorController {
         guard next.kind.supportsTurbo else { return }
         next.turboRate = max(1, min(255, rate))
         editorStore.editableButtonBindings[slot] = next
-        handleButtonWorkspaceDidChange()
+        handleButtonWorkspaceDidChange(slot: slot)
     }
 
     func updateButtonBindingClutchDPI(slot: Int, dpi: Int) {
@@ -1281,6 +1281,6 @@ final class AppStateEditorController {
         guard next.kind == .dpiClutch else { return }
         next.clutchDPI = DeviceProfiles.clampDPI(dpi, profileID: deviceStore.selectedDevice?.profile_id)
         editorStore.editableButtonBindings[slot] = next
-        handleButtonWorkspaceDidChange()
+        handleButtonWorkspaceDidChange(slot: slot)
     }
 }

@@ -2050,10 +2050,6 @@ private struct ButtonBindingRow: View {
     let editorStore: EditorStore
     let row: ButtonBindingRowModel
 
-    private var showsInlineTurboToggle: Bool {
-        row.selectedKind == .keyboardSimple && row.turboEligible
-    }
-
     var body: some View {
         let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
         let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
@@ -2090,10 +2086,6 @@ private struct ButtonBindingRow: View {
                         isEditable: row.isEditable,
                         onSelect: { editorStore.updateButtonBindingHidKey(slot: row.slot, hidKey: $0) }
                     )
-
-                    if showsInlineTurboToggle {
-                        turboToggle
-                    }
                 }
             }
 
@@ -2154,11 +2146,9 @@ private struct ButtonBindingRow: View {
             }
 
             if row.turboEligible {
-                if !showsInlineTurboToggle {
-                    HStack(spacing: 8) {
-                        Spacer()
-                        turboToggle
-                    }
+                HStack(spacing: 8) {
+                    Spacer()
+                    turboToggle
                 }
 
                 if row.turboEnabled {

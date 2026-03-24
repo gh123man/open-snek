@@ -27,7 +27,7 @@ final class AppStateApplyController {
         case ledBrightness
         case ledColor
         case lightingEffect
-        case button
+        case button(Int)
         case activeStage
     }
 
@@ -249,14 +249,14 @@ final class AppStateApplyController {
     }
 
     func scheduleAutoApplyButton(slot: Int) {
-        scheduleAutoApply(key: .button, delay: 260_000_000) { [weak self] in
+        scheduleAutoApply(key: .button(slot), delay: 120_000_000) { [weak self] in
             guard let self else { return }
             await self.applyButtonBinding(slot: slot)
         }
     }
 
     func scheduleAutoApplyCurrentButtonWorkspaceToLive() {
-        scheduleAutoApply(key: .button, delay: 260_000_000) { [weak self] in
+        scheduleAutoApply(key: .button(-1), delay: 260_000_000) { [weak self] in
             guard let self else { return }
             await self.applyCurrentButtonWorkspaceToLive()
         }
