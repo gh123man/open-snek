@@ -698,6 +698,17 @@ final class AppStateEditorController {
         return (1...max(1, count)).map { .mouseSlot($0) }
     }
 
+    func loadableMouseButtonSources() -> [ButtonProfileSource] {
+        guard let device = deviceStore.selectedDevice else { return [] }
+        return onThisMouseButtonSources().filter { source in
+            guard case .mouseSlot(let slot) = source else { return false }
+            if slot == 1 {
+                return true
+            }
+            return profileHasCustomBindings(device: device, profile: slot) == true
+        }
+    }
+
     func storedMouseButtonSources() -> [ButtonProfileSource] {
         onThisMouseButtonSources().filter {
             guard case .mouseSlot(let slot) = $0 else { return false }

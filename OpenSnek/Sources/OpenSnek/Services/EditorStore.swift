@@ -168,6 +168,11 @@ final class EditorStore {
         return editorController.onThisMouseButtonSources()
     }
 
+    var loadableMouseButtonSources: [ButtonProfileSource] {
+        _ = usbButtonProfilesRevision
+        return editorController.loadableMouseButtonSources()
+    }
+
     var storedMouseButtonSources: [ButtonProfileSource] {
         _ = usbButtonProfilesRevision
         return editorController.storedMouseButtonSources()

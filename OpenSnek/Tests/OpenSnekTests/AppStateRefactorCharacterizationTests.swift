@@ -1049,6 +1049,61 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(matchDescription, "matches Travel")
     }
 
+    func testLoadableMouseButtonSourcesHideDefaultStoredSlots() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-profile-loadable-device",
+            transport: .usb,
+            serial: "USB-PROFILE-LOADABLE-\(UUID().uuidString)",
+            onboardProfileCount: 4
+        )
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                4: ButtonBindingDraft(
+                    kind: .keyboardSimple,
+                    hidKey: 9,
+                    turboEnabled: false,
+                    turboRate: 0x8E,
+                    clutchDPI: nil
+                )
+            ],
+            profile: 2
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 82,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 4
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let loadableSlots = await MainActor.run {
+            appState.editorStore.loadableMouseButtonSources.compactMap { source -> Int? in
+                guard case .mouseSlot(let slot) = source else { return nil }
+                return slot
+            }
+        }
+        XCTAssertEqual(loadableSlots, [1, 2])
+    }
+
     func testSavingCurrentButtonWorkspaceAsNewProfileSelectsSavedProfileSourceImmediately() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-profile-save-source-device",

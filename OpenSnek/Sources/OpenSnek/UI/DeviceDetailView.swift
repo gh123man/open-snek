@@ -1422,6 +1422,7 @@ private struct ButtonProfileWorkspaceStrip: View {
 
     @State private var loadingSourceID: String?
     @State private var saveProfileName = ""
+    @State private var showsLoadPopover = false
     @State private var showsManageProfiles = false
     @State private var showsSaveProfileSheet = false
     @State private var showsStorePopover = false
@@ -1516,73 +1517,70 @@ private struct ButtonProfileWorkspaceStrip: View {
     @ViewBuilder
     private var headerControls: some View {
         HStack(alignment: .center, spacing: 10) {
-            loadMenu
+            loadButton
             storeButton
-
-            if !editorStore.savedButtonProfiles.isEmpty {
-                Button("Manage") {
-                    showsManageProfiles = true
-                }
+            Button("Manage") {
+                showsManageProfiles = true
             }
         }
     }
 
-    private var loadMenu: some View {
-        Menu {
-            if !editorStore.savedButtonProfiles.isEmpty {
-                Section("Saved in OpenSnek") {
-                    ForEach(editorStore.savedButtonProfiles) { profile in
-                        sourceSelectionButton(
-                            label: profile.name,
-                            source: .openSnekProfile(profile.id)
-                        )
+    private var loadButton: some View {
+        Button {
+            showsLoadPopover.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                Text(loadingSourceID == nil ? "Load" : "Loading...")
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            .font(.system(size: 13, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .frame(minWidth: 220, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+        }
+        .popover(isPresented: $showsLoadPopover, arrowEdge: .bottom) {
+            LoadButtonProfilePopover(
+                editorStore: editorStore,
+                currentSource: currentSource,
+                pickerLabel: { source in
+                    sourceDisplayLabel(for: source)
+                },
+                onSelect: { source in
+                    Task {
+                        await MainActor.run {
+                            showsLoadPopover = false
+                            loadingSourceID = source.id
+                        }
+                        await editorStore.loadButtonProfileSourceIntoLive(source)
+                        await MainActor.run {
+                            if loadingSourceID == source.id {
+                                loadingSourceID = nil
+                            }
+                        }
                     }
                 }
-            }
-
-            Section("On This Mouse") {
-                ForEach(editorStore.onThisMouseButtonSources, id: \.id) { source in
-                    sourceSelectionButton(
-                        label: pickerLabel(for: source),
-                        source: source
-                    )
-                }
-            }
-        } label: {
-            loadMenuLabel
+            )
         }
-        .menuStyle(.borderlessButton)
-    }
-
-    private var loadMenuLabel: some View {
-        HStack(spacing: 10) {
-            Text(loadingSourceID == nil ? "Load..." : "Loading...")
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.55))
-        }
-        .font(.system(size: 13, weight: .semibold, design: .rounded))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(minWidth: 220, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        )
     }
 
     private var storeButton: some View {
         Button {
             showsStorePopover.toggle()
         } label: {
-            Text("Store...")
+            Text("Store")
         }
         .popover(isPresented: $showsStorePopover, arrowEdge: .bottom) {
             StoreButtonProfilePopover(
@@ -1623,31 +1621,6 @@ private struct ButtonProfileWorkspaceStrip: View {
                     editorStore.revertButtonWorkspaceToSource()
                 }
             )
-        }
-    }
-
-    @ViewBuilder
-    private func sourceSelectionButton(label: String, source: ButtonProfileSource) -> some View {
-        Button {
-            Task {
-                await MainActor.run {
-                    loadingSourceID = source.id
-                }
-                await editorStore.loadButtonProfileSourceIntoLive(source)
-                await MainActor.run {
-                    if loadingSourceID == source.id {
-                        loadingSourceID = nil
-                    }
-                }
-            }
-        } label: {
-            HStack {
-                Text(label)
-                Spacer(minLength: 12)
-                if currentSource == source {
-                    Image(systemName: "checkmark")
-                }
-            }
         }
     }
 
@@ -1699,6 +1672,88 @@ private struct ButtonProfileWorkspaceStrip: View {
             return pickerLabel(for: slot)
         }
         return "profile"
+    }
+}
+
+private struct LoadButtonProfilePopover: View {
+    let editorStore: EditorStore
+    let currentSource: ButtonProfileSource?
+    let pickerLabel: (ButtonProfileSource) -> String
+    let onSelect: (ButtonProfileSource) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Saved in OpenSnek")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                if editorStore.savedButtonProfiles.isEmpty {
+                    Text("No saved local profiles yet.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.58))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(editorStore.savedButtonProfiles) { profile in
+                        let source = ButtonProfileSource.openSnekProfile(profile.id)
+                        loadActionButton(
+                            pickerLabel(source),
+                            isSelected: currentSource == source
+                        ) {
+                            onSelect(source)
+                        }
+                    }
+                }
+            }
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("On This Mouse")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                ForEach(editorStore.loadableMouseButtonSources, id: \.id) { source in
+                    loadActionButton(
+                        pickerLabel(source),
+                        isSelected: currentSource == source
+                    ) {
+                        onSelect(source)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 320, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+    }
+
+    private func loadActionButton(
+        _ title: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(isSelected ? 0.08 : 0.05))
+        )
     }
 }
 
