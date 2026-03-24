@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file.
 - The shared USB/device docs now record that the tested Basilisk V3 35K `0x00:0x07` active-profile write candidates (`02`, `02 00`, `02 00 05`, `02 00 00`) all returned `0x05` (`not supported`) on the attached device, so the shipped profile actions stay on the validated `0x02:0x8C` / `0x02:0x0C` path.
 - The USB protocol docs now spell out the confirmed Basilisk V3 35K profile model from live write/readback: persistent slot `1` mirrors into the live direct layer when it is the hardware-default active store, while slots `2...5` behave like isolated storage. The docs also add a future-device bring-up checklist for distinguishing true hardware profile switching from software-side projection.
 - The macOS profile UI and protocol docs now explicitly scope the 35K feature to onboard button-profile slots. Additional probing showed DPI and lighting use separate `0x00`/`0x01` live-vs-persisted storage layers rather than the slot-addressed profile store used by button mappings.
+- Stored mouse button slots in the macOS `Buttons` card now show exact matches against saved OpenSnek button profiles, so loading `Stored Slot 3` can also surface `matches Travel` when the slot contents are an identical local saved profile.
 
 ## [2026-03-22]
 

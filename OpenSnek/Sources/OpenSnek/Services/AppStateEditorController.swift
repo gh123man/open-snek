@@ -155,6 +155,25 @@ final class AppStateEditorController {
         }
     }
 
+    private func matchingSavedButtonProfiles(
+        for bindings: [Int: ButtonBindingDraft],
+        device: MouseDevice
+    ) -> [OpenSnekButtonProfile] {
+        savedButtonProfiles().filter { bindingsEqual($0.bindings, bindings, device: device) }
+    }
+
+    private func savedButtonProfileMatchDescription(
+        for bindings: [Int: ButtonBindingDraft],
+        device: MouseDevice
+    ) -> String? {
+        let matches = matchingSavedButtonProfiles(for: bindings, device: device)
+        guard let first = matches.first else { return nil }
+        if matches.count == 1 {
+            return "matches \(first.name)"
+        }
+        return "matches \(first.name) +\(matches.count - 1)"
+    }
+
     struct PersistedLightingRestorePlan {
         let patch: DevicePatch
         let primaryColor: RGBColor?
@@ -701,6 +720,19 @@ final class AppStateEditorController {
             }
         }
         return workspaceSourceDisplayName(source, device: device)
+    }
+
+    func buttonProfileSourceMatchDescription(_ source: ButtonProfileSource) -> String? {
+        guard let device = deviceStore.selectedDevice else { return nil }
+        switch source {
+        case .openSnekProfile:
+            return nil
+        case .mouseSlot(let slot):
+            return savedButtonProfileMatchDescription(
+                for: cachedButtonBindings(device: device, profile: slot),
+                device: device
+            )
+        }
     }
 
     func liveUSBButtonProfile(for device: MouseDevice) -> Int {

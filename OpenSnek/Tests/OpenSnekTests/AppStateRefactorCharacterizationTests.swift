@@ -995,6 +995,60 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(readsAfterSecondLoad, readsAfterFirstLoad)
     }
 
+    func testStoredUSBButtonProfileDisplaysMatchingSavedProfileName() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-profile-match-device",
+            transport: .usb,
+            serial: "USB-PROFILE-MATCH-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let matchingBindings = [
+            4: ButtonBindingDraft(
+                kind: .keyboardSimple,
+                hidKey: 9,
+                turboEnabled: false,
+                turboRate: 0x8E,
+                clutchDPI: nil
+            )
+        ]
+        preferenceStore.savePersistedButtonBindings(
+            device: device,
+            bindings: matchingBindings,
+            profile: 2
+        )
+        preferenceStore.saveOpenSnekButtonProfile(name: "Travel", bindings: matchingBindings)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 82,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let matchDescription = await MainActor.run {
+            appState.editorStore.buttonProfileSourceMatchDescription(.mouseSlot(2))
+        }
+        XCTAssertEqual(matchDescription, "matches Travel")
+    }
+
     func testSavingSelectedUSBButtonProfileUsesExplicitButtonWriteWithoutActivation() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-profile-save-device",

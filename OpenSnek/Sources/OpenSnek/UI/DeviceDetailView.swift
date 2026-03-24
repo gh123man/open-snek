@@ -1437,7 +1437,7 @@ private struct ButtonProfileWorkspaceStrip: View {
 
     private var loadedFromLabel: String {
         guard let currentSource else { return "Not loaded yet" }
-        return editorStore.buttonProfileSourceDisplayName(currentSource)
+        return sourceDisplayLabel(for: currentSource)
     }
 
     private var currentStatusLine: String {
@@ -1666,10 +1666,25 @@ private struct ButtonProfileWorkspaceStrip: View {
     private func pickerLabel(for source: ButtonProfileSource) -> String {
         switch source {
         case .openSnekProfile:
-            return editorStore.buttonProfileSourceDisplayName(source)
+            return sourceDisplayLabel(for: source)
         case .mouseSlot(let slot):
-            return slot == 1 ? "Base Profile (Slot 1)" : "Stored Slot \(slot)"
+            return sourceDisplayLabel(for: .mouseSlot(slot))
         }
+    }
+
+    private func sourceDisplayLabel(for source: ButtonProfileSource) -> String {
+        let baseLabel: String
+        switch source {
+        case .openSnekProfile:
+            baseLabel = editorStore.buttonProfileSourceDisplayName(source)
+        case .mouseSlot(let slot):
+            baseLabel = slot == 1 ? "Base Profile (Slot 1)" : "Stored Slot \(slot)"
+        }
+
+        guard let matchDescription = editorStore.buttonProfileSourceMatchDescription(source) else {
+            return baseLabel
+        }
+        return "\(baseLabel) (\(matchDescription))"
     }
 
     private func loadingSourceLabel(for id: String) -> String {
