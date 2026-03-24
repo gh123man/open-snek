@@ -262,6 +262,57 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(applyCount, 0)
     }
 
+    func testUSBV3ProUsesRememberedLightingStateWithoutAutoApply() async throws {
+        let device = MouseDevice(
+            id: "usb-v3-pro-lighting-zone",
+            vendor_id: 0x1532,
+            product_id: 0x00AB,
+            product_name: "Basilisk V3 Pro",
+            transport: .usb,
+            path_b64: "",
+            serial: "USB-V3PRO-LIGHT-\(UUID().uuidString)",
+            firmware: "1.0.0",
+            location_id: 1,
+            profile_id: .basiliskV3Pro,
+            supports_advanced_lighting_effects: false,
+            onboard_profile_count: 5
+        )
+        let persistedColor = RGBColor(r: 11, g: 22, b: 33)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: device, zoneID: "logo")
+        preferenceStore.persistLightingZoneID("logo", device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 68,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 1,
+                    dpiValue: 2400,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let applyCount = await backend.applyCount()
+        let editableColor = await MainActor.run { appState.editorStore.editableColor }
+        let editableZone = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+
+        XCTAssertEqual(applyCount, 0)
+        XCTAssertEqual(editableColor, persistedColor)
+        XCTAssertEqual(editableZone, "logo")
+    }
+
     func testUSBPersistedLightingColorReappliesOnFirstHydrationUsingSavedZone() async throws {
         let device = makeRefactorUSBLightingRestoreDevice(
             id: "usb-lighting-device",
@@ -1331,6 +1382,63 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
         XCTAssertEqual(binding, .rightClick)
         XCTAssertEqual(patches.compactMap(\.buttonBinding).map(\.slot), [4])
+    }
+
+    func testDefaultDPIButtonAppliesAsDPICycleOn35K() async throws {
+        let device = MouseDevice(
+            id: "usb-35k-default-dpi-cycle-device",
+            vendor_id: 0x1532,
+            product_id: 0x00CB,
+            product_name: "Basilisk V3 35K",
+            transport: .usb,
+            path_b64: "",
+            serial: "USB-35K-DPI-\(UUID().uuidString)",
+            firmware: "1.0.0",
+            location_id: 1,
+            profile_id: .basiliskV335K,
+            supports_advanced_lighting_effects: true,
+            onboard_profile_count: 5
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 76,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 5
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.updateButtonBindingKind(slot: 96, kind: .default)
+        }
+
+        try await waitForRefactorCondition(timeout: 2.0) {
+            await backend.recordedPatches().contains(where: {
+                $0.buttonBinding?.slot == 96 && $0.buttonBinding?.kind == .dpiCycle
+            })
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.last(where: { $0.buttonBinding?.slot == 96 }))
+        XCTAssertEqual(patch.buttonBinding?.kind, .dpiCycle)
+        XCTAssertEqual(patch.buttonBinding?.persistentProfile, 1)
+        XCTAssertEqual(patch.buttonBinding?.writePersistentLayer, true)
+        XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
     }
 
     func testSwitchingUSBDevicesDoesNotPreserveUnsavedButtonWorkspaceAcrossDevices() async throws {

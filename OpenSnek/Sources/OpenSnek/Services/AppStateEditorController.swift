@@ -337,7 +337,13 @@ final class AppStateEditorController {
     func hydratePersistedLightingStateIfNeeded(device: MouseDevice) -> Bool {
         guard !isTearingDown else { return false }
         guard !hydratedLightingStateByDeviceID.contains(device.id) else { return false }
-        guard let plan = persistedLightingRestorePlan(device: device) else { return false }
+        let plan: PersistedLightingRestorePlan?
+        if device.transport == .usb {
+            plan = persistedLightingPresentationPlan(device: device)
+        } else {
+            plan = persistedLightingRestorePlan(device: device)
+        }
+        guard let plan else { return false }
 
         applyPersistedLightingRestorePlanToEditor(plan)
         AppLog.debug(
@@ -878,6 +884,10 @@ final class AppStateEditorController {
 
     func persistedLightingRestorePlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
         guard shouldRestorePersistedLightingOnConnect(for: device) else { return nil }
+        return persistedLightingPresentationPlan(device: device)
+    }
+
+    private func persistedLightingPresentationPlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
         guard device.showsLightingControls else { return nil }
 
         let normalizedZoneID = normalizedLightingZoneID(

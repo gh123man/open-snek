@@ -44,6 +44,32 @@ public enum ButtonBindingSupport {
         return fallback
     }
 
+    public static func semanticDefaultButtonBinding(
+        for slot: Int,
+        profileID: DeviceProfileID? = nil
+    ) -> ButtonBindingDraft? {
+        let fallbackRate = 0x8E
+        switch slot {
+        case 15 where profileID == .basiliskV3Pro || profileID == .basiliskV335K:
+            return ButtonBindingDraft(
+                kind: .dpiClutch,
+                hidKey: 4,
+                turboEnabled: false,
+                turboRate: fallbackRate,
+                clutchDPI: defaultDPIClutchDPI(for: profileID)
+            )
+        case 96:
+            switch profileID {
+            case .basiliskV335K, .basiliskV3XHyperspeed, .none:
+                return ButtonBindingDraft(kind: .dpiCycle, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+            case .basiliskV3Pro:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+
     public static func buttonBindingDraftFromUSBFunctionBlock(
         slot: Int,
         functionBlock: [UInt8],

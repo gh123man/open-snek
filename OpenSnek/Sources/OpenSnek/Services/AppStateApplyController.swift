@@ -234,13 +234,22 @@ final class AppStateApplyController {
         writeDirectLayer: Bool
     ) -> ButtonBindingPatch {
         let resolved = editorStore.editableButtonBindings[slot] ?? editorController.defaultButtonBinding(for: slot)
+        let applied: ButtonBindingDraft
+        if resolved.kind == .default {
+            applied = ButtonBindingSupport.semanticDefaultButtonBinding(
+                for: slot,
+                profileID: deviceStore.selectedDevice?.profile_id
+            ) ?? resolved
+        } else {
+            applied = resolved
+        }
         return ButtonBindingPatch(
             slot: slot,
-            kind: resolved.kind,
-            hidKey: resolved.kind == .keyboardSimple ? resolved.hidKey : nil,
-            turboEnabled: resolved.kind.supportsTurbo ? resolved.turboEnabled : false,
-            turboRate: resolved.kind.supportsTurbo && resolved.turboEnabled ? resolved.turboRate : nil,
-            clutchDPI: resolved.kind == .dpiClutch ? resolved.clutchDPI ?? ButtonBindingSupport.defaultDPIClutchDPI(for: deviceStore.selectedDevice?.profile_id) : nil,
+            kind: applied.kind,
+            hidKey: applied.kind == .keyboardSimple ? applied.hidKey : nil,
+            turboEnabled: applied.kind.supportsTurbo ? applied.turboEnabled : false,
+            turboRate: applied.kind.supportsTurbo && applied.turboEnabled ? applied.turboRate : nil,
+            clutchDPI: applied.kind == .dpiClutch ? applied.clutchDPI ?? ButtonBindingSupport.defaultDPIClutchDPI(for: deviceStore.selectedDevice?.profile_id) : nil,
             persistentProfile: persistentProfile,
             writePersistentLayer: writePersistentLayer,
             writeDirectLayer: writeDirectLayer
