@@ -5,6 +5,8 @@ All notable changes to this project are documented in this file.
 ## [2026-03-25]
 
 ### Fixed
+- The Basilisk V3 Pro wired USB path is now recognized when macOS reports `VID:PID 1532:00AA`; OpenSnek aliases that cable PID onto the existing Basilisk V3 Pro USB profile instead of treating the mouse as unsupported.
+- The empty-state supported-devices list no longer shows a `Mapped` badge on the regular Basilisk V3 row, even though the shipped V3 USB profile still remains OpenRazer-backed and unvalidated internally.
 - Battery readouts now turn red when the live charge falls at or below the device's configured low-battery threshold, and the menu bar status icon switches from the normal OpenSnek glyph to a low-battery indicator in that state.
 - In the device detail two-column layout, the right column now contains only the `Lighting` and `Buttons` cards so the control stack reads with a more balanced split.
 - The main app window now restores its last saved size on relaunch instead of always reopening at the default dimensions.

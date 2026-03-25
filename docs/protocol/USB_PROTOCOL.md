@@ -563,17 +563,18 @@ Effects:
 | Validated matrix LEDs | `0x01` scroll wheel, `0x04` logo, `0x0A` underglow |
 | Extra validated button slots | `0x0E` scroll mode (protocol-read-only), `0x0F` sensitivity clutch / DPI clutch (editable; default `06 01 05 01 90 01 90`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x60` DPI button, `0x6A` profile button (software-read-only / report-4 `0x50`) |
 
-### Razer Basilisk V3 Pro (0x00AB)
+### Razer Basilisk V3 Pro (0x00AA / 0x00AB)
 
 | Setting | Value |
 |---------|-------|
-| USB VID:PID | `1532:00AB` |
+| USB VID:PID | `1532:00AA`, `1532:00AB` |
 | Transaction ID | `0x1F` |
 | DPI Stages | 5 |
 | Onboard Profiles | 3 |
 | Validated matrix LEDs | `0x01` scroll wheel, `0x04` logo, `0x0A` underglow |
 | Extra validated button slots | `0x0F` sensitivity clutch / DPI clutch (editable; default `06 05 05 01 90 01 90`), `0x34` wheel tilt left, `0x35` wheel tilt right, `0x6A` profile button (default `12 01 01 00 00 00 00`, remap path observed but not yet reliable enough to ship) |
 | Button-read layout note | `0x02:0x8C` extended slots decode from `response[11..<18]`, matching the 35K-style offset rather than the Basilisk V3 X shape |
+| Discovery note | Observed on 2026-03-25: the directly cabled macOS USB path reports `1532:00AA`; OpenSnek aliases it to the same shipped V3 Pro USB profile as `1532:00AB` |
 
 ### Transaction ID by Device
 

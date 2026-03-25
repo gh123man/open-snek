@@ -491,7 +491,7 @@ public enum DeviceProfiles {
         id: .basiliskV3Pro,
         productName: "Basilisk V3 Pro",
         transport: .usb,
-        supportedProducts: [0x00AB],
+        supportedProducts: [0x00AA, 0x00AB],
         buttonLayout: ButtonSlotLayout(
             visibleSlots: basiliskV3ProUSBButtonSlots,
             writableSlots: [1, 2, 3, 4, 5, 9, 10, 15, 52, 53],

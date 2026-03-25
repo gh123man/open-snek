@@ -78,6 +78,7 @@ final class DeviceProfilesTests: XCTestCase {
     func testResolveUSBProfileForBasiliskV3Pro() {
         let profile = DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AB, transport: .usb)
         XCTAssertEqual(profile?.id, .basiliskV3Pro)
+        XCTAssertEqual(profile?.supportedProducts, [0x00AA, 0x00AB])
         XCTAssertEqual(profile?.buttonLayout.writableSlots, [1, 2, 3, 4, 5, 9, 10, 15, 52, 53])
         XCTAssertEqual(profile?.buttonLayout.visibleSlots.map(\.slot), [1, 2, 3, 4, 5, 9, 10, 15, 52, 53])
         XCTAssertEqual(profile?.buttonLayout.visibleSlots.first(where: { $0.slot == 52 })?.defaultKind, .scrollLeft)
@@ -96,6 +97,13 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(profile?.passiveDPIInput?.subtype, 0x02)
         XCTAssertEqual(profile?.passiveDPIInput?.maximumDPI, 30_000)
         XCTAssertEqual(profile?.onboardProfileCount, 5)
+    }
+
+    func testResolveUSBProfileForBasiliskV3ProWiredUSBPID() {
+        let profile = DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AA, transport: .usb)
+        XCTAssertEqual(profile?.id, .basiliskV3Pro)
+        XCTAssertEqual(profile?.productName, "Basilisk V3 Pro")
+        XCTAssertEqual(profile?.supportedProducts, [0x00AA, 0x00AB])
     }
 
     func testBasiliskV3ProUSBLightingTargetsResolveAllZones() throws {

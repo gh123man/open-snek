@@ -7,7 +7,7 @@ This document is the single source of truth for feature parity between the USB H
 Target device baseline:
 - Basilisk V3 X HyperSpeed (`USB PID 0x00B9`, `BT PID 0x00BA`)
 - Basilisk V3 (`USB PID 0x0099`, OpenRazer-backed USB profile only)
-- Basilisk V3 Pro (`USB PID 0x00AB`)
+- Basilisk V3 Pro (`USB PIDs 0x00AA, 0x00AB`)
 - Basilisk V3 Pro Bluetooth (`BT PID 0x00AC`)
 - Basilisk V3 35K (`USB PID 0x00CB`)
 
@@ -98,9 +98,10 @@ Mapped from current OpenRazer source, not yet validated in-session with OpenSnek
 - OpenSnek caps DPI edits/readback for this profile at `26,000` instead of the 35K profile's `35,000`
 - until local protocol captures confirm otherwise, this profile should be treated as best-known support derived from ecosystem sources rather than hardware-validated parity
 
-## Validated Device Profile (Basilisk V3 Pro, USB PID `0x00AB`)
+## Validated Device Profile (Basilisk V3 Pro, USB PIDs `0x00AA` / `0x00AB`)
 
 Validated in-session over USB:
+- current alias note: a directly cabled V3 Pro now enumerates as `1532:00AA` on the observed macOS host, and OpenSnek maps it onto the same shipped USB profile as `1532:00AB`
 - working: serial, firmware, device mode read/write, poll-rate read/write, DPI/stages, battery, core USB telemetry
 - working: matrix brightness/effect writes on all validated LED IDs (`0x01` scroll wheel, `0x04` logo, `0x0A` underglow)
 - working: button remap read/write/readback on the shared writable Basilisk slots, wheel-tilt (`0x34`, `0x35`), and the sensitivity clutch / DPI clutch (`0x0F`)

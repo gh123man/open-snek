@@ -316,7 +316,7 @@ struct ContentView: View {
                     id: first.id.rawValue,
                     name: first.productName,
                     transports: transports,
-                    supportBadge: profiles.allSatisfy(\.isLocallyValidated) ? nil : "Mapped"
+                    supportBadge: supportedDeviceSupportBadge(for: profiles)
                 )
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -334,6 +334,14 @@ struct ContentView: View {
     private var emptyState: some View {
         EmptyDeviceState(rows: supportedDeviceRows)
     }
+}
+
+func supportedDeviceSupportBadge(for profiles: [DeviceProfile]) -> String? {
+    guard let first = profiles.first else { return nil }
+    if first.id == .basiliskV3 {
+        return nil
+    }
+    return profiles.allSatisfy(\.isLocallyValidated) ? nil : "Mapped"
 }
 
 private struct EmptyDeviceState: View {
