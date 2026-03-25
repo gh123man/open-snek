@@ -20,10 +20,48 @@ enum BatteryPresentation {
         let clampedPercent = max(0, min(100, percent))
         let isLow = isLowBattery(percent: clampedPercent, charging: charging, thresholdRaw: thresholdRaw)
         return BatteryIconPresentation(
-            symbolName: charging == true ? "battery.100percent.bolt" : (isLow ? "battery.25percent" : "battery.100percent"),
-            variableValue: isLow ? 0.25 : Double(clampedPercent) / 100.0,
+            symbolName: symbolName(percent: clampedPercent, charging: charging),
+            variableValue: tieredBatteryValue(percent: clampedPercent, charging: charging),
             accent: isLow ? .low : .normal
         )
+    }
+
+    static func symbolName(percent: Int, charging: Bool?) -> String {
+        if charging == true {
+            return "battery.100percent.bolt"
+        }
+
+        switch percent {
+        case ..<13:
+            return "battery.0percent"
+        case ..<38:
+            return "battery.25percent"
+        case ..<63:
+            return "battery.50percent"
+        case ..<88:
+            return "battery.75percent"
+        default:
+            return "battery.100percent"
+        }
+    }
+
+    static func tieredBatteryValue(percent: Int, charging: Bool?) -> Double {
+        if charging == true {
+            return Double(max(0, min(100, percent))) / 100.0
+        }
+
+        switch percent {
+        case ..<13:
+            return 0.0
+        case ..<38:
+            return 0.25
+        case ..<63:
+            return 0.50
+        case ..<88:
+            return 0.75
+        default:
+            return 1.0
+        }
     }
 
     static func isLowBattery(percent: Int, charging: Bool?, thresholdRaw: Int?) -> Bool {
@@ -52,16 +90,17 @@ enum ServiceMenuBarPresentation {
         BatteryPresentation.icon(percent: percent, charging: charging, thresholdRaw: thresholdRaw)
     }
 
-    static func showsLowBatteryStatusGlyph(state: MouseState?) -> Bool {
+    static func statusGlyphBatteryIcon(state: MouseState?) -> BatteryIconPresentation? {
         guard let state,
               let percent = state.battery_percent else {
-            return false
+            return nil
         }
-        return BatteryPresentation.isLowBattery(
+        let icon = batteryIcon(
             percent: percent,
             charging: state.charging,
             thresholdRaw: state.low_battery_threshold_raw
         )
+        return icon.accent == .low ? icon : nil
     }
 
     static func compactDpiText(for dpi: Int?) -> String? {
@@ -519,7 +558,7 @@ struct ServiceMenuBarStatusItemLabel: View {
             } else {
                 ServiceMenuBarStatusGlyph(
                     isConnected: deviceStore.selectedDevice != nil,
-                    showsLowBattery: ServiceMenuBarPresentation.showsLowBatteryStatusGlyph(state: deviceStore.state)
+                    batteryPresentation: ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: deviceStore.state)
                 )
                     .frame(width: OpenSnekBranding.menuBarIconSide, height: OpenSnekBranding.menuBarIconSide)
                     .fixedSize()
@@ -552,7 +591,7 @@ private struct ServiceMenuBarStatusDpiBadge: View {
 
 private struct ServiceMenuBarStatusGlyph: View {
     let isConnected: Bool
-    let showsLowBattery: Bool
+    let batteryPresentation: BatteryIconPresentation?
 
     private var iconOpacity: Double {
         isConnected ? 0.88 : 0.46
@@ -560,10 +599,13 @@ private struct ServiceMenuBarStatusGlyph: View {
 
     var body: some View {
         Group {
-            if showsLowBattery {
-                Image(nsImage: OpenSnekBranding.menuBarLowBatteryBadge())
-                    .interpolation(.high)
-                    .antialiased(true)
+            if let batteryPresentation {
+                Image(
+                    systemName: batteryPresentation.symbolName,
+                    variableValue: batteryPresentation.variableValue
+                )
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(BatteryPresentation.lowBatteryColor)
             } else if let menuIcon = OpenSnekBranding.menuIcon {
                 Image(nsImage: menuIcon)
                     .renderingMode(.original)

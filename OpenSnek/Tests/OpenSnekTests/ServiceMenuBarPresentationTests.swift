@@ -50,9 +50,9 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
 
     func testBatteryIconClampsVariableValueToPercentBounds() {
         XCTAssertEqual(BatteryPresentation.icon(percent: -10, charging: false).variableValue, 0.0, accuracy: 0.001)
-        XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: nil).variableValue, 0.58, accuracy: 0.001)
+        XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: nil).variableValue, 0.50, accuracy: 0.001)
         XCTAssertEqual(BatteryPresentation.icon(percent: 120, charging: false).variableValue, 1.0, accuracy: 0.001)
-        XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: nil).symbolName, "battery.100percent")
+        XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: nil).symbolName, "battery.50percent")
     }
 
     func testBatteryIconUsesLowAccentWhenDeviceFallsBelowThreshold() {
@@ -60,6 +60,14 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
 
         XCTAssertEqual(icon.symbolName, "battery.25percent")
         XCTAssertEqual(icon.accent, .low)
+    }
+
+    func testBatteryIconUsesTieredSymbolsAcrossLevels() {
+        XCTAssertEqual(BatteryPresentation.icon(percent: 8, charging: false).symbolName, "battery.0percent")
+        XCTAssertEqual(BatteryPresentation.icon(percent: 30, charging: false).symbolName, "battery.25percent")
+        XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: false).symbolName, "battery.50percent")
+        XCTAssertEqual(BatteryPresentation.icon(percent: 80, charging: false).symbolName, "battery.75percent")
+        XCTAssertEqual(BatteryPresentation.icon(percent: 96, charging: false).symbolName, "battery.100percent")
     }
 
     func testBatteryIconDoesNotUseLowAccentWhileCharging() {
@@ -73,8 +81,8 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
         let lowState = makeBatteryState(percent: 20)
         let healthyState = makeBatteryState(percent: 60)
 
-        XCTAssertTrue(ServiceMenuBarPresentation.showsLowBatteryStatusGlyph(state: lowState))
-        XCTAssertFalse(ServiceMenuBarPresentation.showsLowBatteryStatusGlyph(state: healthyState))
+        XCTAssertEqual(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: lowState)?.symbolName, "battery.25percent")
+        XCTAssertNil(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: healthyState))
     }
 
     private func makeBatteryState(percent: Int) -> MouseState {
