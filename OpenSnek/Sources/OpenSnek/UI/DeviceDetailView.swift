@@ -113,7 +113,12 @@ struct DeviceDetailView: View {
     }
 
     private func preferredColumn(for section: DetailSection) -> Int {
-        section == .buttonRemap ? 1 : -1
+        switch section {
+        case .lighting, .buttonRemap:
+            return 1
+        default:
+            return 0
+        }
     }
 }
 
@@ -741,29 +746,14 @@ struct LightingCard: View {
     }
 
     private var zoneGradientColors: [Color] {
-        guard showsStaticLightingZonePicker,
-              editorStore.editableUSBLightingZoneID != "all"
-        else {
-            return [
-                accentBase.opacity(accentOpacity),
-                Color.white.opacity(0.05),
-            ]
-        }
-
-        let zonePalette: [String: Color] = [
-            "scroll_wheel": Color(hex: 0x61D9FF),
-            "logo": Color(hex: 0x7FF2A5),
-            "underglow": Color(hex: 0xFFD36B),
-        ]
-        let zones = editorStore.visibleUSBLightingZones.filter { $0.id == editorStore.editableUSBLightingZoneID }
-
         let overlayOpacity = max(0.10, accentOpacity * 0.9)
-        let zoneColors = zones.map { zone in
-            (zonePalette[zone.id] ?? accentBase)
-                .opacity(0.16)
+        let resolvedColors = editorStore.lightingGradientDisplayColors.map {
+            Color(rgb: $0).opacity(overlayOpacity)
         }
-
-        return [accentBase.opacity(overlayOpacity)] + zoneColors + [Color.white.opacity(0.05)]
+        if resolvedColors.count <= 1, let color = resolvedColors.first {
+            return [color, color]
+        }
+        return resolvedColors
     }
 
     private var brightnessPercent: Int {

@@ -46,6 +46,7 @@ final class EditorStore {
     var editableColor = RGBColor(r: 0, g: 255, b: 0)
     var editableSecondaryColor = RGBColor(r: 0, g: 170, b: 255)
     var editableButtonBindings: [Int: ButtonBindingDraft] = [:]
+    var lightingGradientRevision: UInt64 = 0
     var isEditingDpiControl = false
     var isButtonProfileOperationInFlight = false
     var buttonProfileOperationStatusText: String?
@@ -116,6 +117,11 @@ final class EditorStore {
                 transport: selectedDevice.transport
             )?
             .usbLightingZones ?? []
+    }
+
+    var lightingGradientDisplayColors: [RGBColor] {
+        _ = lightingGradientRevision
+        return editorController.lightingGradientDisplayColors()
     }
 
     var visibleLightingEffects: [LightingEffectKind] {
@@ -405,6 +411,10 @@ final class EditorStore {
 
     func applyCurrentStaticColorToAllZones() async {
         await applyController.applyCurrentStaticColorToAllZones()
+    }
+
+    func noteLightingGradientColorsChanged() {
+        lightingGradientRevision &+= 1
     }
 
     func updateLightingEffect(_ kind: LightingEffectKind) {

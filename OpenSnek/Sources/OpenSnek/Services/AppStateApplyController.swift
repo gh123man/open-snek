@@ -779,6 +779,7 @@ final class AppStateApplyController {
                 editorController.persistLightingColor(color, device: device, zoneID: colorZoneID)
             }
             editorController.persistLightingZoneID(usbLightingZoneID, device: device)
+            editorStore.noteLightingGradientColorsChanged()
         }
         if let lightingEffect = patch.lightingEffect {
             editorController.persistLightingEffect(lightingEffect, device: device)
@@ -797,6 +798,9 @@ final class AppStateApplyController {
                 lightingEffect.kind == .staticColor ? usbLightingZoneID : "all",
                 device: device
             )
+            if lightingEffect.kind == .staticColor {
+                editorStore.noteLightingGradientColorsChanged()
+            }
         }
     }
 

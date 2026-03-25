@@ -1007,6 +1007,34 @@ final class AppStateEditorController {
         return editorStore.visibleUSBLightingZones.first(where: { $0.id == editorStore.editableUSBLightingZoneID })?.ledIDs
     }
 
+    func lightingGradientDisplayColors() -> [RGBColor] {
+        guard let selectedDevice = deviceStore.selectedDevice else {
+            return [editorStore.editableColor]
+        }
+        guard editorStore.editableLightingEffect == .staticColor,
+              editorStore.visibleUSBLightingZones.count > 1 else {
+            return [editorStore.editableColor]
+        }
+
+        let selectedZoneID = normalizedLightingZoneID(
+            for: selectedDevice,
+            preferredZoneID: editorStore.editableUSBLightingZoneID
+        )
+        guard selectedZoneID != "all" else {
+            return [editorStore.editableColor]
+        }
+
+        let globalColor = loadPersistedLightingColor(device: selectedDevice)
+        return editorStore.visibleUSBLightingZones.map { zone in
+            if zone.id == selectedZoneID {
+                return editorStore.editableColor
+            }
+            return loadPersistedLightingColor(device: selectedDevice, zoneID: zone.id)
+                ?? globalColor
+                ?? editorStore.editableColor
+        }
+    }
+
     func ensureEditableStaticLightingZoneSelection() {
         guard editorStore.editableLightingEffect == .staticColor,
               editorStore.visibleUSBLightingZones.count > 1 else { return }

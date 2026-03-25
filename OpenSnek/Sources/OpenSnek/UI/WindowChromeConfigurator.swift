@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct WindowChromeConfigurator: NSViewRepresentable {
+    nonisolated static let mainWindowFrameAutosaveName = "OpenSnekMainWindow"
+
     nonisolated static func shouldUseCompatibilityChrome(
         osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
     ) -> Bool {
@@ -12,7 +14,7 @@ struct WindowChromeConfigurator: NSViewRepresentable {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async { [weak view] in
             guard let window = view?.window else { return }
-            configure(window)
+            Self.configure(window)
         }
         return view
     }
@@ -20,16 +22,21 @@ struct WindowChromeConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async { [weak nsView] in
             guard let window = nsView?.window else { return }
-            configure(window)
+            Self.configure(window)
         }
     }
 
-    private func configure(_ window: NSWindow) {
+    @MainActor
+    static func configure(
+        _ window: NSWindow,
+        osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) {
+        window.setFrameAutosaveName(mainWindowFrameAutosaveName)
         window.title = ""
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
 
-        if Self.shouldUseCompatibilityChrome() {
+        if shouldUseCompatibilityChrome(osVersion: osVersion) {
             return
         }
 

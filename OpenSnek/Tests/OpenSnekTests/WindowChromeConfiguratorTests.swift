@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenSnek
 
+@MainActor
 final class WindowChromeConfiguratorTests: XCTestCase {
     func testCompatibilityChromeIsEnabledOnMacOS15() {
         XCTAssertTrue(
@@ -26,5 +27,21 @@ final class WindowChromeConfiguratorTests: XCTestCase {
                 osVersion: OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
             )
         )
+    }
+
+    func testConfigureAssignsMainWindowFrameAutosaveName() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        WindowChromeConfigurator.configure(
+            window,
+            osVersion: OperatingSystemVersion(majorVersion: 14, minorVersion: 7, patchVersion: 5)
+        )
+
+        XCTAssertEqual(window.frameAutosaveName, WindowChromeConfigurator.mainWindowFrameAutosaveName)
     }
 }

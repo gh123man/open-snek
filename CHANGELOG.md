@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - Battery readouts now turn red when the live charge falls at or below the device's configured low-battery threshold, and the menu bar status icon switches from the normal OpenSnek glyph to a low-battery indicator in that state.
+- In the device detail two-column layout, the right column now contains only the `Lighting` and `Buttons` cards so the control stack reads with a more balanced split.
+- The main app window now restores its last saved size on relaunch instead of always reopening at the default dimensions.
+- The lighting card background for multi-zone static colors now reflects the real per-zone colors in mouse order instead of using placeholder accent slices, and `all zones` falls back to a single-color background.
 - USB button-binding caches and reconnect identity now ignore placeholder serials like `000000000000`, which prevents stale remap snapshots from being reused as if they belonged to a uniquely identified mouse.
 - USB button profiles now hydrate strictly from mouse readback instead of local cached bindings, so reconnects no longer auto-reapply stale USB remaps; Bluetooth still remembers the last known button state in the UI when readback is unavailable.
 - DPI sliders now use a multi-stage curve tuned for high-DPI mice: `2K` lands at `50%`, `10K` lands at `75%`, higher ranges ramp in additional coarser stages up to each device max, and the slider shows tick markers at every scale-change anchor.

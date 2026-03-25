@@ -493,6 +493,65 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(applyCount, 0)
     }
 
+    func testLightingGradientUsesActualZoneColorsInVisibleOrder() async throws {
+        let device = makeRefactorMultiZoneUSBLightingDevice(
+            id: "usb-lighting-gradient-zones-device",
+            serial: "USB-GRADIENT-ZONES-\(UUID().uuidString)"
+        )
+        let wheelColor = RGBColor(r: 255, g: 0, b: 0)
+        let logoColor = RGBColor(r: 0, g: 255, b: 0)
+        let underglowColor = RGBColor(r: 0, g: 0, b: 255)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(wheelColor, device: device, zoneID: "scroll_wheel")
+        preferenceStore.persistLightingColor(RGBColor(r: 12, g: 34, b: 56), device: device, zoneID: "logo")
+        preferenceStore.persistLightingColor(underglowColor, device: device, zoneID: "underglow")
+        preferenceStore.persistLightingZoneID("scroll_wheel", device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(devices: [], stateByDeviceID: [:])
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([device], source: "refresh")
+            appState.editorStore.updateUSBLightingZoneID("logo")
+            appState.editorStore.editableColor = logoColor
+        }
+
+        let gradientColors = await MainActor.run { appState.editorStore.lightingGradientDisplayColors }
+
+        XCTAssertEqual(gradientColors, [wheelColor, logoColor, underglowColor])
+    }
+
+    func testLightingGradientCollapsesToSingleColorWhenEditingAllZones() async throws {
+        let device = makeRefactorMultiZoneUSBLightingDevice(
+            id: "usb-lighting-gradient-all-zones-device",
+            serial: "USB-GRADIENT-ALL-\(UUID().uuidString)"
+        )
+        let globalColor = RGBColor(r: 80, g: 90, b: 100)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(RGBColor(r: 255, g: 0, b: 0), device: device, zoneID: "scroll_wheel")
+        preferenceStore.persistLightingColor(RGBColor(r: 0, g: 255, b: 0), device: device, zoneID: "logo")
+        preferenceStore.persistLightingColor(RGBColor(r: 0, g: 0, b: 255), device: device, zoneID: "underglow")
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(devices: [], stateByDeviceID: [:])
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([device], source: "refresh")
+            appState.editorStore.editableUSBLightingZoneID = "all"
+            appState.editorStore.editableColor = globalColor
+        }
+
+        let gradientColors = await MainActor.run { appState.editorStore.lightingGradientDisplayColors }
+
+        XCTAssertEqual(gradientColors, [globalColor])
+    }
+
     func testUSBStaticMultiZonePresentationDoesNotLeaveEditorOnAllZones() async throws {
         let device = makeRefactorMultiZoneUSBLightingDevice(
             id: "usb-multizone-static-presentation-device",
@@ -551,6 +610,7 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
             appState.editorStore.updateUSBLightingZoneID("logo")
             appState.editorStore.editableColor = RGBColor(r: 111, g: 122, b: 133)
         }
+        let gradientRevisionBeforeApply = await MainActor.run { appState.editorStore.lightingGradientRevision }
 
         await appState.editorStore.applyCurrentStaticColorToAllZones()
 
@@ -561,12 +621,14 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         let patches = await backend.recordedPatches()
         let patch = try XCTUnwrap(patches.first)
         let editableZone = await MainActor.run { appState.editorStore.editableUSBLightingZoneID }
+        let gradientRevisionAfterApply = await MainActor.run { appState.editorStore.lightingGradientRevision }
         let preferenceStore = DevicePreferenceStore()
         let expectedColor = RGBColor(r: 111, g: 122, b: 133)
 
         XCTAssertEqual(patch.lightingEffect?.kind, .staticColor)
         XCTAssertNil(patch.usbLightingZoneLEDIDs)
         XCTAssertEqual(editableZone, "logo")
+        XCTAssertGreaterThan(gradientRevisionAfterApply, gradientRevisionBeforeApply)
         XCTAssertEqual(preferenceStore.loadPersistedLightingZoneID(device: device), "logo")
         XCTAssertEqual(preferenceStore.loadPersistedLightingColor(device: device), expectedColor)
         XCTAssertEqual(preferenceStore.loadPersistedLightingColor(device: device, zoneID: "scroll_wheel"), expectedColor)
