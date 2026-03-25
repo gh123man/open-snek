@@ -89,8 +89,14 @@ final class AppStateApplyController {
         let count = max(1, min(5, editorStore.editableStageCount))
         let profileID = deviceStore.selectedDevice?.profile_id
         let values = Array(editorStore.editableStageValues.prefix(count)).map { DeviceProfiles.clampDPI($0, profileID: profileID) }
+        let pairs = Array(editorStore.editableStagePairs.prefix(count)).map { pair in
+            DpiPair(
+                x: DeviceProfiles.clampDPI(pair.x, profileID: profileID),
+                y: DeviceProfiles.clampDPI(pair.y, profileID: profileID)
+            )
+        }
         let active = max(0, min(count - 1, editorStore.editableActiveStage - 1))
-        enqueueApply(DevicePatch(dpiStages: values, activeStage: active))
+        enqueueApply(DevicePatch(dpiStages: values, dpiStagePairs: pairs, activeStage: active))
     }
 
     func scheduleAutoApplyDpi() {
@@ -660,7 +666,7 @@ final class AppStateApplyController {
 
             let localEditsChangedDuringApply = clearLocalEditsOnSuccess && (lastLocalEditAt ?? .distantPast) > start
             let shouldHydrateEditableState = clearLocalEditsOnSuccess && !localEditsChangedDuringApply && !applyCoordinator.hasPending
-            if patch.dpiStages != nil || patch.activeStage != nil {
+            if patch.dpiStages != nil || patch.dpiStagePairs != nil || patch.activeStage != nil {
                 let suppressedUntil = Date().addingTimeInterval(0.9)
                 deviceController.setFastDpiSuppressed(until: suppressedUntil, for: applyDeviceID)
                 deviceController.setFastDpiSuppressed(until: suppressedUntil, for: presentationDeviceID)
@@ -715,7 +721,7 @@ final class AppStateApplyController {
                 if shouldShowApplyFailure {
                     deviceStore.errorMessage = error.localizedDescription
                     deviceStore.warningMessage = nil
-                    if patch.dpiStages != nil || patch.activeStage != nil {
+                    if patch.dpiStages != nil || patch.dpiStagePairs != nil || patch.activeStage != nil {
                         runtimeStore.serviceStatusMessage = "DPI update failed"
                         runtimeController.setTransientStatus(until: Date().addingTimeInterval(4.0))
                     }

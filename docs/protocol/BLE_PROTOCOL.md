@@ -248,6 +248,7 @@ Important:
 - the active byte is not a UI index in the Swift client; it is written as the selected entry's `stage_id`
 - stage IDs should be preserved from the most recent read snapshot when possible
 - OpenSnek reads current stage IDs first, then reuses them on write
+- OpenSnek now preserves the distinct `dpi_x` and `dpi_y` values from this table for Basilisk V3 Pro-class devices instead of flattening them into a mirrored scalar stage list
 
 #### 6.2.2 Read Payload Layout
 

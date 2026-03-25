@@ -191,6 +191,7 @@ public struct DeviceProfile: Hashable, Sendable {
     public let usbLightingLEDIDs: [UInt8]
     public let usbLightingZones: [USBLightingZoneDescriptor]
     public let passiveDPIInput: PassiveDPIInputDescriptor?
+    public let supportsIndependentXYDPI: Bool
     public let onboardProfileCount: Int
     public let isLocallyValidated: Bool
 
@@ -205,6 +206,7 @@ public struct DeviceProfile: Hashable, Sendable {
         usbLightingLEDIDs: [UInt8] = [],
         usbLightingZones: [USBLightingZoneDescriptor] = [],
         passiveDPIInput: PassiveDPIInputDescriptor? = nil,
+        supportsIndependentXYDPI: Bool = false,
         onboardProfileCount: Int = 1,
         isLocallyValidated: Bool = true
     ) {
@@ -218,6 +220,7 @@ public struct DeviceProfile: Hashable, Sendable {
         self.usbLightingLEDIDs = usbLightingLEDIDs
         self.usbLightingZones = usbLightingZones
         self.passiveDPIInput = passiveDPIInput
+        self.supportsIndependentXYDPI = supportsIndependentXYDPI
         self.onboardProfileCount = max(1, onboardProfileCount)
         self.isLocallyValidated = isLocallyValidated
     }
@@ -445,6 +448,7 @@ public enum DeviceProfiles {
             minInputReportSize: 5,
             maximumDPI: 35_000
         ),
+        supportsIndependentXYDPI: true,
         onboardProfileCount: 5
     )
 
@@ -496,6 +500,7 @@ public enum DeviceProfiles {
             minInputReportSize: 5,
             maximumDPI: 30_000
         ),
+        supportsIndependentXYDPI: true,
         onboardProfileCount: 5
     )
 
@@ -550,6 +555,7 @@ public enum DeviceProfiles {
             maxFeatureReportSize: 1,
             maximumDPI: 30_000
         ),
+        supportsIndependentXYDPI: true,
         onboardProfileCount: 3
     )
 
@@ -626,5 +632,23 @@ public enum DeviceProfiles {
     public static func clampDPI(_ value: Int, device: MouseDevice?) -> Int {
         let range = dpiRange(for: device)
         return max(range.lowerBound, min(range.upperBound, value))
+    }
+
+    public static func supportsIndependentXYDPI(for profileID: DeviceProfileID?) -> Bool {
+        switch profileID {
+        case .basiliskV3Pro, .basiliskV335K:
+            return true
+        case .basiliskV3XHyperspeed, nil:
+            return false
+        }
+    }
+
+    public static func supportsIndependentXYDPI(for device: MouseDevice?) -> Bool {
+        guard let device else { return false }
+        return resolve(
+            vendorID: device.vendor_id,
+            productID: device.product_id,
+            transport: device.transport
+        )?.supportsIndependentXYDPI ?? supportsIndependentXYDPI(for: device.profile_id)
     }
 }

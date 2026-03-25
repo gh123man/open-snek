@@ -103,19 +103,22 @@ public enum BLEVendorProtocol {
         return payload.prefix(header.payloadLength)
     }
 
-    public static func parseDpiStageSnapshot(blob: Data) -> (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)? {
+    public static func parseDpiStageSnapshot(blob: Data) -> (active: Int, count: Int, slots: [Int], pairs: [DpiPair], stageIDs: [UInt8], marker: UInt8)? {
         if blob.count >= 9 {
             let activeRaw = Int(blob[0])
             let declaredCount = max(1, min(5, Int(blob[1])))
             var slots: [Int] = []
+            var pairs: [DpiPair] = []
             var stageIDs: [UInt8] = []
             var marker: UInt8 = 0x03
 
             for i in 0..<declaredCount {
                 let off = 2 + (i * 7)
                 guard off + 4 < blob.count else { break }
-                let value = Int(blob[off + 1]) | (Int(blob[off + 2]) << 8)
-                slots.append(value)
+                let x = Int(blob[off + 1]) | (Int(blob[off + 2]) << 8)
+                let y = Int(blob[off + 3]) | (Int(blob[off + 4]) << 8)
+                slots.append(x)
+                pairs.append(DpiPair(x: x, y: y))
                 stageIDs.append(blob[off])
                 if off + 6 < blob.count {
                     marker = blob[off + 6]
@@ -126,11 +129,15 @@ public enum BLEVendorProtocol {
                 return nil
             }
             while slots.count < declaredCount {
-                slots.append(slots.last ?? 800)
+                let fallback = pairs.last ?? DpiPair(x: slots.last ?? 800, y: slots.last ?? 800)
+                slots.append(fallback.x)
+                pairs.append(fallback)
                 stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
             }
             while slots.count < 5 {
-                slots.append(slots.last ?? 800)
+                let fallback = pairs.last ?? DpiPair(x: slots.last ?? 800, y: slots.last ?? 800)
+                slots.append(fallback.x)
+                pairs.append(fallback)
                 stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
             }
 
@@ -141,6 +148,7 @@ public enum BLEVendorProtocol {
                 active: active,
                 count: count,
                 slots: Array(slots.prefix(5)),
+                pairs: Array(pairs.prefix(5)),
                 stageIDs: Array(stageIDs.prefix(5)),
                 marker: marker
             )
@@ -152,10 +160,12 @@ public enum BLEVendorProtocol {
             let value = Int(blob[3]) | (Int(blob[4]) << 8)
             let active = activeRaw >= 1 ? max(0, min(count - 1, activeRaw - 1)) : 0
             let sid = blob.count > 2 ? blob[2] : 0
+            let pair = DpiPair(x: value, y: value)
             return (
                 active: active,
                 count: count,
                 slots: Array(repeating: value, count: 5),
+                pairs: Array(repeating: pair, count: 5),
                 stageIDs: Array(repeating: sid, count: 5),
                 marker: 0x03
             )
@@ -164,38 +174,62 @@ public enum BLEVendorProtocol {
         return nil
     }
 
-    public static func parseDpiStages(blob: Data) -> (active: Int, count: Int, values: [Int], marker: UInt8)? {
+    public static func parseDpiStages(blob: Data) -> (active: Int, count: Int, values: [Int], pairs: [DpiPair], marker: UInt8)? {
         guard let snapshot = parseDpiStageSnapshot(blob: blob) else { return nil }
         return (
             active: snapshot.active,
             count: snapshot.count,
             values: Array(snapshot.slots.prefix(snapshot.count)),
+            pairs: Array(snapshot.pairs.prefix(snapshot.count)),
             marker: snapshot.marker
         )
     }
 
     public static func mergedStageSlots(currentSlots: [Int], requestedCount: Int, requestedValues: [Int]) -> [Int] {
+        mergedStagePairs(
+            currentPairs: currentSlots.map { DpiPair(x: $0, y: $0) },
+            requestedCount: requestedCount,
+            requestedPairs: requestedValues.map { DpiPair(x: $0, y: $0) }
+        ).map(\.x)
+    }
+
+    public static func mergedStagePairs(currentPairs: [DpiPair], requestedCount: Int, requestedPairs: [DpiPair]) -> [DpiPair] {
         let count = max(1, min(5, requestedCount))
-        let clamped = requestedValues.map { max(100, min(30000, $0)) }
-        var slots = Array(currentSlots.prefix(5))
-        if slots.count < 5 {
-            slots += Array(repeating: clamped.first ?? 800, count: 5 - slots.count)
+        let clamped = requestedPairs.map { pair in
+            DpiPair(
+                x: max(100, min(30000, pair.x)),
+                y: max(100, min(30000, pair.y))
+            )
+        }
+        var pairs = Array(currentPairs.prefix(5))
+        if pairs.count < 5 {
+            pairs += Array(repeating: clamped.first ?? DpiPair(x: 800, y: 800), count: 5 - pairs.count)
         }
 
         if count == 1 {
-            let single = clamped.first ?? slots[0]
+            let single = clamped.first ?? pairs[0]
             return Array(repeating: single, count: 5)
         }
 
         for i in 0..<count {
             if i < clamped.count {
-                slots[i] = clamped[i]
+                pairs[i] = clamped[i]
             }
         }
-        return Array(slots.prefix(5))
+        return Array(pairs.prefix(5))
     }
 
     public static func buildDpiStagePayload(active: Int, count: Int, slots: [Int], marker: UInt8, stageIDs: [UInt8]? = nil) -> Data {
+        buildDpiStagePayload(
+            active: active,
+            count: count,
+            pairs: slots.map { DpiPair(x: $0, y: $0) },
+            marker: marker,
+            stageIDs: stageIDs
+        )
+    }
+
+    public static func buildDpiStagePayload(active: Int, count: Int, pairs: [DpiPair], marker: UInt8, stageIDs: [UInt8]? = nil) -> Data {
         let clippedCount = max(1, min(5, count))
         var ids = Array((stageIDs ?? [0, 1, 2, 3, 4]).prefix(5))
         while ids.count < 5 {
@@ -203,17 +237,24 @@ public enum BLEVendorProtocol {
         }
         let activeIndex = max(0, min(clippedCount - 1, active))
         var out = Data([ids[activeIndex], UInt8(clippedCount)])
-        let clamped = slots.map { max(100, min(30000, $0)) }
+        let clamped = pairs.map { pair in
+            DpiPair(
+                x: max(100, min(30000, pair.x)),
+                y: max(100, min(30000, pair.y))
+            )
+        }
 
         for i in 0..<5 {
-            let value = clamped[min(i, max(0, clamped.count - 1))]
-            let lo = UInt8(value & 0xFF)
-            let hi = UInt8((value >> 8) & 0xFF)
+            let pair = clamped[min(i, max(0, clamped.count - 1))]
+            let xLo = UInt8(pair.x & 0xFF)
+            let xHi = UInt8((pair.x >> 8) & 0xFF)
+            let yLo = UInt8(pair.y & 0xFF)
+            let yHi = UInt8((pair.y >> 8) & 0xFF)
             out.append(ids[i])
-            out.append(lo)
-            out.append(hi)
-            out.append(lo)
-            out.append(hi)
+            out.append(xLo)
+            out.append(xHi)
+            out.append(yLo)
+            out.append(yHi)
             out.append(0x00)
             out.append(i == 4 ? marker : 0x00)
         }

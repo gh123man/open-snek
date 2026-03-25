@@ -128,8 +128,10 @@ extension BridgeClient {
         btExpectedDpiByDeviceID[event.deviceID] = (
             active: expected.active,
             values: expected.values,
+            pairs: expected.values.map { DpiPair(x: $0, y: $0) },
             previousActive: Self.clampedDpiActiveIndex(for: previousState),
             previousValues: previousState?.dpi_stages.values,
+            previousPairs: previousState?.dpi_stages.pairs,
             expiresAt: Date().addingTimeInterval(1.2),
             remainingMasks: 4
         )
@@ -139,6 +141,7 @@ extension BridgeClient {
                 active: expected.active,
                 count: snapshot.count,
                 slots: snapshot.slots,
+                pairs: snapshot.pairs,
                 stageIDs: snapshot.stageIDs,
                 marker: snapshot.marker
             )
@@ -270,7 +273,7 @@ extension BridgeClient {
 
     nonisolated static func bluetoothPassiveDpiExpectation(
         event: PassiveDPIEvent,
-        snapshot: (active: Int, count: Int, slots: [Int], stageIDs: [UInt8], marker: UInt8)?,
+        snapshot: (active: Int, count: Int, slots: [Int], pairs: [DpiPair], stageIDs: [UInt8], marker: UInt8)?,
         state: MouseState?
     ) -> (active: Int, values: [Int])? {
         let values: [Int]
@@ -325,6 +328,7 @@ extension BridgeClient {
     nonisolated static func shouldMaskBluetoothExpectedRead(
         parsedActive: Int,
         parsedValues: [Int],
+        parsedPairs: [DpiPair],
         expected: BluetoothExpectedDpiState
     ) -> Bool {
         guard let previousActive = expected.previousActive,
@@ -335,6 +339,11 @@ extension BridgeClient {
 
         let clampedPreviousActive = max(0, min(previousValues.count - 1, previousActive))
         let normalizedParsedValues = Array(parsedValues.prefix(previousValues.count))
+        if let previousPairs = expected.previousPairs,
+           !previousPairs.isEmpty {
+            let normalizedParsedPairs = Array(parsedPairs.prefix(previousPairs.count))
+            return parsedActive == clampedPreviousActive && normalizedParsedPairs == previousPairs
+        }
         return parsedActive == clampedPreviousActive && normalizedParsedValues == previousValues
     }
 

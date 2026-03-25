@@ -1059,11 +1059,16 @@ struct DpiStagesCard: View {
     var body: some View {
         let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
         let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
+        let supportsIndependentXYDPI = editorStore.selectedDeviceSupportsIndependentXYDPI
         let supportsMultiStage = true
         let stageCount = supportsMultiStage ? editorStore.editableStageCount : 1
         return Card(title: "DPI Stages") {
             HStack {
-                Text(supportsMultiStage ? "Enabled stages: \(editorStore.editableStageCount) / 5" : "Single-stage DPI")
+                Text(
+                    supportsMultiStage
+                        ? "Enabled stages: \(editorStore.editableStageCount) / 5"
+                        : "Single-stage DPI"
+                )
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.82))
                 Spacer()
@@ -1074,6 +1079,7 @@ struct DpiStagesCard: View {
                         guard next != editorStore.editableStageCount else { return }
                         editorStore.editableStageCount = next
                         editorStore.editableActiveStage = min(editorStore.editableActiveStage, editorStore.editableStageCount)
+                        editorStore.normalizeExpandedXYStages()
                         editorStore.scheduleAutoApplyDpi()
                     } label: {
                         Image(systemName: "minus.circle.fill")
@@ -1088,6 +1094,7 @@ struct DpiStagesCard: View {
                         let next = min(5, editorStore.editableStageCount + 1)
                         guard next != editorStore.editableStageCount else { return }
                         editorStore.editableStageCount = next
+                        editorStore.normalizeExpandedXYStages()
                         editorStore.scheduleAutoApplyDpi()
                     } label: {
                         Image(systemName: "plus.circle.fill")
@@ -1102,43 +1109,95 @@ struct DpiStagesCard: View {
             ForEach(0..<stageCount, id: \.self) { idx in
                 let isSelectedStage = stageCount == 1 || editorStore.editableActiveStage == (idx + 1)
                 let stageColor = stageAccent(for: idx, isSelected: isSelectedStage)
+                let stagePair = editorStore.stagePair(idx)
+                let isXYExpanded = supportsIndependentXYDPI && editorStore.isStageXYExpanded(idx)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         stageHeader(for: idx, stageCount: stageCount, stageColor: stageColor, isSelectedStage: isSelectedStage)
 
                         Spacer()
 
-                        TextField(
-                            "DPI",
-                            text: Binding(
-                                get: { String(editorStore.stageValue(idx)) },
-                                set: { newValue in
-                                    if let parsed = Int(newValue) {
-                                        editorStore.updateStage(idx, value: parsed)
-                                        editorStore.scheduleAutoApplyDpi()
-                                    }
+                        if isXYExpanded {
+                            HStack(spacing: 8) {
+                                axisTextField(label: "X", value: stagePair.x) { parsed in
+                                    editorStore.updateStageX(idx, value: parsed)
+                                    editorStore.scheduleAutoApplyDpi()
                                 }
+                                axisTextField(label: "Y", value: stagePair.y) { parsed in
+                                    editorStore.updateStageY(idx, value: parsed)
+                                    editorStore.scheduleAutoApplyDpi()
+                                }
+                            }
+                        } else {
+                            TextField(
+                                "DPI",
+                                text: Binding(
+                                    get: { String(editorStore.stageValue(idx)) },
+                                    set: { newValue in
+                                        if let parsed = Int(newValue) {
+                                            editorStore.updateStage(idx, value: parsed)
+                                            editorStore.scheduleAutoApplyDpi()
+                                        }
+                                    }
+                                )
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                        }
+
+                        if supportsIndependentXYDPI {
+                            xyToggleButton(isExpanded: isXYExpanded, tint: stageColor) {
+                                if editorStore.toggleStageXYExpansion(idx) {
+                                    editorStore.scheduleAutoApplyDpi()
+                                }
+                            }
+                        }
                     }
 
-                    Slider(
-                        value: Binding(
-                            get: { Double(min(editorStore.stageValue(idx), sliderRange.upperBound)) },
-                            set: { newValue in
-                                let quantized = Int(round(newValue / 100.0) * 100.0)
-                                editorStore.updateStage(idx, value: quantized)
-                                editorStore.scheduleAutoApplyDpi()
-                            }
-                        ),
-                        in: sliderDoubleRange,
-                        onEditingChanged: { editing in
-                            editorStore.isEditingDpiControl = editing
+                    if supportsIndependentXYDPI && !isXYExpanded && stagePair.x != stagePair.y {
+                        Text("Current split: X \(stagePair.x) / Y \(stagePair.y)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.62))
+                    }
+
+                    if isXYExpanded {
+                        axisSlider(
+                            label: "X",
+                            value: stagePair.x,
+                            sliderRange: sliderRange,
+                            sliderDoubleRange: sliderDoubleRange,
+                            tint: isSelectedStage ? stageColor : Color.white.opacity(0.80)
+                        ) { quantized in
+                            editorStore.updateStageX(idx, value: quantized)
+                            editorStore.scheduleAutoApplyDpi()
                         }
-                    )
-                    .tint(isSelectedStage ? stageColor : Color.white.opacity(0.80))
+                        axisSlider(
+                            label: "Y",
+                            value: stagePair.y,
+                            sliderRange: sliderRange,
+                            sliderDoubleRange: sliderDoubleRange,
+                            tint: isSelectedStage ? stageColor.opacity(0.8) : Color.white.opacity(0.65)
+                        ) { quantized in
+                            editorStore.updateStageY(idx, value: quantized)
+                            editorStore.scheduleAutoApplyDpi()
+                        }
+                    } else {
+                        Slider(
+                            value: Binding(
+                                get: { Double(min(editorStore.stageValue(idx), sliderRange.upperBound)) },
+                                set: { newValue in
+                                    let quantized = Int(round(newValue / 100.0) * 100.0)
+                                    editorStore.updateStage(idx, value: quantized)
+                                    editorStore.scheduleAutoApplyDpi()
+                                }
+                            ),
+                            in: sliderDoubleRange,
+                            onEditingChanged: { editing in
+                                editorStore.isEditingDpiControl = editing
+                            }
+                        )
+                        .tint(isSelectedStage ? stageColor : Color.white.opacity(0.80))
+                    }
                 }
                 .padding(8)
                 .background(
@@ -1151,6 +1210,74 @@ struct DpiStagesCard: View {
                 )
                 .shadow(color: isSelectedStage ? stageColor.opacity(0.30) : .clear, radius: 12, y: 0)
             }
+        }
+    }
+
+    private func axisTextField(label: String, value: Int, onCommit: @escaping (Int) -> Void) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 11, weight: .black, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.7))
+            TextField(
+                label,
+                text: Binding(
+                    get: { String(value) },
+                    set: { newValue in
+                        if let parsed = Int(newValue) {
+                            onCommit(parsed)
+                        }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 88)
+        }
+    }
+
+    private func xyToggleButton(isExpanded: Bool, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("X/Y")
+                .font(.system(size: 10, weight: .black, design: .monospaced))
+                .foregroundStyle(isExpanded ? tint : .white.opacity(0.78))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(isExpanded ? tint.opacity(0.18) : Color.white.opacity(0.06))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(isExpanded ? tint.opacity(0.95) : Color.white.opacity(0.14), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func axisSlider(
+        label: String,
+        value: Int,
+        sliderRange: ClosedRange<Int>,
+        sliderDoubleRange: ClosedRange<Double>,
+        tint: Color,
+        onChange: @escaping (Int) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(label)-Axis")
+                .font(.system(size: 11, weight: .black, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.7))
+            Slider(
+                value: Binding(
+                    get: { Double(min(value, sliderRange.upperBound)) },
+                    set: { newValue in
+                        onChange(Int(round(newValue / 100.0) * 100.0))
+                    }
+                ),
+                in: sliderDoubleRange,
+                onEditingChanged: { editing in
+                    editorStore.isEditingDpiControl = editing
+                }
+            )
+            .tint(tint)
         }
     }
 

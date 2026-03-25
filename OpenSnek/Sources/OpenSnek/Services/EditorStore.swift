@@ -7,9 +7,29 @@ import OpenSnekCore
 @Observable
 final class EditorStore {
     @ObservationIgnored let deviceStore: DeviceStore
-    var editableStageValues: [Int] = [800, 1600, 3200, 6400, 12000]
+    var editableStageValues: [Int] = [800, 1600, 3200, 6400, 12000] {
+        didSet {
+            guard !isSyncingEditableStageRepresentations else { return }
+            syncEditableStagePairsFromValues()
+        }
+    }
+    var editableStagePairs: [DpiPair] = [
+        DpiPair(x: 800, y: 800),
+        DpiPair(x: 1600, y: 1600),
+        DpiPair(x: 3200, y: 3200),
+        DpiPair(x: 6400, y: 6400),
+        DpiPair(x: 12000, y: 12000),
+    ] {
+        didSet {
+            guard !isSyncingEditableStageRepresentations else { return }
+            isSyncingEditableStageRepresentations = true
+            editableStageValues = editableStagePairs.map(\.x)
+            isSyncingEditableStageRepresentations = false
+        }
+    }
     var editableStageCount = 3
     var editableActiveStage = 1
+    var expandedXYStageIndices: Set<Int> = []
     var editablePollRate = 1000
     var editableSleepTimeout = 300
     var editableDeviceMode = 0x00
@@ -34,9 +54,18 @@ final class EditorStore {
     @ObservationIgnored private weak var editorControllerStorage: AppStateEditorController?
     @ObservationIgnored private weak var applyControllerStorage: AppStateApplyController?
     @ObservationIgnored private var buttonProfileOperationDepth = 0
+    @ObservationIgnored private var isSyncingEditableStageRepresentations = false
 
     init(deviceStore: DeviceStore) {
         self.deviceStore = deviceStore
+        syncEditableStagePairsFromValues()
+    }
+
+    private func syncEditableStagePairsFromValues() {
+        guard !isSyncingEditableStageRepresentations else { return }
+        isSyncingEditableStageRepresentations = true
+        editableStagePairs = editableStageValues.map { DpiPair(x: $0, y: $0) }
+        isSyncingEditableStageRepresentations = false
     }
 
     func bind(
@@ -263,12 +292,63 @@ final class EditorStore {
 
     func updateStage(_ index: Int, value: Int) {
         guard index >= 0 && index < editableStageValues.count else { return }
-        editableStageValues[index] = DeviceProfiles.clampDPI(value, profileID: selectedDeviceProfileID)
+        let clamped = DeviceProfiles.clampDPI(value, profileID: selectedDeviceProfileID)
+        editableStageValues[index] = clamped
+        editableStagePairs[index] = DpiPair(x: clamped, y: clamped)
     }
 
     func stageValue(_ index: Int) -> Int {
         guard index >= 0 && index < editableStageValues.count else { return 800 }
         return editableStageValues[index]
+    }
+
+    func stagePair(_ index: Int) -> DpiPair {
+        guard index >= 0 && index < editableStagePairs.count else { return DpiPair(x: 800, y: 800) }
+        return editableStagePairs[index]
+    }
+
+    func updateStageX(_ index: Int, value: Int) {
+        guard index >= 0 && index < editableStagePairs.count else { return }
+        let clamped = DeviceProfiles.clampDPI(value, profileID: selectedDeviceProfileID)
+        let current = editableStagePairs[index]
+        editableStagePairs[index] = DpiPair(x: clamped, y: current.y)
+    }
+
+    func updateStageY(_ index: Int, value: Int) {
+        guard index >= 0 && index < editableStagePairs.count else { return }
+        let clamped = DeviceProfiles.clampDPI(value, profileID: selectedDeviceProfileID)
+        let current = editableStagePairs[index]
+        editableStagePairs[index] = DpiPair(x: current.x, y: clamped)
+    }
+
+    var selectedDeviceSupportsIndependentXYDPI: Bool {
+        DeviceProfiles.supportsIndependentXYDPI(for: deviceStore.selectedDevice)
+    }
+
+    func isStageXYExpanded(_ index: Int) -> Bool {
+        expandedXYStageIndices.contains(index)
+    }
+
+    @discardableResult
+    func toggleStageXYExpansion(_ index: Int) -> Bool {
+        guard index >= 0 && index < editableStageCount else { return false }
+        if expandedXYStageIndices.contains(index) {
+            expandedXYStageIndices.remove(index)
+            let scalar = stageValue(index)
+            editableStagePairs[index] = DpiPair(x: scalar, y: scalar)
+            return true
+        } else {
+            expandedXYStageIndices.insert(index)
+            return false
+        }
+    }
+
+    func normalizeExpandedXYStages() {
+        guard selectedDeviceSupportsIndependentXYDPI else {
+            expandedXYStageIndices.removeAll()
+            return
+        }
+        expandedXYStageIndices = expandedXYStageIndices.filter { $0 >= 0 && $0 < editableStageCount }
     }
 
     func scheduleAutoApplyDpi() {

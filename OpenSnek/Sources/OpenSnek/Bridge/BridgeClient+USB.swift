@@ -8,7 +8,7 @@ extension BridgeClient {
     func resolvedUSBStateCapabilities(
         device _: MouseDevice,
         profile: DeviceProfile?,
-        stages: (Int, [Int])?,
+        stages: USBDpiStageSnapshot?,
         poll: Int?,
         sleepTimeout: Int?,
         led: Int?
@@ -29,6 +29,31 @@ extension BridgeClient {
             power_management: sleepTimeout != nil,
             button_remap: false,
             lighting: led != nil
+        )
+    }
+
+    func resolvedUSBStateCapabilities(
+        device: MouseDevice,
+        profile: DeviceProfile?,
+        stages: (Int, [Int])?,
+        poll: Int?,
+        sleepTimeout: Int?,
+        led: Int?
+    ) -> Capabilities {
+        resolvedUSBStateCapabilities(
+            device: device,
+            profile: profile,
+            stages: stages.map { active, values in
+                (
+                    active: active,
+                    values: values,
+                    pairs: values.map { DpiPair(x: $0, y: $0) },
+                    stageIDs: Array(0..<values.count).map(UInt8.init)
+                )
+            },
+            poll: poll,
+            sleepTimeout: sleepTimeout,
+            led: led
         )
     }
 
@@ -127,7 +152,7 @@ extension BridgeClient {
         let fw = try getFirmware(session, device)
         let mode = try getDeviceMode(session, device)
         let battery = try getBattery(session, device)
-        let stages = try getDPIStages(session, device)
+        let stages = try getDPIStageSnapshot(session, device)
         let poll = try getPollRate(session, device)
         let sleepTimeout = try getIdleTime(session, device)
         let lowBatteryThreshold = try getLowBatteryThreshold(session, device)
@@ -146,8 +171,9 @@ extension BridgeClient {
             led: led
         )
 
-        let active = stages?.0 ?? 0
-        let values = stages?.1 ?? [dpi.0]
+        let active = stages?.active ?? 0
+        let values = stages?.values ?? [dpi.0]
+        let pairs = stages?.pairs
 
         return MouseState(
             device: DeviceSummary(
@@ -161,7 +187,7 @@ extension BridgeClient {
             battery_percent: battery?.0,
             charging: battery?.1,
             dpi: DpiPair(x: dpi.0, y: dpi.1),
-            dpi_stages: DpiStages(active_stage: active, values: values),
+            dpi_stages: DpiStages(active_stage: active, values: values, pairs: pairs),
             poll_rate: poll,
             sleep_timeout: sleepTimeout,
             device_mode: mode.map { DeviceMode(mode: $0.0, param: $0.1) },
@@ -282,25 +308,31 @@ extension BridgeClient {
         _ device: MouseDevice,
         stages: [Int],
         activeStage: Int,
+        stagePairs: [DpiPair]? = nil,
         stageIDs: [UInt8]? = nil
     ) throws -> Bool {
-        let clipped = Array(stages.prefix(5)).map { DeviceProfiles.clampDPI($0, device: device) }
-        guard !clipped.isEmpty else { return false }
-        let activeClamped = max(0, min(clipped.count - 1, activeStage))
-        let writeStageIDs = usbStageIDsForWrite(count: clipped.count, stageIDs: stageIDs)
-        guard writeStageIDs.count == clipped.count else { return false }
+        let clippedPairs = Array((stagePairs ?? stages.map { DpiPair(x: $0, y: $0) }).prefix(5)).map { pair in
+            DpiPair(
+                x: DeviceProfiles.clampDPI(pair.x, device: device),
+                y: DeviceProfiles.clampDPI(pair.y, device: device)
+            )
+        }
+        guard !clippedPairs.isEmpty else { return false }
+        let activeClamped = max(0, min(clippedPairs.count - 1, activeStage))
+        let writeStageIDs = usbStageIDsForWrite(count: clippedPairs.count, stageIDs: stageIDs)
+        guard writeStageIDs.count == clippedPairs.count else { return false }
 
-        var args = [UInt8](repeating: 0, count: 3 + clipped.count * 7)
+        var args = [UInt8](repeating: 0, count: 3 + clippedPairs.count * 7)
         args[0] = 0x01
         args[1] = writeStageIDs[activeClamped]
-        args[2] = UInt8(clipped.count)
+        args[2] = UInt8(clippedPairs.count)
         var off = 3
-        for (i, dpi) in clipped.enumerated() {
+        for (i, pair) in clippedPairs.enumerated() {
             args[off] = writeStageIDs[i]
-            args[off + 1] = UInt8((dpi >> 8) & 0xFF)
-            args[off + 2] = UInt8(dpi & 0xFF)
-            args[off + 3] = UInt8((dpi >> 8) & 0xFF)
-            args[off + 4] = UInt8(dpi & 0xFF)
+            args[off + 1] = UInt8((pair.x >> 8) & 0xFF)
+            args[off + 2] = UInt8(pair.x & 0xFF)
+            args[off + 3] = UInt8((pair.y >> 8) & 0xFF)
+            args[off + 4] = UInt8(pair.y & 0xFF)
             off += 7
         }
 
@@ -319,21 +351,31 @@ extension BridgeClient {
         let activeRaw = Int(response[9])
         let count = max(1, min(5, Int(response[10])))
         var values: [Int] = []
+        var pairs: [DpiPair] = []
         var stageIDs: [UInt8] = []
 
         for index in 0..<count {
             let offset = 11 + (index * 7)
             guard offset + 6 < response.count else { break }
             let stageID = response[offset]
-            let dpi = (Int(response[offset + 1]) << 8) | Int(response[offset + 2])
+            let dpiX = (Int(response[offset + 1]) << 8) | Int(response[offset + 2])
+            let dpiY = (Int(response[offset + 3]) << 8) | Int(response[offset + 4])
             stageIDs.append(stageID)
-            values.append(DeviceProfiles.clampDPI(dpi, device: device))
+            values.append(DeviceProfiles.clampDPI(dpiX, device: device))
+            pairs.append(
+                DpiPair(
+                    x: DeviceProfiles.clampDPI(dpiX, device: device),
+                    y: DeviceProfiles.clampDPI(dpiY, device: device)
+                )
+            )
         }
 
         guard !values.isEmpty else { return nil }
 
         while values.count < count {
-            values.append(values.last ?? 800)
+            let fallback = pairs.last ?? DpiPair(x: values.last ?? 800, y: values.last ?? 800)
+            values.append(fallback.x)
+            pairs.append(fallback)
             stageIDs.append(stageIDs.last.map { $0 &+ 1 } ?? UInt8(stageIDs.count))
         }
 
@@ -345,6 +387,7 @@ extension BridgeClient {
         return (
             active: active,
             values: Array(values.prefix(count)),
+            pairs: Array(pairs.prefix(count)),
             stageIDs: Array(stageIDs.prefix(count))
         )
     }

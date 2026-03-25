@@ -197,6 +197,7 @@ extension DevicePatch {
         if let pollRate { parts.append("poll=\(pollRate)") }
         if let sleepTimeout { parts.append("sleep=\(sleepTimeout)") }
         if let dpiStages { parts.append("stages=\(dpiStages)") }
+        if let dpiStagePairs { parts.append("stagePairs=\(dpiStagePairs)") }
         if let activeStage { parts.append("active=\(activeStage)") }
         if let ledBrightness { parts.append("led=\(ledBrightness)") }
         if let ledRGB { parts.append("rgb=(\(ledRGB.r),\(ledRGB.g),\(ledRGB.b))") }

@@ -243,7 +243,18 @@ final class AppStateEditorController {
         isHydrating = true
         defer { isHydrating = false }
 
-        if let values = state.dpi_stages.values, !values.isEmpty {
+        if let pairs = state.dpi_stages.pairs, !pairs.isEmpty {
+            editorStore.editableStageCount = max(1, min(5, pairs.count))
+            let profileID = deviceStore.selectedDevice?.profile_id
+            for index in 0..<editorStore.editableStagePairs.count {
+                if index < pairs.count {
+                    editorStore.editableStagePairs[index] = DpiPair(
+                        x: DeviceProfiles.clampDPI(pairs[index].x, profileID: profileID),
+                        y: DeviceProfiles.clampDPI(pairs[index].y, profileID: profileID)
+                    )
+                }
+            }
+        } else if let values = state.dpi_stages.values, !values.isEmpty {
             editorStore.editableStageCount = max(1, min(5, values.count))
             let profileID = deviceStore.selectedDevice?.profile_id
             for index in 0..<editorStore.editableStageValues.count {
@@ -253,7 +264,9 @@ final class AppStateEditorController {
             }
         } else if let dpi = state.dpi?.x {
             editorStore.editableStageCount = 1
-            editorStore.editableStageValues[0] = DeviceProfiles.clampDPI(dpi, profileID: deviceStore.selectedDevice?.profile_id)
+            let clampedX = DeviceProfiles.clampDPI(dpi, profileID: deviceStore.selectedDevice?.profile_id)
+            let clampedY = DeviceProfiles.clampDPI(state.dpi?.y ?? dpi, profileID: deviceStore.selectedDevice?.profile_id)
+            editorStore.editableStagePairs[0] = DpiPair(x: clampedX, y: clampedY)
         }
 
         if let active = state.dpi_stages.active_stage {
@@ -262,6 +275,7 @@ final class AppStateEditorController {
         } else {
             editorStore.editableActiveStage = 1
         }
+        editorStore.normalizeExpandedXYStages()
 
         if let poll = state.poll_rate {
             editorStore.editablePollRate = poll

@@ -161,6 +161,7 @@ func mergedStateFromPassiveDpiEvent(
     guard let previous, let stageValues = previous.dpi_stages.values, !stageValues.isEmpty else { return nil }
 
     let resolvedStageValues: [Int]
+    let resolvedStagePairs: [DpiPair]?
     let resolvedActiveStage: Int?
     if stageValues.count == 1,
        stageValues[0] == previous.dpi?.x,
@@ -169,13 +170,28 @@ func mergedStateFromPassiveDpiEvent(
         // Keep that single-slot fallback state fresh until a full read seeds the
         // actual stage list.
         resolvedStageValues = [event.dpiX]
+        resolvedStagePairs = [DpiPair(x: event.dpiX, y: event.dpiY)]
         resolvedActiveStage = 0
     } else {
         resolvedStageValues = stageValues
+        let basePairs = BridgeClient.resolveDpiStagePairs(
+            values: stageValues,
+            pairs: nil,
+            fallbackPairs: previous.dpi_stages.pairs
+        )
         let matchingIndices = stageValues.enumerated().compactMap { index, value in
             value == event.dpiX ? index : nil
         }
         resolvedActiveStage = matchingIndices.count == 1 ? matchingIndices[0] : previous.dpi_stages.active_stage
+        if let resolvedActiveStage,
+           var basePairs,
+           resolvedActiveStage >= 0,
+           resolvedActiveStage < basePairs.count {
+            basePairs[resolvedActiveStage] = DpiPair(x: event.dpiX, y: event.dpiY)
+            resolvedStagePairs = basePairs
+        } else {
+            resolvedStagePairs = basePairs
+        }
     }
 
     return MouseState(
@@ -184,7 +200,7 @@ func mergedStateFromPassiveDpiEvent(
         battery_percent: previous.battery_percent,
         charging: previous.charging,
         dpi: DpiPair(x: event.dpiX, y: event.dpiY),
-        dpi_stages: DpiStages(active_stage: resolvedActiveStage, values: resolvedStageValues),
+        dpi_stages: DpiStages(active_stage: resolvedActiveStage, values: resolvedStageValues, pairs: resolvedStagePairs),
         poll_rate: previous.poll_rate,
         sleep_timeout: previous.sleep_timeout,
         device_mode: previous.device_mode,
@@ -443,7 +459,11 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
             battery_percent: nil,
             charging: nil,
             dpi: DpiPair(x: event.dpiX, y: event.dpiY),
-            dpi_stages: DpiStages(active_stage: resolvedActiveStage, values: knownStageValues),
+            dpi_stages: DpiStages(
+                active_stage: resolvedActiveStage,
+                values: knownStageValues,
+                pairs: knownStageValues?.count == 1 ? [DpiPair(x: event.dpiX, y: event.dpiY)] : nil
+            ),
             poll_rate: nil,
             sleep_timeout: nil,
             device_mode: nil,
@@ -557,14 +577,23 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
     private func updateCachedStateFromFastSnapshot(_ snapshot: DpiFastSnapshot, for deviceID: String) {
         guard let previous = cachedStateByDeviceID[deviceID], !snapshot.values.isEmpty else { return }
         let active = max(0, min(snapshot.values.count - 1, snapshot.active))
-        let currentDpiValue = snapshot.values[active]
+        let currentStagePairs = BridgeClient.resolveDpiStagePairs(
+            values: snapshot.values,
+            pairs: nil,
+            fallbackPairs: previous.dpi_stages.pairs
+        )
+        let currentDpi = currentStagePairs?[active] ?? DpiPair(x: snapshot.values[active], y: snapshot.values[active])
         let updated = MouseState(
             device: previous.device,
             connection: previous.connection,
             battery_percent: previous.battery_percent,
             charging: previous.charging,
-            dpi: DpiPair(x: currentDpiValue, y: currentDpiValue),
-            dpi_stages: DpiStages(active_stage: active, values: snapshot.values),
+            dpi: currentDpi,
+            dpi_stages: DpiStages(
+                active_stage: active,
+                values: snapshot.values,
+                pairs: currentStagePairs
+            ),
             poll_rate: previous.poll_rate,
             sleep_timeout: previous.sleep_timeout,
             device_mode: previous.device_mode,
