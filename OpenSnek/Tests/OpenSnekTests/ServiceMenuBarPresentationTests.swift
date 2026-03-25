@@ -58,7 +58,7 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
     func testBatteryIconUsesLowAccentWhenDeviceFallsBelowThreshold() {
         let icon = BatteryPresentation.icon(percent: 20, charging: false, thresholdRaw: 0x3F)
 
-        XCTAssertEqual(icon.symbolName, "battery.100percent")
+        XCTAssertEqual(icon.symbolName, "battery.25percent")
         XCTAssertEqual(icon.accent, .low)
     }
 
@@ -73,9 +73,8 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
         let lowState = makeBatteryState(percent: 20)
         let healthyState = makeBatteryState(percent: 60)
 
-        XCTAssertEqual(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: lowState)?.accent, .low)
-        XCTAssertEqual(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: lowState)?.symbolName, "battery.25percent")
-        XCTAssertNil(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: healthyState))
+        XCTAssertTrue(ServiceMenuBarPresentation.showsLowBatteryStatusGlyph(state: lowState))
+        XCTAssertFalse(ServiceMenuBarPresentation.showsLowBatteryStatusGlyph(state: healthyState))
     }
 
     private func makeBatteryState(percent: Int) -> MouseState {
