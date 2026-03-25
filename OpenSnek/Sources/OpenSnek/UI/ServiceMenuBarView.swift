@@ -218,7 +218,7 @@ struct ServiceMenuBarView: View {
         HStack(spacing: 8) {
             ForEach(0..<max(1, editorStore.editableStageCount), id: \.self) { index in
                 let stage = index + 1
-                let stageValue = editorStore.stageValue(index)
+                let stagePair = editorStore.stagePair(index)
                 let isSelected = editorStore.editableActiveStage == stage
                 Button {
                     if !isSelected {
@@ -226,7 +226,7 @@ struct ServiceMenuBarView: View {
                         editorStore.scheduleAutoApplyActiveStage()
                     }
                 } label: {
-                    Text("\(stageValue)")
+                    Text(stageDisplayText(stagePair))
                         .font(.system(size: 11, weight: .black, design: .rounded))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -261,30 +261,44 @@ struct ServiceMenuBarView: View {
     private var dpiSlider: some View {
         let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
         let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
+        let activePair = editorStore.stagePair(editorStore.compactActiveStageIndex)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Stage \(editorStore.editableActiveStage) DPI")
+                Text(editorStore.selectedDeviceSupportsIndependentXYDPI ? "Stage \(editorStore.editableActiveStage) X/Y DPI" : "Stage \(editorStore.editableActiveStage) DPI")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                 Spacer()
-                Text("\(editorStore.compactActiveStageValue)")
+                Text(editorStore.selectedDeviceSupportsIndependentXYDPI ? stageDisplayText(activePair) : "\(editorStore.compactActiveStageValue)")
                     .font(.system(size: 12, weight: .black, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            Slider(
-                value: Binding(
-                    get: { Double(min(editorStore.compactActiveStageValue, sliderRange.upperBound)) },
-                    set: { newValue in
-                        let quantized = Int(round(newValue / 100.0) * 100.0)
-                        editorStore.updateStage(editorStore.compactActiveStageIndex, value: quantized)
-                        editorStore.scheduleAutoApplyDpi()
+            if editorStore.selectedDeviceSupportsIndependentXYDPI {
+                Text("Split-axis stage edits are available in the main window.")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            } else {
+                Slider(
+                    value: Binding(
+                        get: { Double(min(editorStore.compactActiveStageValue, sliderRange.upperBound)) },
+                        set: { newValue in
+                            let quantized = Int(round(newValue / 100.0) * 100.0)
+                            editorStore.updateStage(editorStore.compactActiveStageIndex, value: quantized)
+                            editorStore.scheduleAutoApplyDpi()
+                        }
+                    ),
+                    in: sliderDoubleRange,
+                    onEditingChanged: { editing in
+                        editorStore.isEditingDpiControl = editing
                     }
-                ),
-                in: sliderDoubleRange,
-                onEditingChanged: { editing in
-                    editorStore.isEditingDpiControl = editing
-                }
-            )
+                )
+            }
         }
+    }
+
+    private func stageDisplayText(_ pair: DpiPair) -> String {
+        if editorStore.selectedDeviceSupportsIndependentXYDPI, pair.x != pair.y {
+            return "\(pair.x)/\(pair.y)"
+        }
+        return "\(pair.x)"
     }
 
     private func actionRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {

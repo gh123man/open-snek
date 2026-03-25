@@ -1237,14 +1237,23 @@ final class AppStateDeviceController {
             let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[device.id] ?? deviceStore.state
             guard let previous else { return }
             let active = max(0, min(fast.values.count - 1, fast.active))
-            let currentDpiValue = fast.values[active]
+            let currentStagePairs = BridgeClient.resolveDpiStagePairs(
+                values: fast.values,
+                pairs: nil,
+                fallbackPairs: previous.dpi_stages.pairs
+            )
+            let currentDpi = currentStagePairs?[active] ?? DpiPair(x: fast.values[active], y: fast.values[active])
             let updated = MouseState(
                 device: previous.device,
                 connection: previous.connection,
                 battery_percent: previous.battery_percent,
                 charging: previous.charging,
-                dpi: DpiPair(x: currentDpiValue, y: currentDpiValue),
-                dpi_stages: DpiStages(active_stage: active, values: fast.values),
+                dpi: currentDpi,
+                dpi_stages: DpiStages(
+                    active_stage: active,
+                    values: fast.values,
+                    pairs: currentStagePairs
+                ),
                 poll_rate: previous.poll_rate,
                 sleep_timeout: previous.sleep_timeout,
                 device_mode: previous.device_mode,

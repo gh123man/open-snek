@@ -81,6 +81,21 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(parsed?.active, 1)
         XCTAssertEqual(parsed?.count, 3)
         XCTAssertEqual(parsed?.values.prefix(3), [800, 1600, 3200])
+        XCTAssertEqual(parsed?.pairs.prefix(3), [DpiPair(x: 800, y: 800), DpiPair(x: 1600, y: 1600), DpiPair(x: 3200, y: 3200)])
+    }
+
+    func testBuildDpiStagesRoundTripPreservesIndependentXYPairs() {
+        let payload = BLEVendorProtocol.buildDpiStagePayload(
+            active: 1,
+            count: 2,
+            pairs: [DpiPair(x: 1600, y: 2000), DpiPair(x: 3200, y: 3600)],
+            marker: 0x03,
+            stageIDs: [0x07, 0x09]
+        )
+        let parsed = BLEVendorProtocol.parseDpiStages(blob: payload)
+        XCTAssertEqual(parsed?.active, 1)
+        XCTAssertEqual(parsed?.values, [1600, 3200])
+        XCTAssertEqual(parsed?.pairs, [DpiPair(x: 1600, y: 2000), DpiPair(x: 3200, y: 3600)])
     }
 
     func testMergedStageSlotsSingleModeMirrors() {

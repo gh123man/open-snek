@@ -116,10 +116,12 @@ public struct DpiPair: Codable, Hashable, Sendable {
 public struct DpiStages: Codable, Hashable, Sendable {
     public let active_stage: Int?
     public let values: [Int]?
+    public let pairs: [DpiPair]?
 
-    public init(active_stage: Int?, values: [Int]?) {
+    public init(active_stage: Int?, values: [Int]?, pairs: [DpiPair]? = nil) {
         self.active_stage = active_stage
-        self.values = values
+        self.values = values ?? pairs?.map(\.x)
+        self.pairs = pairs
     }
 }
 
@@ -225,7 +227,22 @@ public extension MouseState {
             dpi: dpi ?? previous.dpi,
             dpi_stages: DpiStages(
                 active_stage: dpi_stages.active_stage ?? previous.dpi_stages.active_stage,
-                values: dpi_stages.values ?? previous.dpi_stages.values
+                values: dpi_stages.values ?? previous.dpi_stages.values,
+                pairs: {
+                    if let pairs = dpi_stages.pairs {
+                        return pairs
+                    }
+                    if let values = dpi_stages.values {
+                        if let previousPairs = previous.dpi_stages.pairs,
+                           previousPairs.count == values.count {
+                            return zip(values, previousPairs).map { value, previousPair in
+                                DpiPair(x: value, y: previousPair.y)
+                            }
+                        }
+                        return values.map { DpiPair(x: $0, y: $0) }
+                    }
+                    return previous.dpi_stages.pairs
+                }()
             ),
             poll_rate: poll_rate ?? previous.poll_rate,
             sleep_timeout: sleep_timeout ?? previous.sleep_timeout,
@@ -466,6 +483,7 @@ public struct DevicePatch: Sendable, Hashable, Codable {
     public var scrollAcceleration: Bool? = nil
     public var scrollSmartReel: Bool? = nil
     public var dpiStages: [Int]? = nil
+    public var dpiStagePairs: [DpiPair]? = nil
     public var activeStage: Int? = nil
     public var ledBrightness: Int? = nil
     public var ledRGB: RGBPatch? = nil
@@ -483,6 +501,7 @@ public struct DevicePatch: Sendable, Hashable, Codable {
         scrollAcceleration: Bool? = nil,
         scrollSmartReel: Bool? = nil,
         dpiStages: [Int]? = nil,
+        dpiStagePairs: [DpiPair]? = nil,
         activeStage: Int? = nil,
         ledBrightness: Int? = nil,
         ledRGB: RGBPatch? = nil,
@@ -499,6 +518,7 @@ public struct DevicePatch: Sendable, Hashable, Codable {
         self.scrollAcceleration = scrollAcceleration
         self.scrollSmartReel = scrollSmartReel
         self.dpiStages = dpiStages
+        self.dpiStagePairs = dpiStagePairs
         self.activeStage = activeStage
         self.ledBrightness = ledBrightness
         self.ledRGB = ledRGB
@@ -520,6 +540,7 @@ public extension DevicePatch {
             scrollAcceleration: newer.scrollAcceleration ?? scrollAcceleration,
             scrollSmartReel: newer.scrollSmartReel ?? scrollSmartReel,
             dpiStages: newer.dpiStages ?? dpiStages,
+            dpiStagePairs: newer.dpiStagePairs ?? dpiStagePairs,
             activeStage: newer.activeStage ?? activeStage,
             ledBrightness: newer.ledBrightness ?? ledBrightness,
             ledRGB: newer.ledRGB ?? ledRGB,
@@ -528,6 +549,15 @@ public extension DevicePatch {
             buttonBinding: newer.buttonBinding ?? buttonBinding,
             usbButtonProfileAction: newer.usbButtonProfileAction ?? usbButtonProfileAction
         )
+    }
+}
+
+public extension DevicePatch {
+    var resolvedDpiStagePairs: [DpiPair]? {
+        if let dpiStagePairs {
+            return dpiStagePairs
+        }
+        return dpiStages?.map { DpiPair(x: $0, y: $0) }
     }
 }
 

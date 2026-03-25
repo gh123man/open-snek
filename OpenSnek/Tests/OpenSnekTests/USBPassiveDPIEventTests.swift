@@ -405,8 +405,10 @@ final class USBPassiveDPIEventTests: XCTestCase {
         let expected: BridgeClient.BluetoothExpectedDpiState = (
             active: 3,
             values: [800, 900, 1000, 1100, 1200],
+            pairs: [800, 900, 1000, 1100, 1200].map { DpiPair(x: $0, y: $0) },
             previousActive: 1,
             previousValues: [800, 900, 1000, 1100, 1200],
+            previousPairs: [800, 900, 1000, 1100, 1200].map { DpiPair(x: $0, y: $0) },
             expiresAt: Date(timeIntervalSince1970: 1_773_600_020),
             remainingMasks: 4
         )
@@ -415,6 +417,7 @@ final class USBPassiveDPIEventTests: XCTestCase {
             BridgeClient.shouldMaskBluetoothExpectedRead(
                 parsedActive: 1,
                 parsedValues: [800, 900, 1000, 1100, 1200],
+                parsedPairs: [800, 900, 1000, 1100, 1200].map { DpiPair(x: $0, y: $0) },
                 expected: expected
             )
         )
@@ -422,6 +425,7 @@ final class USBPassiveDPIEventTests: XCTestCase {
             BridgeClient.shouldMaskBluetoothExpectedRead(
                 parsedActive: 4,
                 parsedValues: [800, 900, 1000, 1100, 1200],
+                parsedPairs: [800, 900, 1000, 1100, 1200].map { DpiPair(x: $0, y: $0) },
                 expected: expected
             )
         )
@@ -431,8 +435,10 @@ final class USBPassiveDPIEventTests: XCTestCase {
         let expected: BridgeClient.BluetoothExpectedDpiState = (
             active: 2,
             values: [800, 900, 1000, 1100, 1200],
+            pairs: [800, 900, 1000, 1100, 1200].map { DpiPair(x: $0, y: $0) },
             previousActive: nil,
             previousValues: nil,
+            previousPairs: nil,
             expiresAt: Date(timeIntervalSince1970: 1_773_600_021),
             remainingMasks: 4
         )
@@ -441,6 +447,7 @@ final class USBPassiveDPIEventTests: XCTestCase {
             BridgeClient.shouldMaskBluetoothExpectedRead(
                 parsedActive: 1,
                 parsedValues: [800, 900, 1000, 1100, 1200],
+                parsedPairs: [800, 900, 1000, 1100, 1200].map { DpiPair(x: $0, y: $0) },
                 expected: expected
             )
         )
@@ -673,7 +680,14 @@ final class USBPassiveDPIEventTests: XCTestCase {
         let event = PassiveDPIEvent(deviceID: device.id, dpiX: 1100, dpiY: 1100, observedAt: Date())
         let expectationFromSnapshot = BridgeClient.bluetoothPassiveDpiExpectation(
             event: event,
-            snapshot: (active: 0, count: 5, slots: [800, 900, 1000, 1100, 1500], stageIDs: [1, 2, 3, 4, 5], marker: 0x03),
+            snapshot: (
+                active: 0,
+                count: 5,
+                slots: [800, 900, 1000, 1100, 1500],
+                pairs: [800, 900, 1000, 1100, 1500].map { DpiPair(x: $0, y: $0) },
+                stageIDs: [1, 2, 3, 4, 5],
+                marker: 0x03
+            ),
             state: nil
         )
         let expectationFromState = BridgeClient.bluetoothPassiveDpiExpectation(

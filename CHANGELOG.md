@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 - The README support matrix and the app's empty-state supported-device list now explicitly include the wired Basilisk V3, with the app surfacing it as a mapped supported profile rather than leaving it implied.
 
 ### Fixed
+- DPI stage editing on the Basilisk V3 Pro and Basilisk V3 35K now preserves and writes independent X/Y DPI values instead of forcing both axes to the same number.
 - USB button-profile support on the Basilisk V3 Pro and Basilisk V3 35K now follows the same five-slot model: slot 1 is the live/base profile and slots 2 through 5 are stored button layouts.
 - The macOS button-remap UI now uses an explicit `Profiles` load/store workflow with local saved profiles, onboard slot loading, slot-to-profile name matching, and direct editing of the live/base profile.
 - Button remap edits now auto-apply only the slot you changed, keep the editor stable during readback, and show profile-operation busy state only for full profile loads and saves.

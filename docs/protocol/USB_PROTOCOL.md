@@ -226,7 +226,7 @@ Client note:
 - Always validate the echoed `profile` and `slot` bytes before decoding a `0x02:0x8C` read. This device will otherwise yield stale-looking success frames that can be mistaken for additional slots.
 - OpenSnek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
 - On the observed V3 Pro clutch slot (`0x0F`), the default block is not a simple mouse/keyboard payload; preserve `06 05 05 01 90 01 90` when restoring the native clutch behavior.
-- For the observed V3 Pro clutch payload `06 05 05 <xhi> <xlo> <yhi> <ylo>`, the trailing four bytes are configurable DPI values. OpenSnek currently writes one user-facing DPI scalar and mirrors it to X/Y.
+- For the observed V3 Pro / 35K DPI payloads, the trailing four bytes are configurable X/Y DPI values. OpenSnek now preserves and writes independent X/Y values on the Basilisk V3 Pro and Basilisk V3 35K instead of collapsing them to a single scalar.
 - The same `DPI Clutch` block was also written/read back successfully on other writable Basilisk USB slots (`0x04` on both the V3 Pro and 35K), so OpenSnek exposes `DPI Clutch` as a remap action on both supported Basilisk USB profiles.
 - On the attached Basilisk V3 35K (`0x00CB`) on March 24, 2026, the native clutch slot `0x0F` accepted both a right-click remap and the same `06 05 05 03 20 03 20` 800-DPI clutch payload on persistent profile `0x01`, and slot `0x04` also accepted the `DPI Clutch` payload on direct/live profile `0x00`.
 - Preserve the observed 35K native clutch restore block `06 01 05 01 90 01 90` when restoring slot `0x0F`; the 35K default differs from the V3 Pro default even though both devices accept the same `DPI Clutch` action payload.
