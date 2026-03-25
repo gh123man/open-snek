@@ -638,7 +638,7 @@ public enum DeviceProfiles {
         switch profileID {
         case .basiliskV3Pro, .basiliskV335K:
             return true
-        case .basiliskV3XHyperspeed, nil:
+        case .basiliskV3XHyperspeed, .basiliskV3, nil:
             return false
         }
     }
