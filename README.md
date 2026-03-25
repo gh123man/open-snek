@@ -55,15 +55,18 @@ If macOS asks for permissions:
 
 Support is transport-specific. A mouse may be supported over USB, Bluetooth, or both, depending on what has been captured, tested, and validated in the app.
 
-Current validated support:
+Status key:
+- `Validated` = supported and locally capture/test validated in OpenSnek
+- `Mapped` = supported through a shipped profile, but not yet locally validated on OpenSnek hardware
+- `Not yet` = the transport exists on the hardware but OpenSnek does not support it yet
+- `No` = that transport is not available on the device
 
-Status key: `Yes` = supported and validated, `Not yet` = the transport exists on the hardware but OpenSnek does not support it yet, `No` = that transport is not available on the device.
-
-| Device | USB | Bluetooth |
-|---|---|---|
-| Basilisk V3 X HyperSpeed | ✅ | ✅ |
-| Basilisk V3 Pro | ✅ | ✅ |
-| Basilisk V3 35K | ✅ | - |
+| Device | USB | Bluetooth | Notes |
+|---|---|---|---|
+| Basilisk V3 X HyperSpeed | Validated | Validated | |
+| Basilisk V3 | Mapped | No | OpenRazer-backed USB profile, modeled after the Basilisk V3 35K with a `26,000` DPI ceiling |
+| Basilisk V3 Pro | Validated | Validated | |
+| Basilisk V3 35K | Validated | No | |
 
 Not every feature is fully supported on every listed transport yet. Some controls and readback paths are still partial while capture, testing, and validation continue.
 

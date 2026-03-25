@@ -315,7 +315,8 @@ struct ContentView: View {
                 return SupportedDeviceRow(
                     id: first.id.rawValue,
                     name: first.productName,
-                    transports: transports
+                    transports: transports,
+                    supportBadge: profiles.allSatisfy(\.isLocallyValidated) ? nil : "Mapped"
                 )
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -411,6 +412,16 @@ private struct SupportedDeviceRowView: View {
                 )
             }
 
+            if let supportBadge = row.supportBadge {
+                Pill(
+                    text: supportBadge,
+                    color: Color(hex: 0xF2B95C),
+                    fontSize: 10,
+                    horizontalPadding: 8,
+                    verticalPadding: 4
+                )
+            }
+
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
@@ -421,6 +432,7 @@ private struct SupportedDeviceRow: Identifiable {
     let id: String
     let name: String
     let transports: [DeviceTransportKind]
+    let supportBadge: String?
 }
 
 private struct NoticeItem {
