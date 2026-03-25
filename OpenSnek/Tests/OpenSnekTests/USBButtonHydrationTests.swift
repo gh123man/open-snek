@@ -132,24 +132,64 @@ final class USBButtonHydrationTests: XCTestCase {
         XCTAssertEqual(block, [0x0E, 0x03, 0x68, 0x00, 0x14, 0x00, 0x00])
     }
 
-    func testBasiliskV335KWheelTiltDefaultBlockMapsToDefaultKind() {
-        let block: [UInt8] = [0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00]
+    func testWheelTiltDefaultsSeedHorizontalScrollDrafts() {
+        let leftDraft = ButtonBindingSupport.defaultButtonBinding(for: 52, profileID: .basiliskV3Pro)
+        let rightDraft = ButtonBindingSupport.defaultButtonBinding(for: 53, profileID: .basiliskV3Pro)
+
+        XCTAssertEqual(leftDraft.kind, .scrollLeft)
+        XCTAssertEqual(rightDraft.kind, .scrollRight)
+    }
+
+    func testBasiliskV335KWheelTiltLeftDefaultBlockMapsToScrollLeftKind() {
+        let block: [UInt8] = [0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00]
         let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
             slot: 52,
             functionBlock: block,
             profileID: .basiliskV335K
         )
-        XCTAssertEqual(draft?.kind, .default)
+        XCTAssertEqual(draft?.kind, .scrollLeft)
     }
 
-    func testBasiliskV3ProWheelTiltDefaultBlockMapsToDefaultKind() {
-        let block: [UInt8] = [0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00]
+    func testBasiliskV3ProWheelTiltRightDefaultBlockMapsToScrollRightKind() {
+        let block: [UInt8] = [0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00]
         let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
-            slot: 52,
+            slot: 53,
             functionBlock: block,
             profileID: .basiliskV3Pro
         )
-        XCTAssertEqual(draft?.kind, .default)
+        XCTAssertEqual(draft?.kind, .scrollRight)
+    }
+
+    func testWheelTiltDefaultBlocksRestoreHorizontalScroll() {
+        XCTAssertEqual(
+            ButtonBindingSupport.defaultUSBFunctionBlock(for: 52, profileID: .basiliskV3Pro),
+            [0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00]
+        )
+        XCTAssertEqual(
+            ButtonBindingSupport.defaultUSBFunctionBlock(for: 53, profileID: .basiliskV335K),
+            [0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00]
+        )
+    }
+
+    func testBuildUSBFunctionBlockSupportsHorizontalScrollBindings() {
+        let leftBlock = ButtonBindingSupport.buildUSBFunctionBlock(
+            slot: 52,
+            kind: .scrollLeft,
+            hidKey: 4,
+            turboEnabled: false,
+            turboRate: 0x8E,
+            profileID: .basiliskV3Pro
+        )
+        let rightBlock = ButtonBindingSupport.buildUSBFunctionBlock(
+            slot: 53,
+            kind: .scrollRight,
+            hidKey: 4,
+            turboEnabled: false,
+            turboRate: 0x8E,
+            profileID: .basiliskV3Pro
+        )
+        XCTAssertEqual(leftBlock, [0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00])
+        XCTAssertEqual(rightBlock, [0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00])
     }
 
     func testBasiliskV3ProClutchDefaultBlockMapsToDefaultKind() {

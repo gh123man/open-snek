@@ -540,6 +540,8 @@ public enum ButtonBindingKind: String, CaseIterable, Identifiable, Codable, Send
     case middleClick = "middle_click"
     case scrollUp = "scroll_up"
     case scrollDown = "scroll_down"
+    case scrollLeft = "scroll_left"
+    case scrollRight = "scroll_right"
     case mouseBack = "mouse_back"
     case mouseForward = "mouse_forward"
     case keyboardSimple = "keyboard_simple"
@@ -557,6 +559,8 @@ public enum ButtonBindingKind: String, CaseIterable, Identifiable, Codable, Send
         case .middleClick: return "Middle Click"
         case .scrollUp: return "Scroll Up"
         case .scrollDown: return "Scroll Down"
+        case .scrollLeft: return "Scroll Left"
+        case .scrollRight: return "Scroll Right"
         case .mouseBack: return "Mouse Back"
         case .mouseForward: return "Mouse Forward"
         case .keyboardSimple: return "Keyboard Key"
@@ -566,7 +570,7 @@ public enum ButtonBindingKind: String, CaseIterable, Identifiable, Codable, Send
 
     public var supportsTurbo: Bool {
         switch self {
-        case .leftClick, .rightClick, .middleClick, .scrollUp, .scrollDown, .mouseBack, .mouseForward, .keyboardSimple:
+        case .leftClick, .rightClick, .middleClick, .scrollUp, .scrollDown, .scrollLeft, .scrollRight, .mouseBack, .mouseForward, .keyboardSimple:
             return true
         case .default, .dpiCycle, .dpiClutch, .clearLayer:
             return false

@@ -132,6 +132,16 @@ final class BLEVendorProtocolTests: XCTestCase {
         XCTAssertEqual(Array(payload), [0x01, 0x0A, 0x00, 0x01, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00])
     }
 
+    func testButtonPayloadScrollLeft() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x34, kind: .scrollLeft, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x34, 0x00, 0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadScrollRight() {
+        let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x35, kind: .scrollRight, hidKey: nil)
+        XCTAssertEqual(Array(payload), [0x01, 0x35, 0x00, 0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00])
+    }
+
     func testButtonPayloadMouseBack() {
         let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x05, kind: .mouseBack, hidKey: nil)
         XCTAssertEqual(Array(payload), [0x01, 0x05, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00])
@@ -166,6 +176,13 @@ final class BLEVendorProtocolTests: XCTestCase {
     func testButtonPayloadDefaultSlot4UsesBackRestore() {
         let payload = BLEVendorProtocol.buildButtonPayload(slot: 0x04, kind: .default, hidKey: nil)
         XCTAssertEqual(Array(payload), [0x01, 0x04, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func testButtonPayloadDefaultWheelTiltSlotsRestoreHorizontalScroll() {
+        let leftPayload = BLEVendorProtocol.buildButtonPayload(slot: 0x34, kind: .default, hidKey: nil)
+        let rightPayload = BLEVendorProtocol.buildButtonPayload(slot: 0x35, kind: .default, hidKey: nil)
+        XCTAssertEqual(Array(leftPayload), [0x01, 0x34, 0x00, 0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00])
+        XCTAssertEqual(Array(rightPayload), [0x01, 0x35, 0x00, 0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00])
     }
 
     func testButtonPayloadDefaultSlot60UsesCaptureBackedDpiRestore() {

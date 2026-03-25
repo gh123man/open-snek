@@ -2,6 +2,9 @@ import Foundation
 
 public enum ButtonBindingSupport {
     public static let defaultBasiliskDPIClutchDPI = 400
+    // Wheel-tilt remap captures use the 0x68/0x69 mouse-function pair for horizontal scroll.
+    private static let horizontalScrollLeftButtonID: UInt8 = 0x68
+    private static let horizontalScrollRightButtonID: UInt8 = 0x69
 
     private static func basiliskDPIClutchBlock(
         dpi: Int = defaultBasiliskDPIClutchDPI,
@@ -40,8 +43,13 @@ public enum ButtonBindingSupport {
     public static func defaultButtonBinding(for slot: Int, profileID: DeviceProfileID? = nil) -> ButtonBindingDraft {
         let fallback = ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
         let visibleSlots = buttonSlotDescriptors(for: profileID)
-        guard visibleSlots.contains(where: { $0.slot == slot }) else { return fallback }
-        return fallback
+        guard let descriptor = visibleSlots.first(where: { $0.slot == slot }) else { return fallback }
+        switch descriptor.defaultKind {
+        case .scrollLeft, .scrollRight:
+            return ButtonBindingDraft(kind: descriptor.defaultKind, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
+        default:
+            return fallback
+        }
     }
 
     public static func semanticDefaultButtonBinding(
@@ -237,6 +245,8 @@ public enum ButtonBindingSupport {
         case 0x05: return .mouseForward
         case 0x09: return .scrollUp
         case 0x0A: return .scrollDown
+        case horizontalScrollLeftButtonID: return .scrollLeft
+        case horizontalScrollRightButtonID: return .scrollRight
         default: return nil
         }
     }
@@ -250,6 +260,8 @@ public enum ButtonBindingSupport {
         case .mouseForward: return 0x05
         case .scrollUp: return 0x09
         case .scrollDown: return 0x0A
+        case .scrollLeft: return horizontalScrollLeftButtonID
+        case .scrollRight: return horizontalScrollRightButtonID
         default: return nil
         }
     }
@@ -304,9 +316,10 @@ public enum ButtonBindingSupport {
             return [0x06, 0x01, 0x05, 0x01, 0x90, 0x01, 0x90]
         case 15 where profileID == .basiliskV3Pro:
             return basiliskDPIClutchBlock(profileID: .basiliskV3Pro)
-        case 52 where usesExtendedBasiliskUSBReadLayout(profileID),
-             53 where usesExtendedBasiliskUSBReadLayout(profileID):
-            return [0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00]
+        case 52 where usesExtendedBasiliskUSBReadLayout(profileID):
+            return [0x01, 0x01, horizontalScrollLeftButtonID, 0x00, 0x00, 0x00, 0x00]
+        case 53 where usesExtendedBasiliskUSBReadLayout(profileID):
+            return [0x01, 0x01, horizontalScrollRightButtonID, 0x00, 0x00, 0x00, 0x00]
         case 96:
             switch profileID {
             case .basiliskV3, .basiliskV335K:
