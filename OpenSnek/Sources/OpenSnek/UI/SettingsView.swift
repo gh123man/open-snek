@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(DeveloperRuntimeOptions.pollingEnabledDefaultsKey) private var developerPollingEnabled = true
     @AppStorage(DeveloperRuntimeOptions.passiveHIDUpdatesEnabledDefaultsKey) private var developerPassiveHIDUpdatesEnabled = true
     @State private var showsDiagnosticsSheet = false
+    @State private var showsLocalStorageResetConfirmation = false
 
     private var selectedLevel: Binding<AppLogLevel> {
         Binding(
@@ -69,6 +70,30 @@ struct SettingsView: View {
                 .disabled(!runtimeStore.backgroundServiceEnabled)
 
                 if let message = runtimeStore.compactStatusMessage ?? runtimeStore.serviceStatusMessage {
+                    Text(message)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Reset App Data") {
+                Text("Wipe OpenSnek's saved preferences, cached device settings, background-service state, and local logs. Relaunch the app after resetting.")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("Wipe Local Storage", role: .destructive) {
+                        showsLocalStorageResetConfirmation = true
+                    }
+                    .disabled(runtimeStore.isResettingLocalStorage)
+
+                    if runtimeStore.isResettingLocalStorage {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if let message = runtimeStore.localStorageResetMessage {
                     Text(message)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(.secondary)
@@ -160,6 +185,20 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showsDiagnosticsSheet) {
             IssueDiagnosticsSheet(payload: deviceStore.githubIssueDiagnosticsPayload())
+        }
+        .alert("Wipe OpenSnek local storage?", isPresented: $showsLocalStorageResetConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Wipe", role: .destructive) {
+                Task {
+                    let didReset = await runtimeStore.resetAllLocalStorage()
+                    guard didReset else { return }
+                    logLevelRawValue = AppLog.defaultLevel.rawValue
+                    developerPollingEnabled = true
+                    developerPassiveHIDUpdatesEnabled = true
+                }
+            }
+        } message: {
+            Text("This removes saved preferences, cached device settings, launch-at-login state, and local logs for OpenSnek.")
         }
         .onAppear {
             AppLog.updateLevel(AppLogLevel(rawValue: logLevelRawValue) ?? AppLog.defaultLevel, resetLog: false)

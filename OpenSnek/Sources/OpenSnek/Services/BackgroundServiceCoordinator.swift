@@ -20,16 +20,19 @@ final class BackgroundServiceCoordinator {
     }
 
     private let defaults: UserDefaults
+    private let defaultsDomainName: String?
     private let fileManager: FileManager
     private let launchAgentsDirectoryURL: URL?
     private var serviceHost: BackgroundServiceHost?
 
     init(
         defaults: UserDefaults = .standard,
+        defaultsDomainName: String? = Bundle.main.bundleIdentifier,
         fileManager: FileManager = .default,
         launchAgentsDirectoryURL: URL? = nil
     ) {
         self.defaults = defaults
+        self.defaultsDomainName = defaultsDomainName
         self.fileManager = fileManager
         self.launchAgentsDirectoryURL = launchAgentsDirectoryURL
         self.defaults.register(defaults: [
@@ -257,6 +260,28 @@ final class BackgroundServiceCoordinator {
         defaults.removeObject(forKey: Self.endpointDefaultsKey)
         defaults.removeObject(forKey: Self.portDefaultsKey)
         defaults.removeObject(forKey: Self.pidDefaultsKey)
+    }
+
+    func resetPersistentState() throws {
+        if isCurrentProcessService {
+            stopCurrentServiceHostIfNeeded()
+            defaults.removeObject(forKey: Self.endpointDefaultsKey)
+            defaults.removeObject(forKey: Self.portDefaultsKey)
+            defaults.removeObject(forKey: Self.pidDefaultsKey)
+        } else {
+            stopServiceProcess()
+        }
+
+        try removeLaunchAgent()
+
+        if let defaultsDomainName, !defaultsDomainName.isEmpty {
+            defaults.removePersistentDomain(forName: defaultsDomainName)
+        } else {
+            for key in defaults.dictionaryRepresentation().keys {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        defaults.synchronize()
     }
 
     var isServiceProcessAlive: Bool {

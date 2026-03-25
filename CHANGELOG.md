@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 - OpenSnek now has a saved button-profile library. Button layouts can be named, reused across devices, loaded into the live editor, and written into onboard mouse storage slots.
 - OpenSnek now recognizes the wired Razer Basilisk V3 (`USB PID 0x0099`) with an OpenRazer-backed USB device profile. The new profile currently follows the Basilisk V3 35K USB layout for button remap slots, lighting zones, passive DPI listener matching, and onboard-profile count, while capping DPI edits/readback at the Basilisk V3's `26,000` DPI window.
 - The README support matrix and the app's empty-state supported-device list now explicitly include the wired Basilisk V3, with the app surfacing it as a mapped supported profile rather than leaving it implied.
+- Settings now include a destructive `Wipe Local Storage` action that clears OpenSnek's saved preferences, cached device edits, background-service state, launch-at-login artifact, and local log files so users can reset the app to a clean local state without manually digging through `UserDefaults` or `~/Library` paths.
 
 ### Fixed
 - DPI stage editing on the Basilisk V3 Pro and Basilisk V3 35K now preserves and writes independent X/Y DPI values instead of forcing both axes to the same number.

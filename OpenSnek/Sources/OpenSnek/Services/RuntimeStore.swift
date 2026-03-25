@@ -11,6 +11,8 @@ final class RuntimeStore {
     var hidAccessStatus: HIDAccessStatus = .unknown()
     var permissionStatusMessage: String?
     var isResettingPermissions = false
+    var localStorageResetMessage: String?
+    var isResettingLocalStorage = false
     var statusItemTransientDpi: Int?
     var openSettingsRequestCount = 0
     @ObservationIgnored let statusItemDpiDisplayDuration: TimeInterval
@@ -86,6 +88,10 @@ final class RuntimeStore {
 
     func resetAllPermissions() async {
         await runtimeController.resetAllPermissions()
+    }
+
+    func resetAllLocalStorage() async -> Bool {
+        await runtimeController.resetAllLocalStorage()
     }
 
     func openFullAppFromService() {

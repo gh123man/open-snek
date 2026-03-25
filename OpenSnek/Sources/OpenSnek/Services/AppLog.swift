@@ -57,6 +57,12 @@ final class AppLog: @unchecked Sendable {
     static let shared = AppLog()
     static let levelDefaultsKey = "openSnek.logLevel"
     static let defaultLevel: AppLogLevel = .warning
+    static let mainLogFileName = "open-snek.log"
+
+    static var logsDirectoryURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/OpenSnek", isDirectory: true)
+    }
 
     private let queue = DispatchQueue(label: "open.snek.log", qos: .utility)
     private let logger = Logger(subsystem: "open.snek.mac", category: "runtime")
@@ -64,10 +70,9 @@ final class AppLog: @unchecked Sendable {
     private let maxBytes: Int64 = 2_000_000
 
     private init() {
-        let logsDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/OpenSnek", isDirectory: true)
+        let logsDir = Self.logsDirectoryURL
         try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
-        fileURL = logsDir.appendingPathComponent("open-snek.log")
+        fileURL = logsDir.appendingPathComponent(Self.mainLogFileName)
         if !FileManager.default.fileExists(atPath: fileURL.path) {
             FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         }
@@ -96,6 +101,28 @@ final class AppLog: @unchecked Sendable {
 
     static func clear() {
         shared.resetFileSynchronously()
+    }
+
+    static func clearAllFiles(
+        fileManager: FileManager = .default,
+        logsDirectoryURL: URL = logsDirectoryURL
+    ) throws {
+        if fileManager.fileExists(atPath: logsDirectoryURL.path) {
+            let contents = try fileManager.contentsOfDirectory(
+                at: logsDirectoryURL,
+                includingPropertiesForKeys: nil
+            )
+            for entry in contents {
+                try fileManager.removeItem(at: entry)
+            }
+        } else {
+            try fileManager.createDirectory(at: logsDirectoryURL, withIntermediateDirectories: true)
+        }
+
+        _ = fileManager.createFile(
+            atPath: logsDirectoryURL.appendingPathComponent(mainLogFileName).path,
+            contents: nil
+        )
     }
 
     static func event(_ source: String, _ message: String) {

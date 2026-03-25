@@ -104,6 +104,37 @@ final class AppStateRuntimeController {
         await refreshHIDAccessStatus(forceRefresh: true)
     }
 
+    func resetAllLocalStorage() async -> Bool {
+        guard !runtimeStore.isResettingLocalStorage else { return false }
+
+        runtimeStore.isResettingLocalStorage = true
+        defer { runtimeStore.isResettingLocalStorage = false }
+
+        do {
+            try AppLocalStorageResetter(
+                backgroundServiceCoordinator: environment.serviceCoordinator
+            ).reset()
+
+            environment.backend = LocalBridgeBackend.shared
+            await restartBackendStateUpdates()
+            isBackendReady = true
+            await refreshHIDAccessStatus(forceRefresh: false)
+            await deviceController.refreshDevices()
+
+            runtimeStore.backgroundServiceEnabled = false
+            runtimeStore.launchAtStartupEnabled = false
+            runtimeStore.permissionStatusMessage = nil
+            runtimeStore.serviceStatusMessage = nil
+            runtimeStore.localStorageResetMessage = "Local storage cleared. Relaunch OpenSnek before reconnecting devices."
+            transientStatusUntil = nil
+            deviceStore.errorMessage = nil
+            return true
+        } catch {
+            runtimeStore.localStorageResetMessage = "Local storage reset failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     func setCompactInteraction(until date: Date?) {
         compactInteractionUntil = date
     }
