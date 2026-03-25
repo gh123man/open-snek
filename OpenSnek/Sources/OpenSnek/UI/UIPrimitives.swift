@@ -219,3 +219,63 @@ extension OpenSnekCore.RGBColor {
         return next
     }
 }
+
+struct DpiSliderScaleMarkers: View {
+    let profileID: DeviceProfileID?
+    var markerColor: Color
+    var compact: Bool = false
+
+    private var markers: [DpiSliderScaleMarker] {
+        let values = DeviceProfiles.sliderScaleMarkerValues(for: profileID)
+        guard !values.isEmpty else {
+            return [DpiSliderScaleMarker(value: DeviceProfiles.minimumDPI)]
+        }
+        return values.map { DpiSliderScaleMarker(value: $0) }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                ForEach(markers) { marker in
+                    let x = markerX(for: marker.value, width: proxy.size.width)
+                    VStack(spacing: compact ? 1 : 2) {
+                        Capsule()
+                            .fill(markerColor)
+                            .frame(width: 1.5, height: compact ? 5 : 7)
+                        Text(shortLabel(for: marker.value))
+                            .font(.system(size: compact ? 9 : 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(markerColor)
+                    }
+                    .position(x: x, y: compact ? 8 : 10)
+                }
+            }
+        }
+        .frame(height: compact ? 18 : 22)
+        .allowsHitTesting(false)
+    }
+
+    private func markerX(for value: Int, width: CGFloat) -> CGFloat {
+        let fraction = DeviceProfiles.dpiSliderPosition(for: value, profileID: profileID)
+        let rawX = width * fraction
+        let edgeInset: CGFloat = compact ? 12 : 14
+        return min(max(rawX, edgeInset), max(edgeInset, width - edgeInset))
+    }
+
+    private func shortLabel(for value: Int) -> String {
+        if value >= 1_000, value.isMultiple(of: 1_000) {
+            return "\(value / 1_000)K"
+        }
+        if value >= 1_000, value.isMultiple(of: 500) {
+            return String(format: "%.1fK", Double(value) / 1_000.0)
+        }
+        return "\(value)"
+    }
+}
+
+private struct DpiSliderScaleMarker: Identifiable {
+    let value: Int
+
+    var id: String {
+        "\(value)"
+    }
+}

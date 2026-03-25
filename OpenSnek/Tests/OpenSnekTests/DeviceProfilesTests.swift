@@ -161,13 +161,36 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3), 100...26_000)
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3Pro), 100...30_000)
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV335K), 100...35_000)
-        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3XHyperspeed), 100...6_000)
-        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3), 100...6_000)
-        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3Pro), 100...6_000)
-        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV335K), 100...6_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3XHyperspeed), 100...18_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3), 100...26_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3Pro), 100...30_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV335K), 100...35_000)
+        XCTAssertEqual(DeviceProfiles.sliderFineDpiRange(for: .basiliskV3XHyperspeed), 100...2_000)
+        XCTAssertEqual(DeviceProfiles.sliderFineDpiRange(for: .basiliskV3), 100...2_000)
+        XCTAssertEqual(DeviceProfiles.sliderFineDpiRange(for: .basiliskV3Pro), 100...2_000)
+        XCTAssertEqual(DeviceProfiles.sliderFineDpiRange(for: .basiliskV335K), 100...2_000)
+        XCTAssertEqual(DeviceProfiles.sliderScaleMarkerValues(for: .basiliskV3XHyperspeed), [100, 2_000, 10_000, 18_000])
+        XCTAssertEqual(DeviceProfiles.sliderScaleMarkerValues(for: .basiliskV3Pro), [100, 2_000, 10_000, 20_000, 30_000])
+        XCTAssertEqual(DeviceProfiles.sliderScaleMarkerValues(for: .basiliskV335K), [100, 2_000, 10_000, 20_000, 35_000])
         XCTAssertEqual(DeviceProfiles.clampDPI(40_000, profileID: .basiliskV335K), 35_000)
         XCTAssertEqual(DeviceProfiles.clampDPI(30_000, profileID: .basiliskV3), 26_000)
         XCTAssertEqual(DeviceProfiles.clampDPI(24_000, profileID: .basiliskV3XHyperspeed), 18_000)
+    }
+
+    func testDPISliderCurveUsesFineLowRangeAndCoarseHighRange() {
+        XCTAssertEqual(DeviceProfiles.dpiSliderPosition(for: 100, profileID: .basiliskV3Pro), 0, accuracy: 0.000_001)
+        XCTAssertEqual(DeviceProfiles.dpiSliderPosition(for: 2_000, profileID: .basiliskV3Pro), 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(DeviceProfiles.dpiSliderPosition(for: 10_000, profileID: .basiliskV3Pro), 0.75, accuracy: 0.000_001)
+        XCTAssertEqual(DeviceProfiles.dpiSliderPosition(for: 20_000, profileID: .basiliskV3Pro), 0.9, accuracy: 0.000_001)
+        XCTAssertEqual(DeviceProfiles.dpiSliderPosition(for: 30_000, profileID: .basiliskV3Pro), 1, accuracy: 0.000_001)
+
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 0, profileID: .basiliskV3Pro), 100)
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 0.5, profileID: .basiliskV3Pro), 2_000)
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 0.75, profileID: .basiliskV3Pro), 10_000)
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 0.9, profileID: .basiliskV3Pro), 20_000)
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 0.825, profileID: .basiliskV3Pro), 15_000)
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 0.95, profileID: .basiliskV3Pro), 25_000)
+        XCTAssertEqual(DeviceProfiles.dpi(forSliderPosition: 1, profileID: .basiliskV3Pro), 30_000)
     }
 
     func testBasiliskV3ProBluetoothShowsLightingControls() {

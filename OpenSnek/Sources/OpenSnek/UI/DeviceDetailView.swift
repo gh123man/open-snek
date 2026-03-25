@@ -1057,8 +1057,7 @@ struct DpiStagesCard: View {
     let editorStore: EditorStore
 
     var body: some View {
-        let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
-        let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
+        let profileID = editorStore.selectedDeviceProfileID
         let supportsIndependentXYDPI = editorStore.selectedDeviceSupportsIndependentXYDPI
         let supportsMultiStage = true
         let stageCount = supportsMultiStage ? editorStore.editableStageCount : 1
@@ -1158,8 +1157,7 @@ struct DpiStagesCard: View {
                         axisSlider(
                             label: "X",
                             value: stagePair.x,
-                            sliderRange: sliderRange,
-                            sliderDoubleRange: sliderDoubleRange,
+                            profileID: profileID,
                             tint: isSelectedStage ? stageColor : Color.white.opacity(0.80)
                         ) { quantized in
                             editorStore.updateStageX(idx, value: quantized)
@@ -1168,29 +1166,42 @@ struct DpiStagesCard: View {
                         axisSlider(
                             label: "Y",
                             value: stagePair.y,
-                            sliderRange: sliderRange,
-                            sliderDoubleRange: sliderDoubleRange,
+                            profileID: profileID,
                             tint: isSelectedStage ? stageColor.opacity(0.8) : Color.white.opacity(0.65)
                         ) { quantized in
                             editorStore.updateStageY(idx, value: quantized)
                             editorStore.scheduleAutoApplyDpi()
                         }
                     } else {
-                        Slider(
-                            value: Binding(
-                                get: { Double(min(editorStore.stageValue(idx), sliderRange.upperBound)) },
-                                set: { newValue in
-                                    let quantized = Int(round(newValue / 100.0) * 100.0)
-                                    editorStore.updateStage(idx, value: quantized)
-                                    editorStore.scheduleAutoApplyDpi()
+                        VStack(alignment: .leading, spacing: 4) {
+                            Slider(
+                                value: Binding(
+                                    get: {
+                                        DeviceProfiles.dpiSliderPosition(
+                                            for: editorStore.stageValue(idx),
+                                            profileID: profileID
+                                        )
+                                    },
+                                    set: { newPosition in
+                                        editorStore.updateStage(
+                                            idx,
+                                            value: DeviceProfiles.dpi(forSliderPosition: newPosition, profileID: profileID)
+                                        )
+                                        editorStore.scheduleAutoApplyDpi()
+                                    }
+                                ),
+                                in: 0...1,
+                                onEditingChanged: { editing in
+                                    editorStore.isEditingDpiControl = editing
                                 }
-                            ),
-                            in: sliderDoubleRange,
-                            onEditingChanged: { editing in
-                                editorStore.isEditingDpiControl = editing
-                            }
-                        )
-                        .tint(isSelectedStage ? stageColor : Color.white.opacity(0.80))
+                            )
+                            .tint(isSelectedStage ? stageColor : Color.white.opacity(0.80))
+
+                            DpiSliderScaleMarkers(
+                                profileID: profileID,
+                                markerColor: isSelectedStage ? stageColor : Color.white.opacity(0.72)
+                            )
+                        }
                     }
                 }
                 .padding(8)
@@ -1244,8 +1255,7 @@ struct DpiStagesCard: View {
     private func axisSlider(
         label: String,
         value: Int,
-        sliderRange: ClosedRange<Int>,
-        sliderDoubleRange: ClosedRange<Double>,
+        profileID: DeviceProfileID?,
         tint: Color,
         onChange: @escaping (Int) -> Void
     ) -> some View {
@@ -1253,19 +1263,26 @@ struct DpiStagesCard: View {
             Text("\(label)-Axis")
                 .font(.system(size: 11, weight: .black, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.7))
-            Slider(
-                value: Binding(
-                    get: { Double(min(value, sliderRange.upperBound)) },
-                    set: { newValue in
-                        onChange(Int(round(newValue / 100.0) * 100.0))
+            VStack(alignment: .leading, spacing: 4) {
+                Slider(
+                    value: Binding(
+                        get: { DeviceProfiles.dpiSliderPosition(for: value, profileID: profileID) },
+                        set: { newPosition in
+                            onChange(DeviceProfiles.dpi(forSliderPosition: newPosition, profileID: profileID))
+                        }
+                    ),
+                    in: 0...1,
+                    onEditingChanged: { editing in
+                        editorStore.isEditingDpiControl = editing
                     }
-                ),
-                in: sliderDoubleRange,
-                onEditingChanged: { editing in
-                    editorStore.isEditingDpiControl = editing
-                }
-            )
-            .tint(tint)
+                )
+                .tint(tint)
+
+                DpiSliderScaleMarkers(
+                    profileID: profileID,
+                    markerColor: tint
+                )
+            }
         }
     }
 
@@ -2327,8 +2344,8 @@ private struct ButtonBindingRow: View {
     let row: ButtonBindingRowModel
 
     var body: some View {
-        let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
-        let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
+        let profileID = editorStore.selectedDeviceProfileID
+        let dpiRange = DeviceProfiles.dpiRange(for: profileID)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 12) {
                 Text(row.friendlyName)
@@ -2391,20 +2408,37 @@ private struct ButtonBindingRow: View {
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
 
-                    Slider(
-                        value: Binding(
-                            get: { Double(min(editorStore.buttonBindingClutchDPI(for: row.slot), sliderRange.upperBound)) },
-                            set: { newValue in
-                                let quantized = Int(round(newValue / 100.0) * 100.0)
-                                editorStore.updateButtonBindingClutchDPI(slot: row.slot, dpi: quantized)
-                            }
-                        ),
-                        in: sliderDoubleRange
-                    )
-                    .frame(width: 140)
-                    .disabled(!row.isEditable)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Slider(
+                            value: Binding(
+                                get: {
+                                    DeviceProfiles.dpiSliderPosition(
+                                        for: editorStore.buttonBindingClutchDPI(for: row.slot),
+                                        profileID: profileID
+                                    )
+                                },
+                                set: { newPosition in
+                                    editorStore.updateButtonBindingClutchDPI(
+                                        slot: row.slot,
+                                        dpi: DeviceProfiles.dpi(forSliderPosition: newPosition, profileID: profileID)
+                                    )
+                                }
+                            ),
+                            in: 0...1
+                        )
+                        .frame(width: 140)
+                        .disabled(!row.isEditable)
 
-                    Text("\(sliderRange.upperBound)")
+                        DpiSliderScaleMarkers(
+                            profileID: profileID,
+                            markerColor: Color.white.opacity(0.84),
+                            compact: true
+                        )
+                        .frame(width: 140)
+                    }
+                    .frame(width: 140)
+
+                    Text("\(dpiRange.upperBound)")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
 

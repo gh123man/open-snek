@@ -274,8 +274,7 @@ struct ServiceMenuBarView: View {
     }
 
     private var dpiSlider: some View {
-        let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
-        let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
+        let profileID = editorStore.selectedDeviceProfileID
         let activePair = editorStore.stagePair(editorStore.compactActiveStageIndex)
         let controlMode = ServiceMenuBarPresentation.compactDpiControlMode(
             for: activePair,
@@ -297,8 +296,7 @@ struct ServiceMenuBarView: View {
                     update: { value in
                         editorStore.updateStage(editorStore.compactActiveStageIndex, value: value)
                     },
-                    sliderRange: sliderRange,
-                    sliderDoubleRange: sliderDoubleRange
+                    profileID: profileID
                 )
             case .split:
                 VStack(alignment: .leading, spacing: 10) {
@@ -308,8 +306,7 @@ struct ServiceMenuBarView: View {
                         update: { value in
                             editorStore.updateStageX(editorStore.compactActiveStageIndex, value: value)
                         },
-                        sliderRange: sliderRange,
-                        sliderDoubleRange: sliderDoubleRange
+                        profileID: profileID
                     )
                     compactDpiAxisSlider(
                         axisLabel: "Y",
@@ -317,8 +314,7 @@ struct ServiceMenuBarView: View {
                         update: { value in
                             editorStore.updateStageY(editorStore.compactActiveStageIndex, value: value)
                         },
-                        sliderRange: sliderRange,
-                        sliderDoubleRange: sliderDoubleRange
+                        profileID: profileID
                     )
                 }
             }
@@ -347,8 +343,7 @@ struct ServiceMenuBarView: View {
         axisLabel: String,
         currentValue: @escaping () -> Int,
         update: @escaping (Int) -> Void,
-        sliderRange: ClosedRange<Int>,
-        sliderDoubleRange: ClosedRange<Double>
+        profileID: DeviceProfileID?
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -363,8 +358,7 @@ struct ServiceMenuBarView: View {
             compactDpiSlider(
                 currentValue: currentValue,
                 update: update,
-                sliderRange: sliderRange,
-                sliderDoubleRange: sliderDoubleRange
+                profileID: profileID
             )
         }
     }
@@ -372,23 +366,28 @@ struct ServiceMenuBarView: View {
     private func compactDpiSlider(
         currentValue: @escaping () -> Int,
         update: @escaping (Int) -> Void,
-        sliderRange: ClosedRange<Int>,
-        sliderDoubleRange: ClosedRange<Double>
+        profileID: DeviceProfileID?
     ) -> some View {
-        Slider(
-            value: Binding(
-                get: { Double(min(currentValue(), sliderRange.upperBound)) },
-                set: { newValue in
-                    let quantized = Int(round(newValue / 100.0) * 100.0)
-                    update(quantized)
-                    editorStore.scheduleAutoApplyDpi()
+        VStack(alignment: .leading, spacing: 3) {
+            Slider(
+                value: Binding(
+                    get: { DeviceProfiles.dpiSliderPosition(for: currentValue(), profileID: profileID) },
+                    set: { newPosition in
+                        update(DeviceProfiles.dpi(forSliderPosition: newPosition, profileID: profileID))
+                        editorStore.scheduleAutoApplyDpi()
+                    }
+                ),
+                in: 0...1,
+                onEditingChanged: { editing in
+                    editorStore.isEditingDpiControl = editing
                 }
-            ),
-            in: sliderDoubleRange,
-            onEditingChanged: { editing in
-                editorStore.isEditingDpiControl = editing
-            }
-        )
+            )
+            DpiSliderScaleMarkers(
+                profileID: profileID,
+                markerColor: Color.primary.opacity(0.78),
+                compact: true
+            )
+        }
     }
 
     private func stageDisplayText(_ pair: DpiPair) -> String {

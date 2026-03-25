@@ -276,7 +276,16 @@ public struct DeviceProfile: Hashable, Sendable {
 public enum DeviceProfiles {
     public static let minimumDPI = 100
     public static let defaultMaximumDPI = 30_000
-    public static let preferredSliderMaximumDPI = 6_000
+    public static let sliderLowAnchorDPI = 2_000
+    public static let sliderMidAnchorDPI = 10_000
+    public static let sliderHighAnchorDPI = 20_000
+    public static let sliderLowAnchorPosition = 0.5
+    public static let sliderMidAnchorPosition = 0.75
+    public static let sliderHighAnchorPosition = 0.9
+    public static let sliderFineStepDPI = 100
+    public static let sliderMidStepDPI = 250
+    public static let sliderHighStepDPI = 500
+    public static let sliderExtremeStepDPI = 1_000
 
     public static let basiliskV3XUSBLightingEffects: [LightingEffectKind] = [
         .off, .staticColor, .spectrum, .wave, .reactive, .pulseRandom, .pulseSingle, .pulseDual,
@@ -617,11 +626,32 @@ public enum DeviceProfiles {
     }
 
     public static func sliderMaximumDPI(for profileID: DeviceProfileID?) -> Int {
-        min(maximumDPI(for: profileID), preferredSliderMaximumDPI)
+        maximumDPI(for: profileID)
     }
 
     public static func sliderDpiRange(for profileID: DeviceProfileID?) -> ClosedRange<Int> {
         minimumDPI...sliderMaximumDPI(for: profileID)
+    }
+
+    public static func sliderFineMaximumDPI(for profileID: DeviceProfileID?) -> Int {
+        min(maximumDPI(for: profileID), sliderLowAnchorDPI)
+    }
+
+    public static func sliderFineDpiRange(for profileID: DeviceProfileID?) -> ClosedRange<Int> {
+        minimumDPI...sliderFineMaximumDPI(for: profileID)
+    }
+
+    public static func sliderScaleMarkerValues(for profileID: DeviceProfileID?) -> [Int] {
+        let segments = sliderSegments(for: profileID)
+        guard let first = segments.first else { return [minimumDPI] }
+
+        var markers = [first.dpiRange.lowerBound]
+        for segment in segments {
+            if markers.last != segment.dpiRange.upperBound {
+                markers.append(segment.dpiRange.upperBound)
+            }
+        }
+        return markers
     }
 
     public static func clampDPI(_ value: Int, profileID: DeviceProfileID?) -> Int {
@@ -632,6 +662,114 @@ public enum DeviceProfiles {
     public static func clampDPI(_ value: Int, device: MouseDevice?) -> Int {
         let range = dpiRange(for: device)
         return max(range.lowerBound, min(range.upperBound, value))
+    }
+
+    public static func dpiSliderPosition(for value: Int, profileID: DeviceProfileID?) -> Double {
+        let clamped = clampDPI(value, profileID: profileID)
+        let segments = sliderSegments(for: profileID)
+        guard let segment = segments.first(where: { clamped <= $0.dpiRange.upperBound }) ?? segments.last else { return 0 }
+        guard segment.dpiRange.lowerBound < segment.dpiRange.upperBound else { return segment.positionRange.upperBound }
+
+        let localFraction = Double(clamped - segment.dpiRange.lowerBound) / Double(segment.dpiRange.upperBound - segment.dpiRange.lowerBound)
+        return segment.positionRange.lowerBound +
+            (segment.positionRange.upperBound - segment.positionRange.lowerBound) * localFraction
+    }
+
+    public static func dpi(forSliderPosition position: Double, profileID: DeviceProfileID?) -> Int {
+        let clampedPosition = max(0, min(1, position))
+        let segments = sliderSegments(for: profileID)
+        guard let segment = segments.first(where: { clampedPosition <= $0.positionRange.upperBound }) ?? segments.last else {
+            return minimumDPI
+        }
+
+        guard segment.positionRange.lowerBound < segment.positionRange.upperBound else {
+            return segment.dpiRange.upperBound
+        }
+
+        let localFraction = (clampedPosition - segment.positionRange.lowerBound) /
+            (segment.positionRange.upperBound - segment.positionRange.lowerBound)
+        let rawValue = Double(segment.dpiRange.lowerBound) +
+            localFraction * Double(segment.dpiRange.upperBound - segment.dpiRange.lowerBound)
+        return quantizedSliderDPI(rawValue, step: segment.step, within: segment.dpiRange)
+    }
+
+    private static func quantizedSliderDPI(_ value: Double, step: Int, within range: ClosedRange<Int>) -> Int {
+        let quantized = Int(round(value / Double(step)) * Double(step))
+        return max(range.lowerBound, min(range.upperBound, quantized))
+    }
+
+    private static func sliderSegments(for profileID: DeviceProfileID?) -> [DpiSliderSegment] {
+        let maximum = sliderMaximumDPI(for: profileID)
+        guard maximum > minimumDPI else {
+            return [DpiSliderSegment(positionRange: 0...1, dpiRange: minimumDPI...maximum, step: sliderFineStepDPI)]
+        }
+
+        let lowUpper = min(maximum, sliderLowAnchorDPI)
+        if maximum <= sliderLowAnchorDPI {
+            return [DpiSliderSegment(positionRange: 0...1, dpiRange: minimumDPI...maximum, step: sliderFineStepDPI)]
+        }
+
+        var segments = [
+            DpiSliderSegment(
+                positionRange: 0...sliderLowAnchorPosition,
+                dpiRange: minimumDPI...lowUpper,
+                step: sliderFineStepDPI
+            ),
+        ]
+
+        let midUpper = min(maximum, sliderMidAnchorDPI)
+        if maximum <= sliderMidAnchorDPI {
+            segments.append(
+                DpiSliderSegment(
+                    positionRange: sliderLowAnchorPosition...1,
+                    dpiRange: lowUpper...maximum,
+                    step: sliderMidStepDPI
+                )
+            )
+            return segments
+        }
+
+        segments.append(
+            DpiSliderSegment(
+                positionRange: sliderLowAnchorPosition...sliderMidAnchorPosition,
+                dpiRange: lowUpper...midUpper,
+                step: sliderMidStepDPI
+            )
+        )
+
+        let highUpper = min(maximum, sliderHighAnchorDPI)
+        if maximum <= sliderHighAnchorDPI {
+            segments.append(
+                DpiSliderSegment(
+                    positionRange: sliderMidAnchorPosition...1,
+                    dpiRange: midUpper...maximum,
+                    step: sliderHighStepDPI
+                )
+            )
+            return segments
+        }
+
+        segments.append(
+            DpiSliderSegment(
+                positionRange: sliderMidAnchorPosition...sliderHighAnchorPosition,
+                dpiRange: midUpper...highUpper,
+                step: sliderHighStepDPI
+            )
+        )
+        segments.append(
+            DpiSliderSegment(
+                positionRange: sliderHighAnchorPosition...1,
+                dpiRange: highUpper...maximum,
+                step: sliderExtremeStepDPI
+            )
+        )
+        return segments
+    }
+
+    private struct DpiSliderSegment {
+        let positionRange: ClosedRange<Double>
+        let dpiRange: ClosedRange<Int>
+        let step: Int
     }
 
     public static func supportsIndependentXYDPI(for profileID: DeviceProfileID?) -> Bool {
