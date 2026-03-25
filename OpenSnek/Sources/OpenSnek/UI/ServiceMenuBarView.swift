@@ -598,27 +598,31 @@ private struct ServiceMenuBarStatusGlyph: View {
         isConnected ? 0.88 : 0.46
     }
 
+    private var statusImage: NSImage? {
+        if let batteryPresentation {
+            return OpenSnekBranding.menuBarSymbolIcon(
+                symbolName: batteryPresentation.symbolName,
+                color: BatteryPresentation.lowBatteryNSColor
+            )
+        }
+        return OpenSnekBranding.menuIcon
+    }
+
+    private var statusImageID: String {
+        if let batteryPresentation {
+            return "battery:\(batteryPresentation.symbolName)"
+        }
+        return "menu"
+    }
+
     var body: some View {
         Group {
-            if let batteryPresentation {
-                if let icon = OpenSnekBranding.menuBarSymbolIcon(
-                    symbolName: batteryPresentation.symbolName,
-                    color: BatteryPresentation.lowBatteryNSColor
-                ) {
-                    Image(nsImage: icon)
-                        .interpolation(.high)
-                        .antialiased(true)
-                } else {
-                    Image(
-                        systemName: batteryPresentation.symbolName,
-                        variableValue: batteryPresentation.variableValue
-                    )
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(BatteryPresentation.lowBatteryColor)
-                }
-            } else if let menuIcon = OpenSnekBranding.menuIcon {
-                Image(nsImage: menuIcon)
+            if let statusImage {
+                Image(nsImage: statusImage)
+                    .interpolation(.high)
+                    .antialiased(true)
                     .renderingMode(.original)
+                    .id(statusImageID)
             } else {
                 ZStack {
                     Circle()
