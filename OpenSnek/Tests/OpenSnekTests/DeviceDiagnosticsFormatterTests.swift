@@ -94,4 +94,32 @@ final class DeviceDiagnosticsFormatterTests: XCTestCase {
         XCTAssertTrue(dump.contains("No mapped button layout"))
         XCTAssertTrue(dump.contains("Live state unavailable"))
     }
+
+    func testMappedButUnvalidatedProfileDumpCallsOutValidationStatus() {
+        let device = MouseDevice(
+            id: "usb-v3",
+            vendor_id: 0x1532,
+            product_id: 0x0099,
+            product_name: "Basilisk V3",
+            transport: .usb,
+            path_b64: "",
+            serial: nil,
+            firmware: nil,
+            location_id: 0x00000002,
+            profile_id: .basiliskV3,
+            button_layout: DeviceProfiles.basiliskV3USB.buttonLayout,
+            supports_advanced_lighting_effects: true,
+            onboard_profile_count: 5
+        )
+
+        let dump = DeviceDiagnosticsFormatter.format(
+            device: device,
+            state: nil,
+            profile: DeviceProfiles.basiliskV3USB,
+            generatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        XCTAssertTrue(dump.contains("Support status: Mapped profile (not locally validated)"))
+        XCTAssertTrue(dump.contains("Resolved profile: basilisk_v3"))
+    }
 }

@@ -45,6 +45,34 @@ final class DeviceProfilesTests: XCTestCase {
         XCTAssertEqual(ButtonBindingSupport.defaultDPIClutchDPI(for: .basiliskV335K), 400)
     }
 
+    func testResolveUSBProfileForBasiliskV3() {
+        let profile = DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x0099, transport: .usb)
+        XCTAssertEqual(profile?.id, .basiliskV3)
+        XCTAssertEqual(profile?.buttonLayout.writableSlots, [1, 2, 3, 4, 5, 9, 10, 15, 52, 53, 96])
+        XCTAssertEqual(profile?.buttonLayout.visibleSlots.map(\.slot), [1, 2, 3, 4, 5, 9, 10, 15, 52, 53, 96])
+        XCTAssertEqual(profile?.buttonLayout.documentedSlots.map(\.slot), [1, 2, 3, 4, 5, 9, 10, 14, 15, 52, 53, 96, 106])
+        XCTAssertEqual(profile?.buttonLayout.access(for: 14), .protocolReadOnly)
+        XCTAssertEqual(profile?.buttonLayout.access(for: 15), .editable)
+        XCTAssertEqual(profile?.buttonLayout.access(for: 106), .softwareReadOnly)
+        XCTAssertEqual(profile?.buttonLayout.softwareReadOnlySlots.map(\.slot), [106])
+        XCTAssertEqual(profile?.supportsAdvancedLightingEffects, true)
+        XCTAssertEqual(profile?.supportedLightingEffects, [.off, .staticColor, .spectrum, .wave])
+        XCTAssertEqual(profile?.usbLightingLEDIDs, [0x01, 0x04, 0x0A])
+        XCTAssertEqual(profile?.usbLightingZones.map(\.id), ["scroll_wheel", "logo", "underglow"])
+        XCTAssertEqual(profile?.passiveDPIInput?.usagePage, 0x01)
+        XCTAssertEqual(profile?.passiveDPIInput?.usage, 0x06)
+        XCTAssertEqual(profile?.passiveDPIInput?.reportID, 0x05)
+        XCTAssertEqual(profile?.passiveDPIInput?.subtype, 0x02)
+        XCTAssertEqual(profile?.passiveDPIInput?.maximumDPI, 26_000)
+        XCTAssertEqual(profile?.onboardProfileCount, 5)
+        XCTAssertEqual(profile?.isLocallyValidated, false)
+    }
+
+    func testBasiliskV3SupportsDPIClutchBindings() {
+        XCTAssertTrue(ButtonBindingSupport.availableButtonBindingKinds(profileID: .basiliskV3).contains(.dpiClutch))
+        XCTAssertEqual(ButtonBindingSupport.defaultDPIClutchDPI(for: .basiliskV3), 400)
+    }
+
     func testResolveUSBProfileForBasiliskV3Pro() {
         let profile = DeviceProfiles.resolve(vendorID: 0x1532, productID: 0x00AB, transport: .usb)
         XCTAssertEqual(profile?.id, .basiliskV3Pro)
@@ -124,12 +152,15 @@ final class DeviceProfilesTests: XCTestCase {
 
     func testDPIRangesMatchSupportedProfiles() {
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3XHyperspeed), 100...18_000)
+        XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3), 100...26_000)
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV3Pro), 100...30_000)
         XCTAssertEqual(DeviceProfiles.dpiRange(for: .basiliskV335K), 100...35_000)
         XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3XHyperspeed), 100...6_000)
+        XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3), 100...6_000)
         XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV3Pro), 100...6_000)
         XCTAssertEqual(DeviceProfiles.sliderDpiRange(for: .basiliskV335K), 100...6_000)
         XCTAssertEqual(DeviceProfiles.clampDPI(40_000, profileID: .basiliskV335K), 35_000)
+        XCTAssertEqual(DeviceProfiles.clampDPI(30_000, profileID: .basiliskV3), 26_000)
         XCTAssertEqual(DeviceProfiles.clampDPI(24_000, profileID: .basiliskV3XHyperspeed), 18_000)
     }
 
