@@ -265,6 +265,10 @@ public enum BLEVendorProtocol {
             return Data([0x01, slot, 0x00, 0x01, 0x01, 0x09, 0x00, 0x00, 0x00, 0x00])
         case .scrollDown:
             return Data([0x01, slot, 0x00, 0x01, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00])
+        case .scrollLeft:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00])
+        case .scrollRight:
+            return Data([0x01, slot, 0x00, 0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00])
         case .mouseBack:
             return Data([0x01, slot, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00])
         case .mouseForward:
@@ -346,6 +350,8 @@ public enum BLEVendorProtocol {
         case .mouseForward: return 0x05
         case .scrollUp: return 0x09
         case .scrollDown: return 0x0A
+        case .scrollLeft: return 0x68
+        case .scrollRight: return 0x69
         default: return nil
         }
     }
@@ -359,6 +365,8 @@ public enum BLEVendorProtocol {
         case 5: return 0x05
         case 9: return 0x09
         case 10: return 0x0A
+        case 0x34: return 0x68
+        case 0x35: return 0x69
         default: return nil
         }
     }

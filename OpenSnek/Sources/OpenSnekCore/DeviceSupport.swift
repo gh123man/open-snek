@@ -312,8 +312,8 @@ public enum DeviceProfiles {
         ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
         ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
         ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .scrollLeft),
+        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .scrollRight),
     ]
 
     public static let basiliskV3ProBluetoothDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
@@ -338,8 +338,8 @@ public enum DeviceProfiles {
         ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
         ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
         ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .scrollLeft),
+        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .scrollRight),
         ButtonSlotDescriptor(slot: 96, friendlyName: "DPI Button", defaultKind: .default),
     ]
 
@@ -352,8 +352,8 @@ public enum DeviceProfiles {
         ButtonSlotDescriptor(slot: 9, friendlyName: "Scroll Up", defaultKind: .scrollUp),
         ButtonSlotDescriptor(slot: 10, friendlyName: "Scroll Down", defaultKind: .scrollDown),
         ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .default),
-        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .default),
+        ButtonSlotDescriptor(slot: 52, friendlyName: "Wheel Tilt Left", defaultKind: .scrollLeft),
+        ButtonSlotDescriptor(slot: 53, friendlyName: "Wheel Tilt Right", defaultKind: .scrollRight),
     ]
 
     public static let basiliskV335KUSBDocumentedReadOnlySlots: [DocumentedButtonSlot] = [

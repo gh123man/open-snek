@@ -208,10 +208,12 @@ Validated function block examples:
 - keyboard key `A` (HID `0x04`): `02 02 00 04 00 00 00`
 - disable: `00 00 00 00 00 00 00`
 - DPI cycle action: `06 01 06 00 00 00 00`
+- scroll left action: `01 01 68 00 00 00 00`
+- scroll right action: `01 01 69 00 00 00 00`
 - Basilisk V3 Pro DPI clutch action: `06 05 05 01 90 01 90`
 - Basilisk V3 Pro DPI clutch action at 800 DPI: `06 05 05 03 20 03 20`
 - Basilisk V3 Pro sensitivity-clutch default (`0x0F`): `06 05 05 01 90 01 90`
-- Basilisk V3 Pro / 35K wheel-tilt defaults (`0x34`, `0x35`): `01 01 02 00 00 00 00`
+- Basilisk V3 Pro / 35K wheel-tilt defaults (`0x34`, `0x35`): `01 01 68 00 00 00 00` / `01 01 69 00 00 00 00`
 - Basilisk V3 35K sensitivity-clutch default (`0x0F`): `06 01 05 01 90 01 90`
 - Basilisk V3 Pro / 35K profile-button default (`0x6A`): `12 01 01 00 00 00 00`
 - Basilisk V3 35K observed alternate DPI-button block (`0x60`): `04 02 0F 7B 00 00 00`

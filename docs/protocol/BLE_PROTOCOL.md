@@ -453,6 +453,8 @@ Field meanings:
 | forward | `0x05` |
 | scroll up | `0x09` |
 | scroll down | `0x0A` |
+| scroll left | `0x68` |
+| scroll right | `0x69` |
 
 #### 6.5.3 Default-Restore Payloads
 
@@ -468,6 +470,10 @@ Examples:
   - `01 04 00 01 01 04 00 00 00 00`
 - slot `0x05` default:
   - `01 05 00 01 01 05 00 00 00 00`
+- slot `0x34` default:
+  - `01 34 00 01 01 68 00 00 00 00`
+- slot `0x35` default:
+  - `01 35 00 01 01 69 00 00 00 00`
 - slot `0x09` default:
   - `01 09 00 01 01 09 00 00 00 00`
 - slot `0x0A` default:
