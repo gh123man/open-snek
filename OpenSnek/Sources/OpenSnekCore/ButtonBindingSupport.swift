@@ -307,7 +307,7 @@ public enum ButtonBindingSupport {
             return [0x01, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00]
         case 96:
             switch profileID {
-            case .basiliskV335K:
+            case .basiliskV3, .basiliskV335K:
                 return [0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00, 0x00]
             case .basiliskV3Pro:
                 return nil
@@ -358,7 +358,7 @@ public enum ButtonBindingSupport {
         switch profileID {
         case .basiliskV3Pro:
             return DeviceProfiles.basiliskV3ProUSBButtonSlots
-        case .basiliskV335K:
+        case .basiliskV3, .basiliskV335K:
             return DeviceProfiles.basiliskV335KUSBButtonSlots
         case .basiliskV3XHyperspeed, .none:
             return DeviceProfiles.basiliskV3XButtonSlots
@@ -367,7 +367,7 @@ public enum ButtonBindingSupport {
 
     private static func usesExtendedBasiliskUSBReadLayout(_ profileID: DeviceProfileID?) -> Bool {
         switch profileID {
-        case .basiliskV3Pro, .basiliskV335K:
+        case .basiliskV3, .basiliskV3Pro, .basiliskV335K:
             return true
         case .basiliskV3XHyperspeed, .none:
             return false

@@ -63,6 +63,11 @@ final class USBButtonHydrationTests: XCTestCase {
         XCTAssertEqual(block, [0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00, 0x00])
     }
 
+    func testBasiliskV3DefaultDPIButtonBlockMatches35KRestorePayload() {
+        let block = ButtonBindingSupport.defaultUSBFunctionBlock(for: 96, profileID: .basiliskV3)
+        XCTAssertEqual(block, [0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00, 0x00])
+    }
+
     func testExtractUSBFunctionBlockHandlesBasiliskV335KStandardSlotLayout() {
         let response: [UInt8] = [
             0x02, 0x1F, 0x00, 0x00, 0x00, 0x0A, 0x02, 0x8C,
@@ -91,6 +96,22 @@ final class USBButtonHydrationTests: XCTestCase {
             slot: 0x60,
             hypershift: 0x00,
             profileID: .basiliskV335K
+        )
+        XCTAssertEqual(block, [0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00, 0x00])
+    }
+
+    func testExtractUSBFunctionBlockHandlesBasiliskV3ExtendedSlotLayout() {
+        let response: [UInt8] = [
+            0x02, 0x1F, 0x00, 0x00, 0x00, 0x0A, 0x02, 0x8C,
+            0x01, 0x60, 0x00, 0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00,
+        ] + Array(repeating: 0x00, count: 73)
+
+        let block = ButtonBindingSupport.extractUSBFunctionBlock(
+            response: response,
+            profile: 0x01,
+            slot: 0x60,
+            hypershift: 0x00,
+            profileID: .basiliskV3
         )
         XCTAssertEqual(block, [0x04, 0x02, 0x0F, 0x7B, 0x00, 0x00, 0x00])
     }

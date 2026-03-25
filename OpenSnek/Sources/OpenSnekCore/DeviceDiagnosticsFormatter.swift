@@ -29,7 +29,12 @@ public struct DeviceDiagnosticsFormatter {
         }
 
         appendSection("Support", to: &lines) {
-            let supportStatus = profile == nil ? "Generic best-effort" : "Validated profile"
+            let supportStatus: String
+            if let profile {
+                supportStatus = profile.isLocallyValidated ? "Validated profile" : "Mapped profile (not locally validated)"
+            } else {
+                supportStatus = "Generic best-effort"
+            }
             return [
                 "Support status: \(supportStatus)",
                 "Resolved profile: \(profile?.id.rawValue ?? "none")",

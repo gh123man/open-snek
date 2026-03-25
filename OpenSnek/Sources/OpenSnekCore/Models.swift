@@ -21,6 +21,7 @@ public enum DeviceTransportKind: String, CaseIterable, Codable, Hashable, Sendab
 
 public enum DeviceProfileID: String, Codable, Hashable, Sendable {
     case basiliskV3XHyperspeed = "basilisk_v3_x_hyperspeed"
+    case basiliskV3 = "basilisk_v3"
     case basiliskV3Pro = "basilisk_v3_pro"
     case basiliskV335K = "basilisk_v3_35k"
 }

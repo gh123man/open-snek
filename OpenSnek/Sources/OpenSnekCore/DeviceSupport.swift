@@ -192,6 +192,7 @@ public struct DeviceProfile: Hashable, Sendable {
     public let usbLightingZones: [USBLightingZoneDescriptor]
     public let passiveDPIInput: PassiveDPIInputDescriptor?
     public let onboardProfileCount: Int
+    public let isLocallyValidated: Bool
 
     public init(
         id: DeviceProfileID,
@@ -204,7 +205,8 @@ public struct DeviceProfile: Hashable, Sendable {
         usbLightingLEDIDs: [UInt8] = [],
         usbLightingZones: [USBLightingZoneDescriptor] = [],
         passiveDPIInput: PassiveDPIInputDescriptor? = nil,
-        onboardProfileCount: Int = 1
+        onboardProfileCount: Int = 1,
+        isLocallyValidated: Bool = true
     ) {
         self.id = id
         self.productName = productName
@@ -217,6 +219,7 @@ public struct DeviceProfile: Hashable, Sendable {
         self.usbLightingZones = usbLightingZones
         self.passiveDPIInput = passiveDPIInput
         self.onboardProfileCount = max(1, onboardProfileCount)
+        self.isLocallyValidated = isLocallyValidated
     }
 
     public func matches(vendorID: Int, productID: Int, transport: DeviceTransportKind) -> Bool {
@@ -369,6 +372,24 @@ public enum DeviceProfiles {
         ),
     ]
 
+    public static let basiliskV3USBDocumentedReadOnlySlots: [DocumentedButtonSlot] = [
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 14, friendlyName: "Scroll Mode Toggle", defaultKind: .default),
+            access: .protocolReadOnly,
+            note: "This OpenRazer-backed profile assumes the Basilisk V3 matches the 35K's read-only scroll-mode control, but OpenSnek has not validated that on hardware yet."
+        ),
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "This OpenRazer-backed profile assumes the Basilisk V3 matches the 35K's separate clutch path, but OpenSnek has not validated that on hardware yet."
+        ),
+        DocumentedButtonSlot(
+            descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
+            access: .softwareReadOnly,
+            note: "This OpenRazer-backed profile assumes the Basilisk V3 matches the 35K's separate profile-button path, but OpenSnek has not validated that on hardware yet."
+        ),
+    ]
+
     public static let basiliskV335KUSBLightingZones: [USBLightingZoneDescriptor] = [
         USBLightingZoneDescriptor(id: "scroll_wheel", label: "Scroll Wheel", ledIDs: [0x01]),
         USBLightingZoneDescriptor(id: "logo", label: "Logo", ledIDs: [0x04]),
@@ -430,6 +451,32 @@ public enum DeviceProfiles {
             maximumDPI: 35_000
         ),
         onboardProfileCount: 5
+    )
+
+    public static let basiliskV3USB = DeviceProfile(
+        id: .basiliskV3,
+        productName: "Basilisk V3",
+        transport: .usb,
+        supportedProducts: [0x0099],
+        buttonLayout: ButtonSlotLayout(
+            visibleSlots: basiliskV335KUSBButtonSlots,
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 52, 53, 96],
+            documentedSlots: basiliskV3USBDocumentedReadOnlySlots
+        ),
+        supportsAdvancedLightingEffects: true,
+        supportedLightingEffects: basiliskV335KUSBLightingEffects,
+        usbLightingLEDIDs: [0x01, 0x04, 0x0A],
+        usbLightingZones: basiliskV335KUSBLightingZones,
+        passiveDPIInput: PassiveDPIInputDescriptor(
+            usagePage: 0x01,
+            usage: 0x06,
+            reportID: 0x05,
+            subtype: 0x02,
+            minInputReportSize: 5,
+            maximumDPI: 26_000
+        ),
+        onboardProfileCount: 5,
+        isLocallyValidated: false
     )
 
     public static let basiliskV3ProUSB = DeviceProfile(
@@ -513,6 +560,7 @@ public enum DeviceProfiles {
 
     public static let all: [DeviceProfile] = [
         basiliskV3XUSB,
+        basiliskV3USB,
         basiliskV3ProUSB,
         basiliskV335KUSB,
         basiliskV3XBluetooth,
@@ -542,6 +590,8 @@ public enum DeviceProfiles {
         switch profileID {
         case .basiliskV3XHyperspeed:
             return 18_000
+        case .basiliskV3:
+            return 26_000
         case .basiliskV3Pro:
             return 30_000
         case .basiliskV335K:

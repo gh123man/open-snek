@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 - OpenSnek now has a saved button-profile library. Button layouts can be named, reused across devices, loaded into the live editor, and written into onboard mouse storage slots.
+- OpenSnek now recognizes the wired Razer Basilisk V3 (`USB PID 0x0099`) with an OpenRazer-backed USB device profile. The new profile currently follows the Basilisk V3 35K USB layout for button remap slots, lighting zones, passive DPI listener matching, and onboard-profile count, while capping DPI edits/readback at the Basilisk V3's `26,000` DPI window.
 
 ### Fixed
 - USB button-profile support on the Basilisk V3 Pro and Basilisk V3 35K now follows the same five-slot model: slot 1 is the live/base profile and slots 2 through 5 are stored button layouts.

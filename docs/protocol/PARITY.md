@@ -6,6 +6,7 @@ This document is the single source of truth for feature parity between the USB H
 
 Target device baseline:
 - Basilisk V3 X HyperSpeed (`USB PID 0x00B9`, `BT PID 0x00BA`)
+- Basilisk V3 (`USB PID 0x0099`, OpenRazer-backed USB profile only)
 - Basilisk V3 Pro (`USB PID 0x00AB`)
 - Basilisk V3 Pro Bluetooth (`BT PID 0x00AC`)
 - Basilisk V3 35K (`USB PID 0x00CB`)
@@ -88,6 +89,14 @@ Validated in-session over USB:
 - tested active-profile write candidates on `0x00CB`: `0x00:0x07` with payloads `02`, `02 00`, `02 00 05`, and `02 00 00` all returned status `0x05` (`not supported`)
 - observed profile-model behavior on `0x00CB`: persistent slot `0x05` writes stay isolated, persistent slot `0x01` writes mirror into direct/live `0x00` while profile `1` is active, and later direct/live writes do not write back into persistent slot `0x01`
 - shipped client behavior: multi-slot onboard button-profile actions now use validated `0x02:0x8C` / `0x02:0x0C` reads/writes plus direct-layer projection instead of claiming an unresolved hardware active-profile setter
+
+## OpenRazer-Backed Device Profile (Basilisk V3, USB PID `0x0099`)
+
+Mapped from current OpenRazer source, not yet validated in-session with OpenSnek hardware:
+- OpenRazer advertises the wired Basilisk V3 as `USB PID 0x0099` with `DPI_MAX = 26000`
+- OpenSnek currently maps the wired V3 onto the shipped 35K-style USB profile shape for button slots, multi-zone lighting targets, passive HID DPI listener matching, and `5` onboard profiles
+- OpenSnek caps DPI edits/readback for this profile at `26,000` instead of the 35K profile's `35,000`
+- until local protocol captures confirm otherwise, this profile should be treated as best-known support derived from ecosystem sources rather than hardware-validated parity
 
 ## Validated Device Profile (Basilisk V3 Pro, USB PID `0x00AB`)
 
