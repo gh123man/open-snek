@@ -266,7 +266,8 @@ struct DeviceOverviewBar: View {
                     if let battery = state.battery_percent {
                         let batteryIcon = BatteryPresentation.icon(
                             percent: battery,
-                            charging: state.charging
+                            charging: state.charging,
+                            thresholdRaw: state.low_battery_threshold_raw
                         )
                         HStack(spacing: 8) {
                             Image(
@@ -276,7 +277,7 @@ struct DeviceOverviewBar: View {
                             Text("\(battery)%")
                         }
                         .font(.system(size: 24, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(batteryIcon.accent == .low ? BatteryPresentation.lowBatteryColor : .white)
                     }
                 }
             }
@@ -1505,9 +1506,7 @@ struct LowBatteryThresholdCard: View {
     }
 
     private func approxPercent(_ raw: Int) -> Int {
-        let clamped = max(0x0C, min(0x3F, raw))
-        let ratio = Double(clamped - 0x0C) / Double(0x3F - 0x0C)
-        return Int(round(5.0 + (ratio * 20.0)))
+        BatteryPresentation.approximateThresholdPercent(raw: raw) ?? 5
     }
 }
 

@@ -45,6 +45,7 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
         XCTAssertEqual(shared, compactMenu)
         XCTAssertEqual(shared.symbolName, "battery.100percent.bolt")
         XCTAssertEqual(shared.variableValue, 0.33, accuracy: 0.001)
+        XCTAssertEqual(shared.accent, .normal)
     }
 
     func testBatteryIconClampsVariableValueToPercentBounds() {
@@ -52,5 +53,54 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
         XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: nil).variableValue, 0.58, accuracy: 0.001)
         XCTAssertEqual(BatteryPresentation.icon(percent: 120, charging: false).variableValue, 1.0, accuracy: 0.001)
         XCTAssertEqual(BatteryPresentation.icon(percent: 58, charging: nil).symbolName, "battery.100percent")
+    }
+
+    func testBatteryIconUsesLowAccentWhenDeviceFallsBelowThreshold() {
+        let icon = BatteryPresentation.icon(percent: 20, charging: false, thresholdRaw: 0x3F)
+
+        XCTAssertEqual(icon.symbolName, "battery.100percent")
+        XCTAssertEqual(icon.accent, .low)
+    }
+
+    func testBatteryIconDoesNotUseLowAccentWhileCharging() {
+        let icon = BatteryPresentation.icon(percent: 20, charging: true, thresholdRaw: 0x3F)
+
+        XCTAssertEqual(icon.symbolName, "battery.100percent.bolt")
+        XCTAssertEqual(icon.accent, .normal)
+    }
+
+    func testStatusGlyphBatteryIconOnlyAppearsForLowBatteryStates() {
+        let lowState = makeBatteryState(percent: 20)
+        let healthyState = makeBatteryState(percent: 60)
+
+        XCTAssertEqual(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: lowState)?.accent, .low)
+        XCTAssertNil(ServiceMenuBarPresentation.statusGlyphBatteryIcon(state: healthyState))
+    }
+
+    private func makeBatteryState(percent: Int) -> MouseState {
+        MouseState(
+            device: DeviceSummary(
+                id: "dev",
+                product_name: "Basilisk V3 Pro",
+                serial: "ABC123",
+                transport: .usb,
+                firmware: "1.0"
+            ),
+            connection: "USB",
+            battery_percent: percent,
+            charging: false,
+            dpi: DpiPair(x: 1600, y: 1600),
+            dpi_stages: DpiStages(active_stage: 0, values: [1600]),
+            poll_rate: 1000,
+            device_mode: DeviceMode(mode: 0x00, param: 0x00),
+            low_battery_threshold_raw: 0x3F,
+            led_value: 64,
+            capabilities: Capabilities(
+                dpi_stages: true,
+                poll_rate: true,
+                button_remap: true,
+                lighting: true
+            )
+        )
     }
 }
