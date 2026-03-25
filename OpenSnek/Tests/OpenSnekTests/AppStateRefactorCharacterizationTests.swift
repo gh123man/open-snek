@@ -591,6 +591,57 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(binding, .rightClick)
     }
 
+    func testUSBWheelTiltDefaultHydrationUsesDefaultPickerSelection() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-tilt-default-device",
+            transport: .usb,
+            serial: "USB-TILT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        await backend.setButtonBindingBlock(
+            try XCTUnwrap(ButtonBindingSupport.defaultUSBFunctionBlock(for: 52, profileID: .basiliskV3Pro)),
+            forDeviceID: device.id,
+            slot: 52,
+            profile: 1
+        )
+        await backend.setButtonBindingBlock(
+            try XCTUnwrap(ButtonBindingSupport.defaultUSBFunctionBlock(for: 52, profileID: .basiliskV3Pro)),
+            forDeviceID: device.id,
+            slot: 52,
+            profile: 0
+        )
+
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        try await waitForRefactorCondition {
+            await MainActor.run { appState.editorStore.buttonBindingKind(for: 52) == .default }
+        }
+
+        let binding = await MainActor.run { appState.editorStore.buttonBindingKind(for: 52) }
+        XCTAssertEqual(binding, .default)
+    }
+
     func testSwitchingUSBButtonProfileInvalidatesHydrationCache() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-profile-device",

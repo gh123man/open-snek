@@ -132,32 +132,40 @@ final class USBButtonHydrationTests: XCTestCase {
         XCTAssertEqual(block, [0x0E, 0x03, 0x68, 0x00, 0x14, 0x00, 0x00])
     }
 
-    func testWheelTiltDefaultsSeedHorizontalScrollDrafts() {
+    func testWheelTiltDefaultsUseDefaultDraftRepresentation() {
         let leftDraft = ButtonBindingSupport.defaultButtonBinding(for: 52, profileID: .basiliskV3Pro)
         let rightDraft = ButtonBindingSupport.defaultButtonBinding(for: 53, profileID: .basiliskV3Pro)
 
-        XCTAssertEqual(leftDraft.kind, .scrollLeft)
-        XCTAssertEqual(rightDraft.kind, .scrollRight)
+        XCTAssertEqual(leftDraft.kind, .default)
+        XCTAssertEqual(rightDraft.kind, .default)
     }
 
-    func testBasiliskV335KWheelTiltLeftDefaultBlockMapsToScrollLeftKind() {
+    func testWheelTiltSemanticDefaultsPreserveHorizontalScrollActions() {
+        let leftDraft = ButtonBindingSupport.semanticDefaultButtonBinding(for: 52, profileID: .basiliskV335K)
+        let rightDraft = ButtonBindingSupport.semanticDefaultButtonBinding(for: 53, profileID: .basiliskV3Pro)
+
+        XCTAssertEqual(leftDraft?.kind, .scrollLeft)
+        XCTAssertEqual(rightDraft?.kind, .scrollRight)
+    }
+
+    func testBasiliskV335KWheelTiltLeftDefaultBlockMapsToDefaultKind() {
         let block: [UInt8] = [0x01, 0x01, 0x68, 0x00, 0x00, 0x00, 0x00]
         let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
             slot: 52,
             functionBlock: block,
             profileID: .basiliskV335K
         )
-        XCTAssertEqual(draft?.kind, .scrollLeft)
+        XCTAssertEqual(draft?.kind, .default)
     }
 
-    func testBasiliskV3ProWheelTiltRightDefaultBlockMapsToScrollRightKind() {
+    func testBasiliskV3ProWheelTiltRightDefaultBlockMapsToDefaultKind() {
         let block: [UInt8] = [0x01, 0x01, 0x69, 0x00, 0x00, 0x00, 0x00]
         let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
             slot: 53,
             functionBlock: block,
             profileID: .basiliskV3Pro
         )
-        XCTAssertEqual(draft?.kind, .scrollRight)
+        XCTAssertEqual(draft?.kind, .default)
     }
 
     func testWheelTiltDefaultBlocksRestoreHorizontalScroll() {

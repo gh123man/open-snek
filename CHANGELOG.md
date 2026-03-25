@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file.
 - Settings now include a destructive `Wipe Local Storage` action that clears OpenSnek's saved preferences, cached device edits, background-service state, launch-at-login artifact, and local log files so users can reset the app to a clean local state without manually digging through `UserDefaults` or `~/Library` paths.
 
 ### Fixed
+- Wheel-tilt buttons now hydrate like the other stock mouse bindings: if tilt-left or tilt-right is still on the device default, the button editor selects `Default` instead of showing a redundant explicit `Scroll Left` / `Scroll Right` assignment.
 - DPI stage editing on the Basilisk V3 Pro and Basilisk V3 35K now preserves and writes independent X/Y DPI values instead of forcing both axes to the same number.
 - USB button-profile support on the Basilisk V3 Pro and Basilisk V3 35K now follows the same five-slot model: slot 1 is the live/base profile and slots 2 through 5 are stored button layouts.
 - The macOS button-remap UI now uses an explicit `Profiles` load/store workflow with local saved profiles, onboard slot loading, slot-to-profile name matching, and direct editing of the live/base profile.

@@ -43,13 +43,8 @@ public enum ButtonBindingSupport {
     public static func defaultButtonBinding(for slot: Int, profileID: DeviceProfileID? = nil) -> ButtonBindingDraft {
         let fallback = ButtonBindingDraft(kind: .default, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
         let visibleSlots = buttonSlotDescriptors(for: profileID)
-        guard let descriptor = visibleSlots.first(where: { $0.slot == slot }) else { return fallback }
-        switch descriptor.defaultKind {
-        case .scrollLeft, .scrollRight:
-            return ButtonBindingDraft(kind: descriptor.defaultKind, hidKey: 4, turboEnabled: false, turboRate: 0x8E)
-        default:
-            return fallback
-        }
+        guard visibleSlots.contains(where: { $0.slot == slot }) else { return fallback }
+        return fallback
     }
 
     public static func semanticDefaultButtonBinding(
@@ -66,6 +61,10 @@ public enum ButtonBindingSupport {
                 turboRate: fallbackRate,
                 clutchDPI: defaultDPIClutchDPI(for: profileID)
             )
+        case 52 where profileID == .basiliskV3 || profileID == .basiliskV3Pro || profileID == .basiliskV335K:
+            return ButtonBindingDraft(kind: .scrollLeft, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
+        case 53 where profileID == .basiliskV3 || profileID == .basiliskV3Pro || profileID == .basiliskV335K:
+            return ButtonBindingDraft(kind: .scrollRight, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
         case 96:
             switch profileID {
             case .basiliskV3, .basiliskV335K, .basiliskV3XHyperspeed, .none:
