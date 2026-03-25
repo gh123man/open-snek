@@ -13,6 +13,8 @@ All notable changes to this project are documented in this file.
 - The lighting card background for multi-zone static colors now reflects the real per-zone colors in mouse order instead of using placeholder accent slices, and `all zones` falls back to a single-color background.
 - USB button-binding caches and reconnect identity now ignore placeholder serials like `000000000000`, which prevents stale remap snapshots from being reused as if they belonged to a uniquely identified mouse.
 - USB button profiles now hydrate strictly from mouse readback instead of local cached bindings, so reconnects no longer auto-reapply stale USB remaps; Bluetooth still remembers the last known button state in the UI when readback is unavailable.
+- USB button writes now fail unless every requested layer succeeds, so OpenSnek no longer treats a volatile direct-layer-only update as a successful persistent remap.
+- Editing a projected stored USB button profile now persists changes back to the live/base slot `1` as well as the direct layer, so those edits survive mouse sleep/wake instead of snapping back to stale base bindings.
 - DPI sliders now use a multi-stage curve tuned for high-DPI mice: `2K` lands at `50%`, `10K` lands at `75%`, higher ranges ramp in additional coarser stages up to each device max, and the slider shows tick markers at every scale-change anchor.
 - The menu bar DPI editor once again shows a live slider for scalar stages on supported mice, while X/Y-capable stages now expand to separate `X` and `Y` sliders only when the active stage is actually split across axes.
 - DPI text entry fields now keep exact integer values instead of snapping the visible editor back through the slider's 100-DPI step size while you type.

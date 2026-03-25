@@ -288,9 +288,10 @@ final class AppStateApplyController {
     }
 
     func applyButtonBinding(slot: Int) async {
+        guard let selectedDevice = deviceStore.selectedDevice else { return }
         let binding = makeButtonBindingPatch(
             slot: slot,
-            persistentProfile: editorStore.editableUSBButtonProfile,
+            persistentProfile: persistentProfileForSingleButtonApply(device: selectedDevice),
             writeDirectLayer: !editorStore.supportsMultipleOnboardProfiles || editorStore.editableUSBButtonProfile == editorStore.liveUSBButtonProfile
         )
         enqueueApply(DevicePatch(buttonBinding: binding))
@@ -320,6 +321,15 @@ final class AppStateApplyController {
             return nil
         }
         return slot
+    }
+
+    private func persistentProfileForSingleButtonApply(device: MouseDevice) -> Int {
+        guard device.transport == .usb, editorStore.supportsMultipleOnboardProfiles else {
+            return editorStore.editableUSBButtonProfile
+        }
+        return editorStore.editableUSBButtonProfile == editorStore.liveUSBButtonProfile
+            ? 1
+            : editorStore.editableUSBButtonProfile
     }
 
     func applyCurrentButtonWorkspaceToLive() async {

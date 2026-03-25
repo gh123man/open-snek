@@ -1787,6 +1787,85 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(summaries.first(where: { $0.profile == 1 })?.isHardwareActive, true)
     }
 
+    func testEditingProjectedStoredUSBButtonProfileAutoAppliesToBaseAndDirectLayer() async throws {
+        for (profileID, onboardProfileCount) in [
+            (DeviceProfileID.basiliskV3, 5),
+            (.basiliskV3Pro, 5),
+            (.basiliskV335K, 5),
+        ] {
+            let device = makeRefactorTestDevice(
+                id: "usb-profile-projected-auto-apply-\(profileID.rawValue)",
+                transport: .usb,
+                serial: "USB-PROFILE-PROJECTED-AUTO-\(profileID.rawValue)-\(UUID().uuidString)",
+                onboardProfileCount: onboardProfileCount,
+                profileID: profileID
+            )
+            defer { clearRefactorPreferences(for: device) }
+
+            let backend = AppStateRefactorStubBackend(
+                devices: [device],
+                stateByDeviceID: [
+                    device.id: makeRefactorTestState(
+                        device: device,
+                        connection: "usb",
+                        batteryPercent: 76,
+                        dpiValues: [800, 1600, 2400],
+                        activeStage: 0,
+                        dpiValue: 800,
+                        pollRate: 1000,
+                        sleepTimeout: 300,
+                        activeOnboardProfile: 1,
+                        onboardProfileCount: onboardProfileCount
+                    )
+                ]
+            )
+            await backend.setButtonBindingBlock(
+                try XCTUnwrap(ButtonBindingSupport.defaultUSBFunctionBlock(for: 4, profileID: profileID)),
+                forDeviceID: device.id,
+                slot: 4,
+                profile: 2
+            )
+
+            let appState = await MainActor.run {
+                AppState(launchRole: .app, backend: backend, autoStart: false)
+            }
+
+            await appState.deviceStore.refreshDevices()
+            await MainActor.run {
+                appState.editorStore.updateUSBButtonProfile(2)
+            }
+
+            try await waitForRefactorCondition {
+                await MainActor.run { appState.editorStore.buttonBindingKind(for: 4) == .default }
+            }
+
+            await appState.editorStore.projectSelectedUSBButtonProfileToDirectLayer()
+
+            await MainActor.run {
+                appState.editorStore.updateButtonBindingKind(slot: 4, kind: .rightClick)
+            }
+
+            try await waitForRefactorCondition(timeout: 2.0) {
+                await backend.recordedPatches().contains(where: { patch in
+                    patch.buttonBinding?.slot == 4 && patch.buttonBinding?.kind == .rightClick
+                })
+            }
+
+            let patches = await backend.recordedPatches()
+            let patch = try XCTUnwrap(
+                patches.last(where: { $0.buttonBinding?.slot == 4 }),
+                "Missing button patch for \(profileID.rawValue)"
+            )
+            XCTAssertEqual(
+                patch.buttonBinding?.persistentProfile,
+                1,
+                "Projected USB edits should persist to base slot 1 for \(profileID.rawValue)"
+            )
+            XCTAssertEqual(patch.buttonBinding?.writePersistentLayer, true)
+            XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
+        }
+    }
+
     func testEditingBaseProfileAutoAppliesToLiveAndPersistentSlotOne() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-profile-base-auto-apply-device",
@@ -2692,7 +2771,8 @@ private func makeRefactorTestDevice(
     id: String,
     transport: DeviceTransportKind,
     serial: String,
-    onboardProfileCount: Int
+    onboardProfileCount: Int,
+    profileID: DeviceProfileID? = nil
 ) -> MouseDevice {
     MouseDevice(
         id: id,
@@ -2704,7 +2784,7 @@ private func makeRefactorTestDevice(
         serial: serial,
         firmware: "1.0.0",
         location_id: 1,
-        profile_id: transport == .bluetooth ? .basiliskV3XHyperspeed : .basiliskV3Pro,
+        profile_id: profileID ?? (transport == .bluetooth ? .basiliskV3XHyperspeed : .basiliskV3Pro),
         supports_advanced_lighting_effects: true,
         onboard_profile_count: onboardProfileCount
     )

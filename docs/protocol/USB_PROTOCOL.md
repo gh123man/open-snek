@@ -224,6 +224,7 @@ Client note:
 - On Basilisk V3 X HyperSpeed (`0x00B9`), the Hypershift / Boss-sniper control (`0x06`) rejects `0x02:0x8C` button reads with status `0x03`; do not treat it as part of the writable/readable USB button-function slot set.
 - Basilisk V3 Pro (`0x00AB`) and Basilisk V3 35K (`0x00CB`) `0x02:0x8C` reads do not use the simpler Basilisk V3 X payload shape. Observed extended-layout slots decode from `response[11..<18]`; treating `response[10...]` as the block causes false positives and mislabels on extra controls.
 - Always validate the echoed `profile` and `slot` bytes before decoding a `0x02:0x8C` read. This device will otherwise yield stale-looking success frames that can be mistaken for additional slots.
+- Treat layered button writes as all-or-nothing at the client boundary: if a persistent-layer write is requested and fails, do not continue on to a direct/live write and do not surface the operation as success.
 - OpenSnek normalizes both `06 01 06 00 00 00 00` and the observed `0x60` variant `04 02 0F 7B 00 00 00` as the user-facing `DPI Cycle` action.
 - On the observed V3 Pro clutch slot (`0x0F`), the default block is not a simple mouse/keyboard payload; preserve `06 05 05 01 90 01 90` when restoring the native clutch behavior.
 - For the observed V3 Pro / 35K DPI payloads, the trailing four bytes are configurable X/Y DPI values. OpenSnek now preserves and writes independent X/Y values on the Basilisk V3 Pro and Basilisk V3 35K instead of collapsing them to a single scalar.

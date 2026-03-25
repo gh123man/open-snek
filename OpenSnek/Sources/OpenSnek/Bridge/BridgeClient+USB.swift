@@ -5,6 +5,21 @@ import OpenSnekHardware
 import OpenSnekProtocols
 
 extension BridgeClient {
+    static func usbButtonWriteSucceeded(
+        writePersistentLayer: Bool,
+        writeDirectLayer: Bool,
+        wrotePersistent: Bool,
+        wroteDirect: Bool
+    ) -> Bool {
+        if writePersistentLayer, !wrotePersistent {
+            return false
+        }
+        if writeDirectLayer, !wroteDirect {
+            return false
+        }
+        return writePersistentLayer || writeDirectLayer
+    }
+
     func resolvedUSBStateCapabilities(
         device _: MouseDevice,
         profile: DeviceProfile?,
@@ -737,6 +752,7 @@ extension BridgeClient {
                 hypershift: 0x00,
                 functionBlock: functionBlock
             )
+            guard wrotePersistent else { return false }
         } else {
             wrotePersistent = false
         }
@@ -753,7 +769,12 @@ extension BridgeClient {
         } else {
             wroteDirect = false
         }
-        return wrotePersistent || wroteDirect
+        return Self.usbButtonWriteSucceeded(
+            writePersistentLayer: writePersistentLayer,
+            writeDirectLayer: writeDirectLayer,
+            wrotePersistent: wrotePersistent,
+            wroteDirect: wroteDirect
+        )
     }
 
     func getButtonBindingUSBRaw(
