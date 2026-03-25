@@ -16,6 +16,63 @@ final class UnsupportedDeviceHandlingTests: XCTestCase {
         XCTAssertTrue(BridgeClient.shouldRetryUSBStateRead(firstScanErrors: [unavailable, transient]))
     }
 
+    func testUSBReconnectSettleDeadlineOnlyAppliesToUSBConnectEvents() {
+        let observedAt = Date(timeIntervalSince1970: 1234)
+        let usbConnected = HIDDevicePresenceEvent(
+            deviceID: "usb-device",
+            vendorID: 0x1532,
+            productID: 0x00CB,
+            locationID: 1,
+            transport: .usb,
+            change: .connected,
+            observedAt: observedAt
+        )
+        let usbDisconnected = HIDDevicePresenceEvent(
+            deviceID: "usb-device",
+            vendorID: 0x1532,
+            productID: 0x00CB,
+            locationID: 1,
+            transport: .usb,
+            change: .disconnected,
+            observedAt: observedAt
+        )
+        let btConnected = HIDDevicePresenceEvent(
+            deviceID: "bt-device",
+            vendorID: 0x068E,
+            productID: 0x00AC,
+            locationID: 1,
+            transport: .bluetooth,
+            change: .connected,
+            observedAt: observedAt
+        )
+
+        let deadline = BridgeClient.usbReconnectSettleDeadline(for: usbConnected)
+        XCTAssertEqual(deadline, observedAt.addingTimeInterval(BridgeClient.usbReconnectSettleInterval))
+        XCTAssertNil(BridgeClient.usbReconnectSettleDeadline(for: usbDisconnected))
+        XCTAssertNil(BridgeClient.usbReconnectSettleDeadline(for: btConnected))
+    }
+
+    func testUSBReconnectReadDeferralUsesSettleDeadline() {
+        let now = Date(timeIntervalSince1970: 2000)
+        XCTAssertTrue(
+            BridgeClient.shouldDeferUSBReconnectRead(
+                until: now.addingTimeInterval(0.5),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            BridgeClient.shouldDeferUSBReconnectRead(
+                until: now.addingTimeInterval(-0.5),
+                now: now
+            )
+        )
+        XCTAssertFalse(BridgeClient.shouldDeferUSBReconnectRead(until: nil, now: now))
+    }
+
+    func testUSBReconnectSettleIntervalIsTwoSeconds() {
+        XCTAssertEqual(BridgeClient.usbReconnectSettleInterval, 2.0)
+    }
+
     func testUnsupportedUSBUsesProbedCapabilitiesOnly() async {
         let client = BridgeClient()
         let device = MouseDevice(
