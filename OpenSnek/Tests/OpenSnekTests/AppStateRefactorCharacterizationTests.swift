@@ -126,6 +126,65 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(finalFastReadCount, 1)
     }
 
+    func testStageApplyPreservesExactNonHundredDpiValues() async throws {
+        let device = makeRefactorTestDevice(
+            id: "dpi-exact-device",
+            transport: .usb,
+            serial: "DPI-EXACT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 74,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.editableStageCount = 3
+            appState.editorStore.editableStageValues = [1555, 2444, 3777, 6400, 12000]
+            appState.editorStore.editableStagePairs = [
+                DpiPair(x: 1555, y: 1555),
+                DpiPair(x: 2444, y: 2444),
+                DpiPair(x: 3777, y: 3777),
+                DpiPair(x: 6400, y: 6400),
+                DpiPair(x: 12000, y: 12000),
+            ]
+            appState.editorStore.editableActiveStage = 2
+        }
+        await appState.editorStore.applyDpiStages()
+
+        try await waitForRefactorCondition {
+            await backend.applyCount() == 1
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.first)
+        XCTAssertEqual(patch.dpiStages, [1555, 2444, 3777])
+        XCTAssertEqual(
+            patch.dpiStagePairs,
+            [
+                DpiPair(x: 1555, y: 1555),
+                DpiPair(x: 2444, y: 2444),
+                DpiPair(x: 3777, y: 3777),
+            ]
+        )
+        XCTAssertEqual(patch.activeStage, 1)
+    }
+
     func testHydratedEditableDpiStagesClampToSelectedDeviceLimit() async throws {
         let device = makeRefactorTestDevice(
             id: "dpi-clamp-device",

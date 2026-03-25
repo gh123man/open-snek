@@ -1129,20 +1129,14 @@ struct DpiStagesCard: View {
                                 }
                             }
                         } else {
-                            TextField(
-                                "DPI",
-                                text: Binding(
-                                    get: { String(editorStore.stageValue(idx)) },
-                                    set: { newValue in
-                                        if let parsed = Int(newValue) {
-                                            editorStore.updateStage(idx, value: parsed)
-                                            editorStore.scheduleAutoApplyDpi()
-                                        }
-                                    }
-                                )
-                            )
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 100)
+                            DpiValueField(
+                                placeholder: "DPI",
+                                value: editorStore.stageValue(idx),
+                                width: 100
+                            ) { parsed in
+                                editorStore.updateStage(idx, value: parsed)
+                                editorStore.scheduleAutoApplyDpi()
+                            }
                         }
 
                         if supportsIndependentXYDPI {
@@ -1218,19 +1212,13 @@ struct DpiStagesCard: View {
             Text(label)
                 .font(.system(size: 11, weight: .black, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.7))
-            TextField(
-                label,
-                text: Binding(
-                    get: { String(value) },
-                    set: { newValue in
-                        if let parsed = Int(newValue) {
-                            onCommit(parsed)
-                        }
-                    }
-                )
-            )
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 88)
+            DpiValueField(
+                placeholder: label,
+                value: value,
+                width: 88
+            ) { parsed in
+                onCommit(parsed)
+            }
         }
     }
 
@@ -1324,6 +1312,72 @@ struct DpiStagesCard: View {
         case 3: return Color(hex: isSelected ? 0x36F0E8 : 0x00C7BE) // Teal
         default: return Color(hex: isSelected ? 0xFFE35A : 0xFFD60A) // Yellow
         }
+    }
+}
+
+private struct DpiValueField: View {
+    let placeholder: String
+    let value: Int
+    let width: CGFloat
+    var alignment: TextAlignment = .leading
+    var isDisabled: Bool = false
+    let onCommit: (Int) -> Void
+
+    @State private var draft: String
+    @FocusState private var isFocused: Bool
+
+    init(
+        placeholder: String,
+        value: Int,
+        width: CGFloat,
+        alignment: TextAlignment = .leading,
+        isDisabled: Bool = false,
+        onCommit: @escaping (Int) -> Void
+    ) {
+        self.placeholder = placeholder
+        self.value = value
+        self.width = width
+        self.alignment = alignment
+        self.isDisabled = isDisabled
+        self.onCommit = onCommit
+        _draft = State(initialValue: String(value))
+    }
+
+    var body: some View {
+        TextField(placeholder, text: $draft)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: width)
+            .multilineTextAlignment(alignment)
+            .disabled(isDisabled)
+            .focused($isFocused)
+            .onSubmit {
+                commitDraft()
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused {
+                    commitDraft()
+                }
+            }
+            .onChange(of: value) { _, newValue in
+                let resolved = String(newValue)
+                if !isFocused && draft != resolved {
+                    draft = resolved
+                }
+            }
+    }
+
+    private func commitDraft() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            draft = String(value)
+            return
+        }
+        guard let parsed = Int(trimmed) else {
+            draft = String(value)
+            return
+        }
+        onCommit(parsed)
+        draft = String(parsed)
     }
 }
 
@@ -2318,21 +2372,15 @@ private struct ButtonBindingRow: View {
                         Text("Clutch DPI")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.72))
-                        TextField(
-                            "400",
-                            text: Binding(
-                                get: { String(editorStore.buttonBindingClutchDPI(for: row.slot)) },
-                                set: { newValue in
-                                    if let parsed = Int(newValue) {
-                                        editorStore.updateButtonBindingClutchDPI(slot: row.slot, dpi: parsed)
-                                    }
-                                }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 120)
-                        .multilineTextAlignment(.center)
-                        .disabled(!row.isEditable)
+                        DpiValueField(
+                            placeholder: "400",
+                            value: editorStore.buttonBindingClutchDPI(for: row.slot),
+                            width: 120,
+                            alignment: .center,
+                            isDisabled: !row.isEditable
+                        ) { parsed in
+                            editorStore.updateButtonBindingClutchDPI(slot: row.slot, dpi: parsed)
+                        }
                     }
                     .frame(width: 300, alignment: .trailing)
                 }
