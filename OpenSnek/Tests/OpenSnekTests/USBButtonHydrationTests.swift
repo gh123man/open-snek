@@ -172,12 +172,32 @@ final class USBButtonHydrationTests: XCTestCase {
         XCTAssertEqual(draft?.kind, .default)
     }
 
+    func testBasiliskV3ClutchDefaultBlockMapsToDefaultKind() {
+        let block: [UInt8] = [0x06, 0x01, 0x05, 0x01, 0x90, 0x01, 0x90]
+        let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
+            slot: 15,
+            functionBlock: block,
+            profileID: .basiliskV3
+        )
+        XCTAssertEqual(draft?.kind, .default)
+    }
+
     func testBasiliskV3ProClutchBlockMapsToDPIClutchOnOtherSlots() {
         let block: [UInt8] = [0x06, 0x05, 0x05, 0x01, 0x90, 0x01, 0x90]
         let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
             slot: 4,
             functionBlock: block,
             profileID: .basiliskV3Pro
+        )
+        XCTAssertEqual(draft?.kind, .dpiClutch)
+    }
+
+    func testBasiliskV3ClutchBlockMapsToDPIClutchOnOtherSlots() {
+        let block: [UInt8] = [0x06, 0x05, 0x05, 0x01, 0x90, 0x01, 0x90]
+        let draft = ButtonBindingSupport.buttonBindingDraftFromUSBFunctionBlock(
+            slot: 4,
+            functionBlock: block,
+            profileID: .basiliskV3
         )
         XCTAssertEqual(draft?.kind, .dpiClutch)
     }

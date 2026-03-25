@@ -30,7 +30,7 @@ public enum ButtonBindingSupport {
 
     public static func defaultDPIClutchDPI(for profileID: DeviceProfileID?) -> Int? {
         switch profileID {
-        case .basiliskV3Pro, .basiliskV335K:
+        case .basiliskV3, .basiliskV3Pro, .basiliskV335K:
             return defaultBasiliskDPIClutchDPI
         case .basiliskV3XHyperspeed, .none:
             return nil
@@ -50,7 +50,7 @@ public enum ButtonBindingSupport {
     ) -> ButtonBindingDraft? {
         let fallbackRate = 0x8E
         switch slot {
-        case 15 where profileID == .basiliskV3Pro || profileID == .basiliskV335K:
+        case 15 where profileID == .basiliskV3 || profileID == .basiliskV3Pro || profileID == .basiliskV335K:
             return ButtonBindingDraft(
                 kind: .dpiClutch,
                 hidKey: 4,
@@ -60,7 +60,7 @@ public enum ButtonBindingSupport {
             )
         case 96:
             switch profileID {
-            case .basiliskV335K, .basiliskV3XHyperspeed, .none:
+            case .basiliskV3, .basiliskV335K, .basiliskV3XHyperspeed, .none:
                 return ButtonBindingDraft(kind: .dpiCycle, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
             case .basiliskV3Pro:
                 return nil
@@ -127,7 +127,7 @@ public enum ButtonBindingSupport {
                 return ButtonBindingDraft(kind: .dpiCycle, hidKey: 4, turboEnabled: false, turboRate: fallbackRate)
             }
             if let profileID,
-               [.basiliskV3Pro, .basiliskV335K].contains(profileID),
+               [.basiliskV3, .basiliskV3Pro, .basiliskV335K].contains(profileID),
                let dpi = basiliskDPIClutchDPI(from: functionBlock, profileID: profileID) {
                 return ButtonBindingDraft(
                     kind: .dpiClutch,
@@ -298,6 +298,8 @@ public enum ButtonBindingSupport {
 
     public static func defaultUSBFunctionBlock(for slot: Int, profileID: DeviceProfileID? = nil) -> [UInt8]? {
         switch slot {
+        case 15 where profileID == .basiliskV3:
+            return [0x06, 0x01, 0x05, 0x01, 0x90, 0x01, 0x90]
         case 15 where profileID == .basiliskV335K:
             return [0x06, 0x01, 0x05, 0x01, 0x90, 0x01, 0x90]
         case 15 where profileID == .basiliskV3Pro:
@@ -347,7 +349,7 @@ public enum ButtonBindingSupport {
         ButtonBindingKind.allCases.filter { kind in
             switch kind {
             case .dpiClutch:
-                return profileID == .basiliskV3Pro || profileID == .basiliskV335K
+                return profileID == .basiliskV3 || profileID == .basiliskV3Pro || profileID == .basiliskV335K
             default:
                 return true
             }

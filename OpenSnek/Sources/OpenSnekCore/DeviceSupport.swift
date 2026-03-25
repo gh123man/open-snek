@@ -379,11 +379,6 @@ public enum DeviceProfiles {
             note: "This OpenRazer-backed profile assumes the Basilisk V3 matches the 35K's read-only scroll-mode control, but OpenSnek has not validated that on hardware yet."
         ),
         DocumentedButtonSlot(
-            descriptor: ButtonSlotDescriptor(slot: 15, friendlyName: "Sensitivity Clutch", defaultKind: .default),
-            access: .softwareReadOnly,
-            note: "This OpenRazer-backed profile assumes the Basilisk V3 matches the 35K's separate clutch path, but OpenSnek has not validated that on hardware yet."
-        ),
-        DocumentedButtonSlot(
             descriptor: ButtonSlotDescriptor(slot: 106, friendlyName: "Profile Button", defaultKind: .default),
             access: .softwareReadOnly,
             note: "This OpenRazer-backed profile assumes the Basilisk V3 matches the 35K's separate profile-button path, but OpenSnek has not validated that on hardware yet."
@@ -460,7 +455,7 @@ public enum DeviceProfiles {
         supportedProducts: [0x0099],
         buttonLayout: ButtonSlotLayout(
             visibleSlots: basiliskV335KUSBButtonSlots,
-            writableSlots: [1, 2, 3, 4, 5, 9, 10, 52, 53, 96],
+            writableSlots: [1, 2, 3, 4, 5, 9, 10, 15, 52, 53, 96],
             documentedSlots: basiliskV3USBDocumentedReadOnlySlots
         ),
         supportsAdvancedLightingEffects: true,
