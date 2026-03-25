@@ -1,4 +1,5 @@
 import XCTest
+import OpenSnekCore
 @testable import OpenSnek
 
 final class ServiceMenuBarPresentationTests: XCTestCase {
@@ -8,6 +9,33 @@ final class ServiceMenuBarPresentationTests: XCTestCase {
         XCTAssertEqual(ServiceMenuBarPresentation.compactDpiText(for: 1600), "1.6k")
         XCTAssertEqual(ServiceMenuBarPresentation.compactDpiText(for: 2000), "2k")
         XCTAssertEqual(ServiceMenuBarPresentation.compactDpiText(for: 12_000), "12k")
+    }
+
+    func testCompactDpiControlModeUsesSingleSliderForScalarStages() {
+        XCTAssertEqual(
+            ServiceMenuBarPresentation.compactDpiControlMode(
+                for: DpiPair(x: 1600, y: 1600),
+                supportsIndependentXYDPI: true
+            ),
+            .scalar(1600)
+        )
+        XCTAssertEqual(
+            ServiceMenuBarPresentation.compactDpiControlMode(
+                for: DpiPair(x: 1600, y: 2000),
+                supportsIndependentXYDPI: false
+            ),
+            .scalar(1600)
+        )
+    }
+
+    func testCompactDpiControlModeUsesSplitSlidersForSplitStages() {
+        XCTAssertEqual(
+            ServiceMenuBarPresentation.compactDpiControlMode(
+                for: DpiPair(x: 1600, y: 2000),
+                supportsIndependentXYDPI: true
+            ),
+            .split(DpiPair(x: 1600, y: 2000))
+        )
     }
 
     func testBatteryIconUsesAdaptiveSymbolAndSharedPresentation() {

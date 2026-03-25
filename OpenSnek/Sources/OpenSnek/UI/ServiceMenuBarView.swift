@@ -18,6 +18,11 @@ enum BatteryPresentation {
 }
 
 enum ServiceMenuBarPresentation {
+    enum CompactDpiControlMode: Equatable {
+        case scalar(Int)
+        case split(DpiPair)
+    }
+
     static func batteryIcon(percent: Int, charging: Bool?) -> BatteryIconPresentation {
         BatteryPresentation.icon(percent: percent, charging: charging)
     }
@@ -36,6 +41,16 @@ enum ServiceMenuBarPresentation {
         }
 
         return "\(Int(thousands.rounded()))k"
+    }
+
+    static func compactDpiControlMode(
+        for pair: DpiPair,
+        supportsIndependentXYDPI: Bool
+    ) -> CompactDpiControlMode {
+        guard supportsIndependentXYDPI, pair.x != pair.y else {
+            return .scalar(pair.x)
+        }
+        return .split(pair)
     }
 }
 
@@ -262,36 +277,118 @@ struct ServiceMenuBarView: View {
         let sliderRange = DeviceProfiles.sliderDpiRange(for: editorStore.selectedDeviceProfileID)
         let sliderDoubleRange = Double(sliderRange.lowerBound)...Double(sliderRange.upperBound)
         let activePair = editorStore.stagePair(editorStore.compactActiveStageIndex)
+        let controlMode = ServiceMenuBarPresentation.compactDpiControlMode(
+            for: activePair,
+            supportsIndependentXYDPI: editorStore.selectedDeviceSupportsIndependentXYDPI
+        )
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(editorStore.selectedDeviceSupportsIndependentXYDPI ? "Stage \(editorStore.editableActiveStage) X/Y DPI" : "Stage \(editorStore.editableActiveStage) DPI")
+                Text(dpiSliderTitle(for: controlMode))
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                 Spacer()
-                Text(editorStore.selectedDeviceSupportsIndependentXYDPI ? stageDisplayText(activePair) : "\(editorStore.compactActiveStageValue)")
+                Text(dpiSliderValueText(for: controlMode))
                     .font(.system(size: 12, weight: .black, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            if editorStore.selectedDeviceSupportsIndependentXYDPI {
-                Text("Split-axis stage edits are available in the main window.")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-            } else {
-                Slider(
-                    value: Binding(
-                        get: { Double(min(editorStore.compactActiveStageValue, sliderRange.upperBound)) },
-                        set: { newValue in
-                            let quantized = Int(round(newValue / 100.0) * 100.0)
-                            editorStore.updateStage(editorStore.compactActiveStageIndex, value: quantized)
-                            editorStore.scheduleAutoApplyDpi()
-                        }
-                    ),
-                    in: sliderDoubleRange,
-                    onEditingChanged: { editing in
-                        editorStore.isEditingDpiControl = editing
-                    }
+            switch controlMode {
+            case .scalar:
+                compactDpiSlider(
+                    currentValue: { editorStore.stageValue(editorStore.compactActiveStageIndex) },
+                    update: { value in
+                        editorStore.updateStage(editorStore.compactActiveStageIndex, value: value)
+                    },
+                    sliderRange: sliderRange,
+                    sliderDoubleRange: sliderDoubleRange
                 )
+            case .split:
+                VStack(alignment: .leading, spacing: 10) {
+                    compactDpiAxisSlider(
+                        axisLabel: "X",
+                        currentValue: { editorStore.stagePair(editorStore.compactActiveStageIndex).x },
+                        update: { value in
+                            editorStore.updateStageX(editorStore.compactActiveStageIndex, value: value)
+                        },
+                        sliderRange: sliderRange,
+                        sliderDoubleRange: sliderDoubleRange
+                    )
+                    compactDpiAxisSlider(
+                        axisLabel: "Y",
+                        currentValue: { editorStore.stagePair(editorStore.compactActiveStageIndex).y },
+                        update: { value in
+                            editorStore.updateStageY(editorStore.compactActiveStageIndex, value: value)
+                        },
+                        sliderRange: sliderRange,
+                        sliderDoubleRange: sliderDoubleRange
+                    )
+                }
             }
         }
+    }
+
+    private func dpiSliderTitle(for mode: ServiceMenuBarPresentation.CompactDpiControlMode) -> String {
+        switch mode {
+        case .scalar:
+            return "Stage \(editorStore.editableActiveStage) DPI"
+        case .split:
+            return "Stage \(editorStore.editableActiveStage) X/Y DPI"
+        }
+    }
+
+    private func dpiSliderValueText(for mode: ServiceMenuBarPresentation.CompactDpiControlMode) -> String {
+        switch mode {
+        case .scalar(let value):
+            return "\(value)"
+        case .split(let pair):
+            return stageDisplayText(pair)
+        }
+    }
+
+    private func compactDpiAxisSlider(
+        axisLabel: String,
+        currentValue: @escaping () -> Int,
+        update: @escaping (Int) -> Void,
+        sliderRange: ClosedRange<Int>,
+        sliderDoubleRange: ClosedRange<Double>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(axisLabel)
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(currentValue())")
+                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            compactDpiSlider(
+                currentValue: currentValue,
+                update: update,
+                sliderRange: sliderRange,
+                sliderDoubleRange: sliderDoubleRange
+            )
+        }
+    }
+
+    private func compactDpiSlider(
+        currentValue: @escaping () -> Int,
+        update: @escaping (Int) -> Void,
+        sliderRange: ClosedRange<Int>,
+        sliderDoubleRange: ClosedRange<Double>
+    ) -> some View {
+        Slider(
+            value: Binding(
+                get: { Double(min(currentValue(), sliderRange.upperBound)) },
+                set: { newValue in
+                    let quantized = Int(round(newValue / 100.0) * 100.0)
+                    update(quantized)
+                    editorStore.scheduleAutoApplyDpi()
+                }
+            ),
+            in: sliderDoubleRange,
+            onEditingChanged: { editing in
+                editorStore.isEditingDpiControl = editing
+            }
+        )
     }
 
     private func stageDisplayText(_ pair: DpiPair) -> String {

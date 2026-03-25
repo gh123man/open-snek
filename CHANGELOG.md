@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-25]
+
+### Fixed
+- The menu bar DPI editor once again shows a live slider for scalar stages on supported mice, while X/Y-capable stages now expand to separate `X` and `Y` sliders only when the active stage is actually split across axes.
+- DPI text entry fields now keep exact integer values instead of snapping the visible editor back through the slider's 100-DPI step size while you type.
+
 ## [2026-03-24]
 
 ### Added
