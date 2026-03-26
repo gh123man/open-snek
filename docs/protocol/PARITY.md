@@ -88,7 +88,7 @@ Validated in-session over USB:
 - observed profile summary getter on `0x00CB`: `0x00:0x87` -> `<active,0x00,count>`
 - tested active-profile write candidates on `0x00CB`: `0x00:0x07` with payloads `02`, `02 00`, `02 00 05`, and `02 00 00` all returned status `0x05` (`not supported`)
 - observed profile-model behavior on `0x00CB`: persistent slot `0x05` writes stay isolated, persistent slot `0x01` writes mirror into direct/live `0x00` while profile `1` is active, and later direct/live writes do not write back into persistent slot `0x01`
-- shipped client behavior: multi-slot onboard button-profile actions now use validated `0x02:0x8C` / `0x02:0x0C` reads/writes plus direct-layer projection instead of claiming an unresolved hardware active-profile setter
+- shipped client behavior: per-slot button-function reads/writes remain available to the backend and probe tooling, but the UI keeps onboard button-profile controls disabled until the hardware-selected active-slot model is validated
 
 ## OpenRazer-Backed Device Profile (Basilisk V3, USB PID `0x0099`)
 
@@ -112,7 +112,8 @@ Validated in-session over USB:
 - observed profile-button remap behavior on `0x6A`: right-click writes/readback can succeed, but repeated write/readback cycles later returned timeout/no-response frames; OpenSnek keeps this slot hidden until the USB ACK/readback path is reliable
 - observed non-match on `0x60`: it does not read back like the 35K top DPI-button block and is not exposed as a validated V3 Pro slot
 - client note: `0x02:0x8C` response layout on the observed extended slots matches the 35K-style offset (`response[11..<18]`) rather than the Basilisk V3 X shape
-- OpenSnek now ships the Basilisk V3 Pro USB profile with the same five-slot slot model as the Basilisk V3 35K: slot `1` is the live/base profile and slots `2...5` are stored button-profile slots. The hardware active-profile write path remains unresolved.
+- observed V3 Pro profile summary reads from `0x00:0x87` have not been trustworthy enough to ship as UI state: on March 25, 2026 the bottom profile LED changed while the register continued to report `02 00 03`
+- shipped client behavior: the V3 Pro still uses the validated USB button-function protocol for direct slot read/write/readback work, but OpenSnek keeps onboard profile controls out of the UI until selected-profile semantics are understood
 
 ## Validated BT Profile (Basilisk V3 X HyperSpeed BT PID `0x00BA`, macOS stack)
 

@@ -241,7 +241,7 @@ Client note:
 #### Get Onboard Profile Summary
 ```
 Command:  Class 0x00, ID 0x87, Size 0x00
-Response: args[0] = active onboard profile (1-based)
+Response: args[0] = reported onboard profile index (1-based)
           args[1] = reserved / zero in current captures
           args[2] = onboard profile count
 TxnID:    0x1F
@@ -263,15 +263,17 @@ Observed on Basilisk V3 35K (`0x00CB`):
   - this slot-addressed model is currently validated only for button mappings; DPI and lighting use separate storage keys below and should not be assumed to participate in profiles `2...5`
 
 Observed on Basilisk V3 Pro (`0x00AB`):
-- response payload `01 00 03` on USB, indicating active profile `1` and `3` onboard profiles
+- observed payloads `01 00 03` and `02 00 03` on USB during different sessions
+- on the attached V3 Pro on March 25, 2026, the bottom profile LED changed while `0x00:0x87` continued to report `02 00 03`, so this register is not yet validated as the hardware-selected live profile on that device
 - the corresponding low-bit write candidate (`0x00:0x07`) is not yet validated for active-profile switching
 
 Client note:
-- OpenSnek's shipped multi-profile UI uses the validated per-slot button-function protocol (`0x02:0x8C` / `0x02:0x0C`) for profile inspection, duplication, reset-to-default, and software-side live projection into the direct layer (`profile 0x00`).
-- That gives reliable software-managed switching for button mappings without claiming that the device's hardware active-profile register can be written yet.
+- Per-slot button-function storage via `0x02:0x8C` / `0x02:0x0C` is still validated and remains the canonical source for button-slot inspection and write/readback testing.
+- OpenSnek's shipped UI currently keeps onboard button-profile load/store controls disabled until the active-slot model is validated well enough that the UI can reflect the mouse honestly.
 
 Bring-up checklist for future devices:
 - read `0x00:0x87` before and after changing profiles in vendor software; if the reported active slot never changes, do not assume the device has a writable hardware active-profile register
+- if physical profile indicators or button behavior change while `0x00:0x87` does not, treat the register as a profile summary hint only and do not surface it as authoritative UI state
 - test `0x02:0x0C` / `0x02:0x8C` on one non-active stored slot and confirm whether the write is isolated or leaks into direct/live state
 - test persistent profile `0x01` and direct/live profile `0x00` separately; some devices alias or mirror those paths when profile `1` is the hardware-default active store
 - test a direct/live write after a persistent profile `0x01` write to learn whether the mirroring is one-way or fully aliased
