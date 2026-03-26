@@ -1866,6 +1866,66 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         }
     }
 
+    func testEditingSavedButtonProfileStillAutoAppliesToBaseAndDirectLayer() async throws {
+        let device = makeRefactorTestDevice(
+            id: "saved-button-auto-apply-device",
+            transport: .usb,
+            serial: "SAVED-BUTTON-AUTO-\(UUID().uuidString)",
+            onboardProfileCount: 3
+        )
+        let preferenceStore = DevicePreferenceStore()
+        let saved = preferenceStore.saveOpenSnekButtonProfile(
+            name: "Travel",
+            bindings: [
+                4: ButtonBindingDraft(kind: .rightClick, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        defer {
+            clearSavedButtonProfiles()
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 74,
+                    dpiValues: [800, 1600, 2400],
+                    activeStage: 0,
+                    dpiValue: 800,
+                    pollRate: 1000,
+                    sleepTimeout: 300,
+                    activeOnboardProfile: 1,
+                    onboardProfileCount: 3
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await MainActor.run {
+            appState.editorStore.updateUSBButtonProfile(2)
+            appState.editorStore.selectButtonProfileSource(.openSnekProfile(saved.id))
+            appState.editorStore.updateButtonBindingKind(slot: 4, kind: .mouseForward)
+        }
+
+        try await waitForRefactorCondition(timeout: 2.0) {
+            await backend.recordedPatches().contains(where: { patch in
+                patch.buttonBinding?.slot == 4 && patch.buttonBinding?.kind == .mouseForward
+            })
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.last(where: { $0.buttonBinding?.slot == 4 }))
+        XCTAssertEqual(patch.buttonBinding?.persistentProfile, 1)
+        XCTAssertEqual(patch.buttonBinding?.writePersistentLayer, true)
+        XCTAssertEqual(patch.buttonBinding?.writeDirectLayer, true)
+    }
+
     func testEditingBaseProfileAutoAppliesToLiveAndPersistentSlotOne() async throws {
         let device = makeRefactorTestDevice(
             id: "usb-profile-base-auto-apply-device",
