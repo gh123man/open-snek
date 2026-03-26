@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [2026-03-25]
 
 ### Fixed
+- USB state reads no longer latch a stale `Input Monitoring` denial after sleep/wake or transient HID resume failures; OpenSnek now retries fresh feature-report exchanges instead of getting stuck in a permission-error loop until restart.
 - The Basilisk V3 Pro wired USB path is now recognized when macOS reports `VID:PID 1532:00AA`; OpenSnek aliases that cable PID onto the existing Basilisk V3 Pro USB profile instead of treating the mouse as unsupported.
 - The button-mapping UI no longer exposes onboard profile load/store controls for Basilisk V3-family USB mice while active-profile selection is being revalidated; the app now avoids presenting profile state it cannot yet prove matches the mouse.
 - USB button edits on multi-profile mice once again auto-apply directly to the live layer and persist back to the mouse's durable base slot, even if the editor was previously pointed at another profile source.

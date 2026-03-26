@@ -449,7 +449,7 @@ actor BridgeClient {
 
         let sessions = sessionsFor(device: device)
         guard !sessions.isEmpty else {
-            if hidAccessDenied || managerAccessDenied {
+            if managerAccessDenied {
                 throw BridgeError.commandFailed(
                     "USB HID access denied by macOS. Enable Input Monitoring for OpenSnek " +
                     "(or Terminal/Xcode when running via swift run/Xcode), then relaunch."
@@ -686,7 +686,7 @@ actor BridgeClient {
         } else {
             let orderedSessions = sessionsFor(device: device)
             guard !orderedSessions.isEmpty else {
-                if hidAccessDenied {
+                if managerAccessDenied {
                     throw BridgeError.commandFailed(
                         "USB HID access denied by macOS. Enable Input Monitoring for OpenSnek " +
                         "(or Terminal/Xcode when running via swift run/Xcode), then relaunch."

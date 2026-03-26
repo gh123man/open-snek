@@ -138,32 +138,16 @@ extension BridgeClient {
     }
 
     func readUSBState(device: MouseDevice, session: USBHIDControlSession) async throws -> MouseState {
-        if hidAccessDenied {
-            throw BridgeError.commandFailed(
-                "USB HID feature reports are blocked by macOS permissions. " +
-                "Enable Input Monitoring for this app host and relaunch."
-            )
-        }
-
+        // A cached session-level kIOReturnNotPermitted can be transient around sleep/wake.
+        // Always attempt a fresh HID exchange here instead of trapping the process in a
+        // self-sustaining permission loop until restart.
         guard let dpi = try getDPI(session, device) else {
-            if hidAccessDenied {
-                throw BridgeError.commandFailed(
-                    "USB HID feature reports are blocked by macOS permissions. " +
-                    "Enable Input Monitoring for this app host and relaunch."
-                )
-            }
             throw BridgeError.commandFailed(
                 "USB device telemetry unavailable. Feature-report interface did not return usable responses."
             )
         }
 
         let serial = try getSerial(session, device)
-        if hidAccessDenied {
-            throw BridgeError.commandFailed(
-                "USB HID feature reports are blocked by macOS permissions. " +
-                "Enable Input Monitoring for this app host and relaunch."
-            )
-        }
         let fw = try getFirmware(session, device)
         let mode = try getDeviceMode(session, device)
         let battery = try getBattery(session, device)

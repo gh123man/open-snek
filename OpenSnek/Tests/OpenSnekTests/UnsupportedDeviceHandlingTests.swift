@@ -73,6 +73,29 @@ final class UnsupportedDeviceHandlingTests: XCTestCase {
         XCTAssertEqual(BridgeClient.usbReconnectSettleInterval, 2.0)
     }
 
+    func testStaleSessionPermissionFlagDoesNotMasqueradeAsManagerDenial() async {
+        let client = BridgeClient()
+        await client.testConfigureUSBAccessFlags(hidAccessDenied: true, managerAccessDenied: false)
+
+        let device = MouseDevice(
+            id: "usb-stale-denial",
+            vendor_id: 0x1532,
+            product_id: 0x00AB,
+            product_name: "Razer Basilisk V3 Pro",
+            transport: .usb,
+            path_b64: "",
+            serial: nil,
+            firmware: nil
+        )
+
+        do {
+            _ = try await client.readState(device: device)
+            XCTFail("Expected readState to fail without any HID sessions")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Device not available")
+        }
+    }
+
     func testUnsupportedUSBUsesProbedCapabilitiesOnly() async {
         let client = BridgeClient()
         let device = MouseDevice(
@@ -138,5 +161,12 @@ final class UnsupportedDeviceHandlingTests: XCTestCase {
 
         XCTAssertFalse(appState.deviceStore.selectedDeviceIsUnsupportedUSB)
         XCTAssertTrue(appState.deviceStore.selectedDeviceIsStrictlyUnsupported)
+    }
+}
+
+private extension BridgeClient {
+    func testConfigureUSBAccessFlags(hidAccessDenied: Bool, managerAccessDenied: Bool) {
+        self.hidAccessDenied = hidAccessDenied
+        self.managerAccessDenied = managerAccessDenied
     }
 }
