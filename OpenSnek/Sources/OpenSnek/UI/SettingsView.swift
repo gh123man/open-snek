@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(AppLog.levelDefaultsKey) private var logLevelRawValue = AppLog.currentLevel.rawValue
     @AppStorage(DeveloperRuntimeOptions.pollingEnabledDefaultsKey) private var developerPollingEnabled = true
     @AppStorage(DeveloperRuntimeOptions.passiveHIDUpdatesEnabledDefaultsKey) private var developerPassiveHIDUpdatesEnabled = true
+    @AppStorage(DeveloperRuntimeOptions.rememberWindowSizeEnabledDefaultsKey) private var developerRememberWindowSizeEnabled = true
     @State private var showsDiagnosticsSheet = false
     @State private var showsLocalStorageResetConfirmation = false
 
@@ -151,7 +152,9 @@ struct SettingsView: View {
                         }
                     ))
 
-                    Text("Use these switches to isolate polling from passive HID DPI callbacks during debugging.")
+                    Toggle("Remember window size", isOn: $developerRememberWindowSizeEnabled)
+
+                    Text("Use these switches to isolate polling from passive HID DPI callbacks during debugging, or temporarily disable window-frame restore while testing launch behavior.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -195,6 +198,7 @@ struct SettingsView: View {
                     logLevelRawValue = AppLog.defaultLevel.rawValue
                     developerPollingEnabled = true
                     developerPassiveHIDUpdatesEnabled = true
+                    developerRememberWindowSizeEnabled = true
                 }
             }
         } message: {

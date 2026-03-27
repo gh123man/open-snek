@@ -42,7 +42,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             NSRunningApplication.current.activate(options: [.activateAllWindows])
-            NSApp.windows.forEach { $0.makeKeyAndOrderFront(nil) }
+            NSApp.windows.forEach {
+                WindowChromeConfigurator.configure($0)
+                $0.makeKeyAndOrderFront(nil)
+            }
         }
     }
 
@@ -59,7 +62,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             BackgroundServiceCoordinator.shared.launchFullAppProcess()
             return false
         case .reopenWindows:
-            sender.windows.forEach { $0.makeKeyAndOrderFront(nil) }
+            sender.windows.forEach {
+                WindowChromeConfigurator.configure($0)
+                $0.makeKeyAndOrderFront(nil)
+            }
             return true
         case .noop:
             return true

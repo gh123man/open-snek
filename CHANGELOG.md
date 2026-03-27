@@ -5,6 +5,9 @@ All notable changes to this project are documented in this file.
 ## [2026-03-25]
 
 ### Fixed
+- Fresh main-window launches now default to the smallest width that still lands in the intended two-column detail layout, instead of opening wider than necessary.
+- In dev builds, Settings now includes a debug-only `Remember window size` switch, and relaunching the full app from the menu bar now restores the saved frame before the window is shown so the main window no longer pops from the default size to the remembered size.
+- The main window now saves its latest frame explicitly on move, resize, and close, so relaunches restore the last size reliably instead of falling back to the default window dimensions.
 - USB state reads no longer latch a stale `Input Monitoring` denial after sleep/wake or transient HID resume failures; OpenSnek now retries fresh feature-report exchanges instead of getting stuck in a permission-error loop until restart.
 - The Basilisk V3 Pro wired USB path is now recognized when macOS reports `VID:PID 1532:00AA`; OpenSnek aliases that cable PID onto the existing Basilisk V3 Pro USB profile instead of treating the mouse as unsupported.
 - The button-mapping UI no longer exposes onboard profile load/store controls for Basilisk V3-family USB mice while active-profile selection is being revalidated; the app now avoids presenting profile state it cannot yet prove matches the mouse.

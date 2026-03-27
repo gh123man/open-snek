@@ -3,6 +3,7 @@ import Foundation
 public enum DeveloperRuntimeOptions {
     public static let pollingEnabledDefaultsKey = "developer.runtimePollingEnabled"
     public static let passiveHIDUpdatesEnabledDefaultsKey = "developer.passiveHIDUpdatesEnabled"
+    public static let rememberWindowSizeEnabledDefaultsKey = "developer.rememberWindowSizeEnabled"
 
     public static func pollingEnabled(defaults: UserDefaults = .standard) -> Bool {
         storedBool(
@@ -15,6 +16,14 @@ public enum DeveloperRuntimeOptions {
     public static func passiveHIDUpdatesEnabled(defaults: UserDefaults = .standard) -> Bool {
         storedBool(
             forKey: passiveHIDUpdatesEnabledDefaultsKey,
+            defaults: defaults,
+            fallback: true
+        )
+    }
+
+    public static func rememberWindowSizeEnabled(defaults: UserDefaults = .standard) -> Bool {
+        storedBool(
+            forKey: rememberWindowSizeEnabledDefaultsKey,
             defaults: defaults,
             fallback: true
         )

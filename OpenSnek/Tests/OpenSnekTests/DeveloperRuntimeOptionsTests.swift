@@ -10,6 +10,7 @@ final class DeveloperRuntimeOptionsTests: XCTestCase {
 
         XCTAssertTrue(DeveloperRuntimeOptions.pollingEnabled(defaults: defaults))
         XCTAssertTrue(DeveloperRuntimeOptions.passiveHIDUpdatesEnabled(defaults: defaults))
+        XCTAssertTrue(DeveloperRuntimeOptions.rememberWindowSizeEnabled(defaults: defaults))
     }
 
     func testDeveloperRuntimeOptionsReadPersistedFalseValues() {
@@ -18,8 +19,10 @@ final class DeveloperRuntimeOptionsTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         defaults.set(false, forKey: DeveloperRuntimeOptions.pollingEnabledDefaultsKey)
         defaults.set(false, forKey: DeveloperRuntimeOptions.passiveHIDUpdatesEnabledDefaultsKey)
+        defaults.set(false, forKey: DeveloperRuntimeOptions.rememberWindowSizeEnabledDefaultsKey)
 
         XCTAssertFalse(DeveloperRuntimeOptions.pollingEnabled(defaults: defaults))
         XCTAssertFalse(DeveloperRuntimeOptions.passiveHIDUpdatesEnabled(defaults: defaults))
+        XCTAssertFalse(DeveloperRuntimeOptions.rememberWindowSizeEnabled(defaults: defaults))
     }
 }
