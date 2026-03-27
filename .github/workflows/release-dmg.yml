@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,6 +23,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve release ref
+        shell: bash
+        env:
+          WORKFLOW_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            RELEASE_REF_NAME="${WORKFLOW_TAG}"
+          else
+            RELEASE_REF_NAME="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$RELEASE_REF_NAME" =~ ^v[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "Expected a semantic version tag like v0.6.0, got: $RELEASE_REF_NAME" >&2
+            exit 1
+          fi
+          echo "RELEASE_REF_NAME=$RELEASE_REF_NAME" >> "$GITHUB_ENV"
 
       - name: Install XcodeGen
         run: |
@@ -27,10 +51,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          TAG_COMMIT="$(git rev-parse HEAD)"
           git fetch origin main --depth=1
-          git branch -r --contains "$GITHUB_SHA" | grep -q "origin/main"
+          git branch -r --contains "$TAG_COMMIT" | grep -q "origin/main"
 
       - name: Run Swift package tests
+        timeout-minutes: 20
         env:
           OPEN_SNEK_HW: "0"
         run: swift test --package-path OpenSnek
@@ -94,7 +120,7 @@ jobs:
           OPEN_SNEK_CODESIGN_KEYCHAIN: ${{ env.KEYCHAIN_PATH }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_REF_NAME#v}"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
           chmod +x OpenSnek/scripts/build_release_dmg.sh
           ./OpenSnek/scripts/build_release_dmg.sh \
@@ -109,11 +135,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OpenSnek-release-${{ github.ref_name }}
+          name: OpenSnek-release-${{ env.RELEASE_REF_NAME }}
           path: |
             OpenSnek/.release/artifacts
             OpenSnek/.release/logs
-          if-no-files-found: error
+          if-no-files-found: warn
           include-hidden-files: true
 
       - name: Publish GitHub Release asset
@@ -122,11 +148,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_REF_NAME#v}"
           DMG_PATH="OpenSnek/.release/artifacts/OpenSnek-${VERSION}.dmg"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --title "OpenSnek ${VERSION}" --notes-file "$RELEASE_NOTES_PATH"
+          if gh release view "$RELEASE_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_REF_NAME" --title "OpenSnek ${VERSION}" --notes-file "$RELEASE_NOTES_PATH"
           else
-            gh release create "$GITHUB_REF_NAME" --title "OpenSnek ${VERSION}" --notes-file "$RELEASE_NOTES_PATH"
+            gh release create "$RELEASE_REF_NAME" --title "OpenSnek ${VERSION}" --notes-file "$RELEASE_NOTES_PATH"
           fi
-          gh release upload "$GITHUB_REF_NAME" "$DMG_PATH" --clobber
+          gh release upload "$RELEASE_REF_NAME" "$DMG_PATH" --clobber

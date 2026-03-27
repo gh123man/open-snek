@@ -74,7 +74,7 @@ final class UnsupportedDeviceHandlingTests: XCTestCase {
     }
 
     func testStaleSessionPermissionFlagDoesNotMasqueradeAsManagerDenial() async {
-        let client = BridgeClient()
+        let client = BridgeClient(startHIDMonitoring: false)
         await client.testConfigureUSBAccessFlags(hidAccessDenied: true, managerAccessDenied: false)
 
         let device = MouseDevice(
@@ -97,7 +97,7 @@ final class UnsupportedDeviceHandlingTests: XCTestCase {
     }
 
     func testUnsupportedUSBUsesProbedCapabilitiesOnly() async {
-        let client = BridgeClient()
+        let client = BridgeClient(startHIDMonitoring: false)
         let device = MouseDevice(
             id: "usb-unsupported",
             vendor_id: 0x1532,

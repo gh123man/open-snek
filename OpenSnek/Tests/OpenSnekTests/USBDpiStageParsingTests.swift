@@ -4,7 +4,7 @@ import OpenSnekCore
 
 final class USBDpiStageParsingTests: XCTestCase {
     func testUSBStageSnapshotParsingUsesCorrectResponseOffsets() async {
-        let client = BridgeClient()
+        let client = BridgeClient(startHIDMonitoring: false)
 
         var response = [UInt8](repeating: 0, count: 11 + (2 * 7))
         response[0] = 0x02
@@ -33,7 +33,7 @@ final class USBDpiStageParsingTests: XCTestCase {
     }
 
     func testUSBStageSnapshotParsingPreservesIndependentXYPairs() async {
-        let client = BridgeClient()
+        let client = BridgeClient(startHIDMonitoring: false)
 
         var response = [UInt8](repeating: 0, count: 11 + 7)
         response[0] = 0x02

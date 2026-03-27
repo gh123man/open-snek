@@ -53,7 +53,7 @@ actor BridgeClient {
     private var hidManager: IOHIDManager?
     private var hidManagerOpenResult: IOReturn?
 
-    init() {
+    init(startHIDMonitoring: Bool = true) {
         hidDevicePresenceMonitor.onChange = { [weak self] event in
             Task {
                 await self?.handleHIDDevicePresenceEvent(event)
@@ -69,7 +69,9 @@ actor BridgeClient {
                 await self?.handlePassiveDpiHeartbeat(event)
             }
         }
-        hidDevicePresenceMonitor.start()
+        if startHIDMonitoring {
+            hidDevicePresenceMonitor.start()
+        }
     }
 
     func devicePresenceEventStream() -> AsyncStream<HIDDevicePresenceEvent> {
