@@ -52,8 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG_COMMIT="$(git rev-parse HEAD)"
-          git fetch origin main --depth=1
-          git branch -r --contains "$TAG_COMMIT" | grep -q "origin/main"
+          git fetch origin main
+          git merge-base --is-ancestor "$TAG_COMMIT" origin/main
 
       - name: Run Swift package tests
         timeout-minutes: 20
