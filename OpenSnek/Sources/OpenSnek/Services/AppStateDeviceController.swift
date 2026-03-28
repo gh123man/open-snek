@@ -1031,6 +1031,7 @@ final class AppStateDeviceController {
 
         let refreshRevision = applyController.stateRevision
         let refreshDeviceID = device.id
+        let cachedStateBeforeRefresh = stateCacheByDeviceID[device.id]
         let start = Date()
 
         do {
@@ -1046,8 +1047,38 @@ final class AppStateDeviceController {
             }
 
             let presentationDeviceID = presentationDevice.id
+            let latestCachedState = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
             if let latestCachedAt = latestCachedUpdateAt(sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID),
-               latestCachedAt > start {
+               latestCachedAt > start,
+               let latestCachedState {
+                if latestCachedState.differsOnlyInDynamicDpiState(from: cachedStateBeforeRefresh) {
+                    let merged = latestCachedState.mergedWithStableReadTelemetry(from: fetched)
+                    let updatedAt = Date()
+                    cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
+                    lastFullStateRefreshAtByDeviceID[refreshDeviceID] = updatedAt
+                    lastFullStateRefreshAtByDeviceID[presentationDeviceID] = updatedAt
+                    refreshFailureCountByDeviceID[refreshDeviceID] = 0
+                    refreshFailureCountByDeviceID[presentationDeviceID] = 0
+                    stateRefreshSuppressedUntilByDeviceID[refreshDeviceID] = nil
+                    stateRefreshSuppressedUntilByDeviceID[presentationDeviceID] = nil
+                    unavailableDeviceIDs.remove(refreshDeviceID)
+                    unavailableDeviceIDs.remove(presentationDeviceID)
+
+                    if deviceStore.selectedDeviceID == presentationDeviceID {
+                        if deviceStore.state != merged {
+                            deviceStore.state = merged
+                        }
+                        if applyController.shouldHydrateEditable(for: presentationDevice) {
+                            editorController.hydrateEditable(from: merged)
+                            await editorController.hydrateLightingStateIfNeeded(device: presentationDevice)
+                            await editorController.hydrateButtonBindingsIfNeeded(device: presentationDevice)
+                        }
+                        deviceStore.errorMessage = nil
+                        setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
+                    }
+                    await restorePersistedLightingIfNeeded(for: presentationDevice)
+                    return true
+                }
                 AppLog.debug(
                     "AppState",
                     "refreshState superseded-drop device=\(presentationDeviceID) startedAt=\(start.timeIntervalSince1970) " +

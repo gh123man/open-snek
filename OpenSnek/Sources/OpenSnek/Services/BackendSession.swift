@@ -275,6 +275,7 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
 
     func readState(device: MouseDevice) async throws -> MouseState {
         let readStartedAt = Date()
+        let cachedStateBeforeRead = cachedStateByDeviceID[device.id]
         if let cachedAt = cachedStateAtByDeviceID[device.id],
            let cached = cachedStateByDeviceID[device.id] {
             let shouldUseFastPolling = device.transport == .bluetooth
@@ -293,6 +294,15 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
         let state = try await client.readState(device: device)
         if Self.completedReadWasSuperseded(startedAt: readStartedAt, latestCachedAt: cachedStateAtByDeviceID[device.id]),
            let cached = cachedStateByDeviceID[device.id] {
+            if cached.differsOnlyInDynamicDpiState(from: cachedStateBeforeRead) {
+                let merged = cached.mergedWithStableReadTelemetry(from: state)
+                let now = Date()
+                cachedStateByDeviceID[device.id] = merged
+                cachedStateAtByDeviceID[device.id] = now
+                reconnectSeedStateByDeviceID[device.id] = merged
+                publishSnapshotIfService()
+                return merged
+            }
             AppLog.debug(
                 "Backend",
                 "readState stale-result masked device=\(device.id) startedAt=\(readStartedAt.timeIntervalSince1970) " +

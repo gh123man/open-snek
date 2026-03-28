@@ -142,4 +142,110 @@ final class MouseStateMergeTests: XCTestCase {
         XCTAssertEqual(merged.battery_percent, 87)
         XCTAssertNil(merged.charging)
     }
+
+    func testDiffersOnlyInDynamicDpiStateAcceptsDpiOnlyDelta() {
+        let previous = MouseState(
+            device: DeviceSummary(id: "dev", product_name: "Mouse", serial: "ABC", transport: .bluetooth, firmware: "1.2"),
+            connection: "Bluetooth",
+            battery_percent: 85,
+            charging: false,
+            dpi: DpiPair(x: 800, y: 800),
+            dpi_stages: DpiStages(active_stage: 0, values: [800, 1600, 3200]),
+            poll_rate: nil,
+            sleep_timeout: 5,
+            device_mode: nil,
+            low_battery_threshold_raw: 0x26,
+            led_value: 180,
+            capabilities: Capabilities(dpi_stages: true, poll_rate: false, power_management: true, button_remap: true, lighting: true)
+        )
+        let updated = MouseState(
+            device: previous.device,
+            connection: previous.connection,
+            battery_percent: previous.battery_percent,
+            charging: previous.charging,
+            dpi: DpiPair(x: 1600, y: 1600),
+            dpi_stages: DpiStages(active_stage: 1, values: [800, 1600, 3200]),
+            poll_rate: previous.poll_rate,
+            sleep_timeout: previous.sleep_timeout,
+            device_mode: previous.device_mode,
+            low_battery_threshold_raw: previous.low_battery_threshold_raw,
+            led_value: previous.led_value,
+            capabilities: previous.capabilities
+        )
+
+        XCTAssertTrue(updated.differsOnlyInDynamicDpiState(from: previous))
+    }
+
+    func testDiffersOnlyInDynamicDpiStateRejectsStableTelemetryChanges() {
+        let previous = MouseState(
+            device: DeviceSummary(id: "dev", product_name: "Mouse", serial: "ABC", transport: .bluetooth, firmware: "1.2"),
+            connection: "Bluetooth",
+            battery_percent: 85,
+            charging: false,
+            dpi: DpiPair(x: 800, y: 800),
+            dpi_stages: DpiStages(active_stage: 0, values: [800, 1600, 3200]),
+            poll_rate: nil,
+            sleep_timeout: 5,
+            device_mode: nil,
+            low_battery_threshold_raw: 0x26,
+            led_value: 180,
+            capabilities: Capabilities(dpi_stages: true, poll_rate: false, power_management: true, button_remap: true, lighting: true)
+        )
+        let updated = MouseState(
+            device: previous.device,
+            connection: previous.connection,
+            battery_percent: 72,
+            charging: false,
+            dpi: DpiPair(x: 1600, y: 1600),
+            dpi_stages: DpiStages(active_stage: 1, values: [800, 1600, 3200]),
+            poll_rate: previous.poll_rate,
+            sleep_timeout: previous.sleep_timeout,
+            device_mode: previous.device_mode,
+            low_battery_threshold_raw: previous.low_battery_threshold_raw,
+            led_value: previous.led_value,
+            capabilities: previous.capabilities
+        )
+
+        XCTAssertFalse(updated.differsOnlyInDynamicDpiState(from: previous))
+    }
+
+    func testMergedWithStableReadTelemetryPreservesNewerDpiAndUsesFreshBattery() {
+        let newerDpiState = MouseState(
+            device: DeviceSummary(id: "dev", product_name: "Mouse", serial: "ABC", transport: .bluetooth, firmware: "1.2"),
+            connection: "Bluetooth",
+            battery_percent: 85,
+            charging: false,
+            dpi: DpiPair(x: 1600, y: 1600),
+            dpi_stages: DpiStages(active_stage: 1, values: [800, 1600, 3200]),
+            poll_rate: nil,
+            sleep_timeout: 5,
+            device_mode: nil,
+            low_battery_threshold_raw: 0x26,
+            led_value: 180,
+            capabilities: Capabilities(dpi_stages: true, poll_rate: false, power_management: true, button_remap: true, lighting: true)
+        )
+        let staleFullRead = MouseState(
+            device: DeviceSummary(id: "dev", product_name: "Mouse", serial: "ABC", transport: .bluetooth, firmware: "1.2"),
+            connection: "Bluetooth",
+            battery_percent: 72,
+            charging: false,
+            dpi: DpiPair(x: 800, y: 800),
+            dpi_stages: DpiStages(active_stage: 0, values: [800, 1600, 3200]),
+            poll_rate: nil,
+            sleep_timeout: 10,
+            device_mode: nil,
+            low_battery_threshold_raw: 0x2A,
+            led_value: 120,
+            capabilities: Capabilities(dpi_stages: true, poll_rate: false, power_management: true, button_remap: true, lighting: true)
+        )
+
+        let merged = newerDpiState.mergedWithStableReadTelemetry(from: staleFullRead)
+
+        XCTAssertEqual(merged.battery_percent, 72)
+        XCTAssertEqual(merged.dpi?.x, 1600)
+        XCTAssertEqual(merged.dpi_stages.active_stage, 1)
+        XCTAssertEqual(merged.sleep_timeout, 10)
+        XCTAssertEqual(merged.low_battery_threshold_raw, 0x2A)
+        XCTAssertEqual(merged.led_value, 120)
+    }
 }

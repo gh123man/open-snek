@@ -263,6 +263,79 @@ public extension MouseState {
             )
         )
     }
+
+    var hasStableTelemetryData: Bool {
+        battery_percent != nil ||
+            charging != nil ||
+            poll_rate != nil ||
+            sleep_timeout != nil ||
+            device_mode != nil ||
+            low_battery_threshold_raw != nil ||
+            scroll_mode != nil ||
+            scroll_acceleration != nil ||
+            scroll_smart_reel != nil ||
+            active_onboard_profile != nil ||
+            onboard_profile_count != nil ||
+            led_value != nil
+    }
+
+    func differsOnlyInDynamicDpiState(from previous: MouseState?) -> Bool {
+        guard let previous else {
+            return !hasStableTelemetryData
+        }
+
+        return device == previous.device &&
+            connection == previous.connection &&
+            battery_percent == previous.battery_percent &&
+            charging == previous.charging &&
+            poll_rate == previous.poll_rate &&
+            sleep_timeout == previous.sleep_timeout &&
+            device_mode == previous.device_mode &&
+            low_battery_threshold_raw == previous.low_battery_threshold_raw &&
+            scroll_mode == previous.scroll_mode &&
+            scroll_acceleration == previous.scroll_acceleration &&
+            scroll_smart_reel == previous.scroll_smart_reel &&
+            active_onboard_profile == previous.active_onboard_profile &&
+            onboard_profile_count == previous.onboard_profile_count &&
+            led_value == previous.led_value &&
+            capabilities == previous.capabilities
+    }
+
+    func mergedWithStableReadTelemetry(from read: MouseState) -> MouseState {
+        let mergedBatteryPercent = read.battery_percent ?? battery_percent
+        let mergedCharging: Bool?
+        if read.battery_percent != nil {
+            mergedCharging = read.charging
+        } else {
+            mergedCharging = read.charging ?? charging
+        }
+
+        return MouseState(
+            device: device.merged(with: read.device),
+            connection: connection,
+            battery_percent: mergedBatteryPercent,
+            charging: mergedCharging,
+            dpi: dpi,
+            dpi_stages: dpi_stages,
+            poll_rate: read.poll_rate ?? poll_rate,
+            sleep_timeout: read.sleep_timeout ?? sleep_timeout,
+            device_mode: read.device_mode ?? device_mode,
+            low_battery_threshold_raw: read.low_battery_threshold_raw ?? low_battery_threshold_raw,
+            scroll_mode: read.scroll_mode ?? scroll_mode,
+            scroll_acceleration: read.scroll_acceleration ?? scroll_acceleration,
+            scroll_smart_reel: read.scroll_smart_reel ?? scroll_smart_reel,
+            active_onboard_profile: read.active_onboard_profile ?? active_onboard_profile,
+            onboard_profile_count: read.onboard_profile_count ?? onboard_profile_count,
+            led_value: read.led_value ?? led_value,
+            capabilities: Capabilities(
+                dpi_stages: capabilities.dpi_stages || read.capabilities.dpi_stages,
+                poll_rate: capabilities.poll_rate || read.capabilities.poll_rate,
+                power_management: capabilities.power_management || read.capabilities.power_management,
+                button_remap: capabilities.button_remap || read.capabilities.button_remap,
+                lighting: capabilities.lighting || read.capabilities.lighting
+            )
+        )
+    }
 }
 
 public struct DeviceSummary: Codable, Hashable, Sendable {

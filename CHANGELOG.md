@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-28]
+
+### Fixed
+- Bluetooth battery and other full-state telemetry no longer get stuck behind newer DPI-only cache updates. When a slower full read finishes after a passive HID or fast-DPI refresh, OpenSnek now preserves the newer DPI stage state while still applying the fresh battery and stable telemetry fields instead of dropping that full read as stale until restart.
+
 ## [2026-03-25]
 
 ### Fixed
