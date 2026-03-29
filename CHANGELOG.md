@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-29]
+
+### Added
+- Added `docs/DEVICE_SUPPORT.md`, a per-device USB/Bluetooth support matrix that highlights shipped coverage and the main missing features for each supported profile.
+
 ## [2026-03-28]
 
 ### Fixed

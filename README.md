@@ -70,6 +70,11 @@ Status key:
 
 Not every feature is fully supported on every listed transport yet. Some controls and readback paths are still partial while capture, testing, and validation continue.
 
+Support docs:
+- Per-device USB/BT feature matrix: [docs/DEVICE_SUPPORT.md](docs/DEVICE_SUPPORT.md)
+- Protocol and transport docs: [docs/protocol/PROTOCOL.md](docs/protocol/PROTOCOL.md)
+- Contribution and new-device workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
+
 Unsupported Razer mice still get a best-effort experience when possible. OpenSnek will probe for controls that already match known behavior, show a light warning that the device is not fully supported, and avoid exposing UI for features that have not been mapped safely yet.
 
 Support for more devices is welcome. New device support can land either through outside contributors or as more hardware becomes available for capture, testing, and validation.
@@ -114,6 +119,7 @@ swift test --package-path OpenSnek
 
 - App build, run, probe, and validation details: [OpenSnek/README.md](OpenSnek/README.md)
 - Device support and reverse-engineering workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Device support matrix by feature and transport: [docs/DEVICE_SUPPORT.md](docs/DEVICE_SUPPORT.md)
 - DMG release and notarization setup: [docs/release/DMG_RELEASE.md](docs/release/DMG_RELEASE.md)
 - Protocol documentation: [docs/protocol/PROTOCOL.md](docs/protocol/PROTOCOL.md)
 - Supported Python tooling: [tools/python/README.md](tools/python/README.md)
