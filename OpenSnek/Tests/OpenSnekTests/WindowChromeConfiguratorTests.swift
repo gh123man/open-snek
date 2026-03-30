@@ -4,32 +4,6 @@ import OpenSnekAppSupport
 
 @MainActor
 final class WindowChromeConfiguratorTests: XCTestCase {
-    func testCompatibilityChromeIsEnabledOnMacOS15() {
-        XCTAssertTrue(
-            WindowChromeConfigurator.shouldUseCompatibilityChrome(
-                osVersion: OperatingSystemVersion(majorVersion: 15, minorVersion: 6, patchVersion: 0)
-            )
-        )
-    }
-
-    func testCompatibilityChromeIsDisabledOutsideMacOS15() {
-        XCTAssertFalse(
-            WindowChromeConfigurator.shouldUseCompatibilityChrome(
-                osVersion: OperatingSystemVersion(majorVersion: 14, minorVersion: 7, patchVersion: 5)
-            )
-        )
-        XCTAssertFalse(
-            WindowChromeConfigurator.shouldUseCompatibilityChrome(
-                osVersion: OperatingSystemVersion(majorVersion: 16, minorVersion: 0, patchVersion: 0)
-            )
-        )
-        XCTAssertFalse(
-            WindowChromeConfigurator.shouldUseCompatibilityChrome(
-                osVersion: OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
-            )
-        )
-    }
-
     func testConfigureUsesCustomFramePersistenceInsteadOfAppKitAutosave() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
@@ -38,10 +12,7 @@ final class WindowChromeConfiguratorTests: XCTestCase {
             defer: false
         )
 
-        WindowChromeConfigurator.configure(
-            window,
-            osVersion: OperatingSystemVersion(majorVersion: 14, minorVersion: 7, patchVersion: 5)
-        )
+        WindowChromeConfigurator.configure(window)
 
         XCTAssertTrue(window.frameAutosaveName.isEmpty)
     }
@@ -61,11 +32,7 @@ final class WindowChromeConfiguratorTests: XCTestCase {
             defer: false
         )
 
-        WindowChromeConfigurator.configure(
-            window,
-            defaults: defaults,
-            osVersion: OperatingSystemVersion(majorVersion: 14, minorVersion: 7, patchVersion: 5)
-        )
+        WindowChromeConfigurator.configure(window, defaults: defaults)
 
         XCTAssertTrue(window.frameAutosaveName.isEmpty)
     }
@@ -75,10 +42,13 @@ final class WindowChromeConfiguratorTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         let autosaveName = "OpenSnekMainWindow.\(UUID().uuidString)"
         let key = WindowChromeConfigurator.framePersistenceKey(for: autosaveName)
+        let appKitKey = "NSWindow Frame \(autosaveName)"
 
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(false, forKey: DeveloperRuntimeOptions.rememberWindowSizeEnabledDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: appKitKey)
+        defer { UserDefaults.standard.removeObject(forKey: appKitKey) }
 
         let window = NSWindow(
             contentRect: NSRect(x: 40, y: 50, width: 1210, height: 780),
@@ -94,6 +64,7 @@ final class WindowChromeConfiguratorTests: XCTestCase {
         )
 
         XCTAssertNil(defaults.string(forKey: key))
+        XCTAssertNil(UserDefaults.standard.string(forKey: appKitKey))
     }
 
     func testConfigureRestoresPersistedFrameFromDefaults() {
@@ -207,9 +178,12 @@ final class WindowChromeConfiguratorTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         let autosaveName = "OpenSnekMainWindow.\(UUID().uuidString)"
         let key = WindowChromeConfigurator.framePersistenceKey(for: autosaveName)
+        let appKitKey = "NSWindow Frame \(autosaveName)"
 
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        UserDefaults.standard.removeObject(forKey: appKitKey)
+        defer { UserDefaults.standard.removeObject(forKey: appKitKey) }
 
         let window = NSWindow(
             contentRect: NSRect(x: 40, y: 50, width: 1210, height: 780),
@@ -225,5 +199,6 @@ final class WindowChromeConfiguratorTests: XCTestCase {
         )
 
         XCTAssertEqual(defaults.string(forKey: key), NSStringFromRect(window.frame))
+        XCTAssertNil(UserDefaults.standard.string(forKey: appKitKey))
     }
 }
