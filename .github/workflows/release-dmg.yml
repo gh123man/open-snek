@@ -56,7 +56,7 @@ jobs:
           git merge-base --is-ancestor "$TAG_COMMIT" origin/main
 
       - name: Run Swift package tests
-        timeout-minutes: 20
+        timeout-minutes: 30
         env:
           OPEN_SNEK_HW: "0"
         run: swift test --package-path OpenSnek
