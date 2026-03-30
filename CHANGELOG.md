@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-03-30]
+
+### Fixed
+- Restored main-window frames are now clamped back onto a currently visible display before the window is shown, so stale saved positions from older display layouts no longer reopen the app nearly off-screen or at an unexpectedly shrunken size.
+- Showing the full app from the menu bar service now restores the last stable user-sized window frame instead of re-saving transient startup or shutdown sizes, so `Show OpenSnek` reopens the main window where you left it.
+
 ## [2026-03-29]
 
 ### Added
