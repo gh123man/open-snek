@@ -6,12 +6,6 @@ struct WindowChromeConfigurator: NSViewRepresentable {
     nonisolated static let mainWindowFrameAutosaveName = "OpenSnekMainWindow"
     nonisolated static let framePersistenceKeyPrefix = "windowFrame."
 
-    nonisolated static func shouldUseCompatibilityChrome(
-        osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
-    ) -> Bool {
-        osVersion.majorVersion == 15
-    }
-
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
@@ -38,8 +32,7 @@ struct WindowChromeConfigurator: NSViewRepresentable {
     static func configure(
         _ window: NSWindow,
         autosaveName: String = mainWindowFrameAutosaveName,
-        defaults: UserDefaults = .standard,
-        osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+        defaults: UserDefaults = .standard
     ) {
         if DeveloperRuntimeOptions.rememberWindowSizeEnabled(defaults: defaults) {
             window.setFrameAutosaveName(autosaveName)
@@ -48,14 +41,12 @@ struct WindowChromeConfigurator: NSViewRepresentable {
         window.title = ""
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-
-        if shouldUseCompatibilityChrome(osVersion: osVersion) {
-            return
-        }
-
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        window.toolbarStyle = .unified
+        // Do not set toolbarStyle = .unified — this window has no toolbar,
+        // and the unified toolbar style causes AppKit to surface the app icon
+        // in the title-bar region on macOS 15 and some earlier versions,
+        // producing a spurious status-bar icon even when service mode is off.
         if #available(macOS 11.0, *) {
             window.titlebarSeparatorStyle = .none
         }
