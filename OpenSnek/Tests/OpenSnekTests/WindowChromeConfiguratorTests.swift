@@ -4,7 +4,7 @@ import OpenSnekAppSupport
 
 @MainActor
 final class WindowChromeConfiguratorTests: XCTestCase {
-    func testConfigureAssignsMainWindowFrameAutosaveName() {
+    func testConfigureUsesCustomFramePersistenceInsteadOfAppKitAutosave() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -14,10 +14,10 @@ final class WindowChromeConfiguratorTests: XCTestCase {
 
         WindowChromeConfigurator.configure(window)
 
-        XCTAssertEqual(window.frameAutosaveName, WindowChromeConfigurator.mainWindowFrameAutosaveName)
+        XCTAssertTrue(window.frameAutosaveName.isEmpty)
     }
 
-    func testConfigureSkipsFrameAutosaveWhenDeveloperRememberWindowSizeIsDisabled() {
+    func testConfigureLeavesFrameAutosaveDisabledWhenDeveloperRememberWindowSizeIsDisabled() {
         let suiteName = "WindowChromeConfiguratorTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
 
@@ -75,8 +75,6 @@ final class WindowChromeConfiguratorTests: XCTestCase {
 
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(autosaveName)")
-        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(autosaveName)") }
 
         let persistedWindow = NSWindow(
             contentRect: NSRect(x: 120, y: 80, width: 1330, height: 840),
@@ -98,11 +96,81 @@ final class WindowChromeConfiguratorTests: XCTestCase {
         let restored = WindowChromeConfigurator.restorePersistedFrameIfNeeded(
             window,
             autosaveName: autosaveName,
-            defaults: defaults
+            defaults: defaults,
+            visibleScreenFrames: [NSRect(x: 0, y: 0, width: 1600, height: 1000)]
         )
 
         XCTAssertTrue(restored)
         XCTAssertEqual(window.frame, persistedFrame)
+    }
+
+    func testRestorePersistedFrameClampsOffscreenOriginIntoVisibleBounds() {
+        let suiteName = "WindowChromeConfiguratorTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let autosaveName = "OpenSnekMainWindow.\(UUID().uuidString)"
+        let key = WindowChromeConfigurator.framePersistenceKey(for: autosaveName)
+
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistedFrame = NSRect(x: -700, y: -300, width: 1330, height: 840)
+        defaults.set(NSStringFromRect(persistedFrame), forKey: key)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        let restored = WindowChromeConfigurator.restorePersistedFrameIfNeeded(
+            window,
+            autosaveName: autosaveName,
+            defaults: defaults,
+            visibleScreenFrames: [NSRect(x: 0, y: 0, width: 1600, height: 1000)]
+        )
+
+        XCTAssertTrue(restored)
+        XCTAssertEqual(window.frame, NSRect(x: 0, y: 0, width: 1330, height: 840))
+    }
+
+    func testRestorePersistedFrameShrinksFrameToFitVisibleScreen() {
+        let suiteName = "WindowChromeConfiguratorTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let autosaveName = "OpenSnekMainWindow.\(UUID().uuidString)"
+        let key = WindowChromeConfigurator.framePersistenceKey(for: autosaveName)
+
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistedFrame = NSRect(x: 100, y: 80, width: 1800, height: 1200)
+        defaults.set(NSStringFromRect(persistedFrame), forKey: key)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        let restored = WindowChromeConfigurator.restorePersistedFrameIfNeeded(
+            window,
+            autosaveName: autosaveName,
+            defaults: defaults,
+            visibleScreenFrames: [NSRect(x: 0, y: 0, width: 1440, height: 900)]
+        )
+
+        XCTAssertTrue(restored)
+        XCTAssertEqual(window.frame, NSRect(x: 0, y: 0, width: 1440, height: 900))
+    }
+
+    func testNormalizedPersistedFrameRepositionsCurrentWindowFrame() {
+        let normalized = WindowChromeConfigurator.normalizedPersistedFrame(
+            NSRect(x: -900, y: -200, width: 1200, height: 828),
+            visibleScreenFrames: [NSRect(x: 0, y: 0, width: 1440, height: 900)]
+        )
+
+        XCTAssertEqual(normalized, NSRect(x: 0, y: 0, width: 1200, height: 828))
     }
 
     func testPersistFrameWritesFrameSnapshotToDefaults() {
@@ -131,6 +199,6 @@ final class WindowChromeConfiguratorTests: XCTestCase {
         )
 
         XCTAssertEqual(defaults.string(forKey: key), NSStringFromRect(window.frame))
-        XCTAssertNotNil(UserDefaults.standard.string(forKey: appKitKey))
+        XCTAssertNil(UserDefaults.standard.string(forKey: appKitKey))
     }
 }
