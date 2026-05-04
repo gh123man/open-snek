@@ -4,6 +4,7 @@ import OpenSnekCore
 @MainActor
 final class AppStateDeviceController {
     private static let bluetoothPassiveHeartbeatConnectedInterval: TimeInterval = 1.5
+    private static let recentDynamicDpiMutationMergeWindow: TimeInterval = 1.0
 
     private let environment: AppEnvironment
     private let deviceStore: DeviceStore
@@ -16,6 +17,7 @@ final class AppStateDeviceController {
 
     private var stateCacheByDeviceID: [String: MouseState] = [:]
     private var lastUpdatedByDeviceID: [String: Date] = [:]
+    private var lastStateMutationAtByDeviceID: [String: Date] = [:]
     private var refreshingStateDeviceIDs: Set<String> = []
     private var refreshingFastDpiDeviceIDs: Set<String> = []
     private var suppressFastDpiUntilByDeviceID: [String: Date] = [:]
@@ -97,6 +99,7 @@ final class AppStateDeviceController {
     func storeState(_ state: MouseState, for deviceID: String, updatedAt: Date) {
         stateCacheByDeviceID[deviceID] = state
         lastUpdatedByDeviceID[deviceID] = updatedAt
+        lastStateMutationAtByDeviceID[deviceID] = updatedAt
     }
 
     func setFastDpiSuppressed(until: Date, for deviceID: String) {
@@ -157,6 +160,7 @@ final class AppStateDeviceController {
         let liveIDs = Set(snapshot.devices.map(\.id))
         stateCacheByDeviceID = stateCacheByDeviceID.filter { liveIDs.contains($0.key) }
         lastUpdatedByDeviceID = lastUpdatedByDeviceID.filter { liveIDs.contains($0.key) }
+        lastStateMutationAtByDeviceID = lastStateMutationAtByDeviceID.filter { liveIDs.contains($0.key) }
 
         for (deviceID, remoteState) in snapshot.stateByDeviceID {
             let snapshotUpdatedAt = snapshot.lastUpdatedByDeviceID[deviceID] ?? Date()
@@ -171,6 +175,7 @@ final class AppStateDeviceController {
             }
             stateCacheByDeviceID[deviceID] = remoteState
             lastUpdatedByDeviceID[deviceID] = snapshotUpdatedAt
+            lastStateMutationAtByDeviceID[deviceID] = Date()
             refreshFailureCountByDeviceID[deviceID] = 0
             unavailableDeviceIDs.remove(deviceID)
         }
@@ -376,6 +381,7 @@ final class AppStateDeviceController {
                 unavailableDeviceIDs.remove(id)
                 setDpiUpdateTransportStatus(nil, for: id)
                 lastUpdatedByDeviceID[id] = nil
+                lastStateMutationAtByDeviceID[id] = nil
                 lastFullStateRefreshStartedAtByDeviceID[id] = nil
                 suppressFastDpiUntilByDeviceID[id] = nil
                 lastUSBFastDpiAtByDeviceID[id] = nil
@@ -943,13 +949,21 @@ final class AppStateDeviceController {
         return ordered
     }
 
-    func cacheState(_ state: MouseState, sourceDeviceID: String, presentationDeviceID: String, updatedAt: Date = Date()) {
+    func cacheState(
+        _ state: MouseState,
+        sourceDeviceID: String,
+        presentationDeviceID: String,
+        updatedAt: Date = Date(),
+        observedAt: Date = Date()
+    ) {
         stateCacheByDeviceID[sourceDeviceID] = state
         lastUpdatedByDeviceID[sourceDeviceID] = updatedAt
+        lastStateMutationAtByDeviceID[sourceDeviceID] = observedAt
 
         if presentationDeviceID != sourceDeviceID {
             stateCacheByDeviceID[presentationDeviceID] = state
             lastUpdatedByDeviceID[presentationDeviceID] = updatedAt
+            lastStateMutationAtByDeviceID[presentationDeviceID] = observedAt
         }
 
         if deviceStore.selectedDeviceID == presentationDeviceID {
@@ -961,6 +975,29 @@ final class AppStateDeviceController {
         [lastUpdatedByDeviceID[sourceDeviceID], lastUpdatedByDeviceID[presentationDeviceID]]
             .compactMap { $0 }
             .max()
+    }
+
+    func latestCachedMutationAt(sourceDeviceID: String, presentationDeviceID: String) -> Date? {
+        [lastStateMutationAtByDeviceID[sourceDeviceID], lastStateMutationAtByDeviceID[presentationDeviceID]]
+            .compactMap { $0 }
+            .max()
+    }
+
+    private func shouldPreferRecentDynamicDpiMutation(
+        over read: MouseState,
+        latestCachedState: MouseState?,
+        latestCachedMutationAt: Date?,
+        latestCachedStableUpdateAt: Date?,
+        now: Date = Date()
+    ) -> Bool {
+        guard let latestCachedState,
+              latestCachedState.differsOnlyInDynamicDpiState(from: read),
+              let latestCachedMutationAt,
+              now.timeIntervalSince(latestCachedMutationAt) <= Self.recentDynamicDpiMutationMergeWindow else {
+            return false
+        }
+        guard let latestCachedStableUpdateAt else { return true }
+        return latestCachedMutationAt > latestCachedStableUpdateAt
     }
 
     static func isDeviceAvailabilityMessage(_ message: String) -> Bool {
@@ -1121,8 +1158,9 @@ final class AppStateDeviceController {
 
             let presentationDeviceID = presentationDevice.id
             let latestCachedState = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
-            if let latestCachedAt = latestCachedUpdateAt(sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID),
-               latestCachedAt > start,
+            let latestCachedStableUpdateAt = latestCachedUpdateAt(sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID)
+            if let latestCachedMutationAt = latestCachedMutationAt(sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID),
+               latestCachedMutationAt > start,
                let latestCachedState {
                 if latestCachedState.differsOnlyInDynamicDpiState(from: cachedStateBeforeRefresh) {
                     let merged = latestCachedState.mergedWithStableReadTelemetry(from: fetched)
@@ -1163,9 +1201,54 @@ final class AppStateDeviceController {
                 AppLog.debug(
                     "AppState",
                     "refreshState superseded-drop device=\(presentationDeviceID) startedAt=\(start.timeIntervalSince1970) " +
-                    "cachedAt=\(latestCachedAt.timeIntervalSince1970)"
+                    "cachedAt=\(latestCachedStableUpdateAt?.timeIntervalSince1970 ?? 0) mutationAt=\(latestCachedMutationAt.timeIntervalSince1970)"
                 )
                 return false
+            }
+            if shouldPreferRecentDynamicDpiMutation(
+                over: fetched,
+                latestCachedState: latestCachedState,
+                latestCachedMutationAt: latestCachedMutationAt(sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID),
+                latestCachedStableUpdateAt: latestCachedStableUpdateAt
+            ),
+               let latestCachedState {
+                let merged = latestCachedState.mergedWithStableReadTelemetry(from: fetched)
+                let updatedAt = Date()
+                cacheState(merged, sourceDeviceID: refreshDeviceID, presentationDeviceID: presentationDeviceID, updatedAt: updatedAt)
+                lastFullStateRefreshStartedAtByDeviceID[refreshDeviceID] = start
+                lastFullStateRefreshStartedAtByDeviceID[presentationDeviceID] = start
+                refreshFailureCountByDeviceID[refreshDeviceID] = 0
+                refreshFailureCountByDeviceID[presentationDeviceID] = 0
+                stateRefreshSuppressedUntilByDeviceID[refreshDeviceID] = nil
+                stateRefreshSuppressedUntilByDeviceID[presentationDeviceID] = nil
+                unavailableDeviceIDs.remove(refreshDeviceID)
+                unavailableDeviceIDs.remove(presentationDeviceID)
+
+                if deviceStore.selectedDeviceID == presentationDeviceID {
+                    if deviceStore.state != merged {
+                        deviceStore.state = merged
+                    }
+                    let holdsPersistedConnectPresentation = primeSelectedConnectPresentationIfNeeded(
+                        device: presentationDevice,
+                        applyController: applyController,
+                        editorController: editorController
+                    )
+                    if applyController.shouldHydrateEditable(for: presentationDevice), !holdsPersistedConnectPresentation {
+                        editorController.hydrateEditable(from: merged)
+                        await editorController.hydrateLightingStateIfNeeded(device: presentationDevice)
+                        await editorController.hydrateButtonBindingsIfNeeded(device: presentationDevice)
+                    }
+                    deviceStore.errorMessage = nil
+                    setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
+                }
+                await restorePersistedSettingsIfNeeded(for: presentationDevice)
+
+                AppLog.debug(
+                    "AppState",
+                    "refreshState merged recent-fast-dpi device=\(presentationDeviceID) active=\(merged.dpi_stages.active_stage.map(String.init) ?? "nil") " +
+                    "values=\(merged.dpi_stages.values?.map(String.init).joined(separator: ",") ?? "nil")"
+                )
+                return true
             }
             let previous = stateCacheByDeviceID[presentationDeviceID] ?? stateCacheByDeviceID[refreshDeviceID]
             let merged = fetched.merged(with: previous)

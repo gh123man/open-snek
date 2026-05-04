@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - Reconnect restores now reapply the full last OpenSnek-owned device snapshot instead of only remembered lighting state. When enabled, reconnects restore DPI stages, active DPI, poll rate, power settings, scroll settings, lighting, and button bindings without replacing that snapshot from passive device readback, and foreground refresh polls now stay paused until that restore finishes so reconnects do not briefly snap back to stale DPI state mid-apply.
+- The main window now keeps following live DPI-stage changes after reconnect restore is enabled. Recent fast DPI updates are treated as newer than stale full-state reads, so the status item and the selected-device editor stay in sync instead of the editor snapping back to an older stage.
 - Basilisk V3 X HyperSpeed now always uses the local restore-on-connect path internally, because OpenSnek cannot fully read its live settings back from the mouse after reconnect.
 
 ## [2026-04-06]
