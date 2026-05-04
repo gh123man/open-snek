@@ -656,7 +656,8 @@ final class AppStateApplyController {
         let selectedIdentity = deviceStore.selectedDevice.map(deviceController.deviceIdentityKey)
         let targetIdentity = deviceController.deviceIdentityKey(device)
         let targetsSelectedDevice = selectedIdentity == targetIdentity
-        let persistLightingZoneID = plan.snapshot.lightingEffect?.kind == .staticColor
+        let restoresStaticLighting = plan.patch.ledRGB != nil || plan.snapshot.lightingEffect?.kind == .staticColor
+        let persistLightingZoneID = restoresStaticLighting
             ? plan.snapshot.usbLightingZoneID
             : "all"
 
@@ -828,9 +829,15 @@ final class AppStateApplyController {
             }
             if deviceStore.selectedDeviceID == presentationDeviceID {
                 let preserveStoredLighting = patch.ledRGB == nil && patch.lightingEffect == nil
+                let snapshotLightingZoneOverride = snapshotLightingZoneOverride(
+                    for: patch,
+                    device: presentationDevice,
+                    defaultZoneID: persistLightingZoneID
+                )
                 editorController.persistCurrentSettingsSnapshot(
                     for: presentationDevice,
-                    preservingStoredLighting: preserveStoredLighting
+                    preservingStoredLighting: preserveStoredLighting,
+                    lightingZoneOverride: snapshotLightingZoneOverride
                 )
             }
 
@@ -967,5 +974,22 @@ final class AppStateApplyController {
         for zone in editorStore.visibleUSBLightingZones {
             editorController.persistLightingColor(color, device: device, zoneID: zone.id)
         }
+    }
+
+    private func snapshotLightingZoneOverride(
+        for patch: DevicePatch,
+        device: MouseDevice,
+        defaultZoneID: String
+    ) -> String? {
+        guard device.showsLightingControls else { return nil }
+        guard patch.ledRGB != nil || patch.lightingEffect != nil else { return nil }
+
+        let writesStaticColor = patch.ledRGB != nil || patch.lightingEffect?.kind == .staticColor
+        guard writesStaticColor else { return "all" }
+
+        if patch.usbLightingZoneLEDIDs == nil, editorStore.visibleUSBLightingZones.count > 1 {
+            return "all"
+        }
+        return defaultZoneID
     }
 }

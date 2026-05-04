@@ -1147,6 +1147,7 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         let gradientRevisionAfterApply = await MainActor.run { appState.editorStore.lightingGradientRevision }
         let preferenceStore = DevicePreferenceStore()
         let expectedColor = RGBColor(r: 111, g: 122, b: 133)
+        let settingsSnapshot = try XCTUnwrap(preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device))
 
         XCTAssertEqual(patch.lightingEffect?.kind, .staticColor)
         XCTAssertNil(patch.usbLightingZoneLEDIDs)
@@ -1157,6 +1158,64 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(preferenceStore.loadPersistedLightingColor(device: device, zoneID: "scroll_wheel"), expectedColor)
         XCTAssertEqual(preferenceStore.loadPersistedLightingColor(device: device, zoneID: "logo"), expectedColor)
         XCTAssertEqual(preferenceStore.loadPersistedLightingColor(device: device, zoneID: "underglow"), expectedColor)
+        XCTAssertEqual(settingsSnapshot.primaryLightingColor, expectedColor)
+        XCTAssertEqual(settingsSnapshot.usbLightingZoneID, "all")
+    }
+
+    func testUSBPersistedSettingsSnapshotRestoresStaticLightingAcrossAllZones() async throws {
+        let device = makeRefactorMultiZoneUSBLightingDevice(
+            id: "usb-restore-all-zones-device",
+            serial: "USB-RESTORE-ALL-\(UUID().uuidString)"
+        )
+        let persistedColor = RGBColor(r: 61, g: 72, b: 83)
+        let persistedEffect = LightingEffectPatch(
+            kind: .staticColor,
+            primary: RGBPatch(r: persistedColor.r, g: persistedColor.g, b: persistedColor.b)
+        )
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistConnectBehavior(.restoreOpenSnekSettings, device: device)
+        preferenceStore.persistDeviceSettingsSnapshot(
+            makeRefactorSettingsSnapshot(
+                color: persistedColor,
+                zoneID: "all",
+                lightingEffect: persistedEffect
+            ),
+            device: device
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 73,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        try await waitForRefactorCondition {
+            await backend.applyCount() >= 1
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.first(where: { $0.lightingEffect?.kind == .staticColor }))
+
+        XCTAssertEqual(patch.lightingEffect?.primary.r, persistedColor.r)
+        XCTAssertEqual(patch.lightingEffect?.primary.g, persistedColor.g)
+        XCTAssertEqual(patch.lightingEffect?.primary.b, persistedColor.b)
+        XCTAssertNil(patch.usbLightingZoneLEDIDs)
     }
 
     func testUSBPersistedSettingsEffectReappliesOnFirstHydration() async throws {

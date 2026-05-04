@@ -276,7 +276,8 @@ final class AppStateEditorController {
 
     func buildCurrentSettingsSnapshot(
         for device: MouseDevice,
-        preservingStoredLighting: Bool = false
+        preservingStoredLighting: Bool = false,
+        lightingZoneOverride: String? = nil
     ) -> PersistedDeviceSettingsSnapshot? {
         guard deviceStore.selectedDevice?.id == device.id else { return nil }
         let count = max(1, min(5, editorStore.editableStageCount))
@@ -296,11 +297,12 @@ final class AppStateEditorController {
         if let storedSnapshot {
             primaryLightingColor = storedSnapshot.primaryLightingColor ?? editorStore.editableColor
             lightingEffect = storedSnapshot.lightingEffect
-            lightingZoneID = storedSnapshot.usbLightingZoneID
+            lightingZoneID = lightingZoneOverride ?? storedSnapshot.usbLightingZoneID
         } else {
             primaryLightingColor = editorStore.editableColor
             lightingEffect = device.supports_advanced_lighting_effects ? currentLightingEffectPatch() : nil
-            lightingZoneID = lightingEffect?.kind == .staticColor ? editorStore.editableUSBLightingZoneID : "all"
+            lightingZoneID = lightingZoneOverride ??
+                (lightingEffect?.kind == .staticColor ? editorStore.editableUSBLightingZoneID : "all")
         }
         return PersistedDeviceSettingsSnapshot(
             stageCount: count,
@@ -323,11 +325,13 @@ final class AppStateEditorController {
 
     func persistCurrentSettingsSnapshot(
         for device: MouseDevice,
-        preservingStoredLighting: Bool = false
+        preservingStoredLighting: Bool = false,
+        lightingZoneOverride: String? = nil
     ) {
         guard let snapshot = buildCurrentSettingsSnapshot(
             for: device,
-            preservingStoredLighting: preservingStoredLighting
+            preservingStoredLighting: preservingStoredLighting,
+            lightingZoneOverride: lightingZoneOverride
         ) else { return }
         persistSettingsSnapshot(snapshot, device: device)
     }
