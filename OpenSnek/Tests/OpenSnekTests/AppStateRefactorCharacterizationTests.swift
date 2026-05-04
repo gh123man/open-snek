@@ -775,6 +775,66 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(liveActiveStage, 1)
     }
 
+    func testSelectedDeviceBackendStateUpdatePreservesPendingLocalEditsWhileUpdatingLiveDpiPresentation() async {
+        let device = makeRefactorTestDevice(
+            id: "backend-state-pending-live-dpi-device",
+            transport: .usb,
+            serial: "BACKEND-STATE-PENDING-LIVE-DPI-\(UUID().uuidString)",
+            onboardProfileCount: 1,
+            profileID: .basiliskV3Pro
+        )
+        let appState = await MainActor.run {
+            AppState(
+                launchRole: .app,
+                backend: AppStateRefactorStubBackend(devices: [], stateByDeviceID: [:]),
+                autoStart: false
+            )
+        }
+
+        let initialState = makeRefactorTestState(
+            device: device,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [600, 900, 1000, 1200, 1400],
+            activeStage: 1,
+            dpiValue: 900,
+            pollRate: 1000,
+            sleepTimeout: 300
+        )
+        let liveState = makeRefactorTestState(
+            device: device,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [600, 900, 1000, 1200, 1400],
+            activeStage: 3,
+            dpiValue: 1200,
+            pollRate: 1000,
+            sleepTimeout: 300
+        )
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([device], source: "refresh")
+            appState.deviceController.applyBackendDeviceStateUpdate(
+                deviceID: device.id,
+                state: initialState,
+                updatedAt: Date(timeIntervalSince1970: 1_777_909_780)
+            )
+            appState.editorStore.editablePollRate = 500
+            appState.applyController.markLocalEditsPending()
+            appState.deviceController.applyBackendDeviceStateUpdate(
+                deviceID: device.id,
+                state: liveState,
+                updatedAt: Date(timeIntervalSince1970: 1_777_909_781)
+            )
+        }
+
+        let liveActiveStage = await MainActor.run { appState.editorStore.editableActiveStage }
+        let editablePollRate = await MainActor.run { appState.editorStore.editablePollRate }
+
+        XCTAssertEqual(liveActiveStage, 4)
+        XCTAssertEqual(editablePollRate, 500)
+    }
+
     func testUSBLightingZoneSwitchLoadsPersistedZoneSpecificColor() async throws {
         let device = makeRefactorMultiZoneUSBLightingDevice(
             id: "usb-zone-switch-lighting-device",

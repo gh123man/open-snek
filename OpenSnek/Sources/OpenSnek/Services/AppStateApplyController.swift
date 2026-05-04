@@ -810,6 +810,7 @@ final class AppStateApplyController {
                 lastLocalEditAt = nil
                 editorController.hydrateEditable(from: merged)
             } else if deviceStore.selectedDeviceID == presentationDeviceID {
+                editorController.hydrateLiveDpiPresentation(from: merged)
                 AppLog.debug(
                     "AppState",
                     "apply hydrate skipped pending=\(applyCoordinator.hasPending) localEditsDuringApply=\(localEditsChangedDuringApply)"
@@ -891,6 +892,14 @@ final class AppStateApplyController {
 
             if deviceStore.selectedDeviceID == presentationDeviceID, deviceStore.state != merged {
                 deviceStore.state = merged
+            }
+
+            if deviceStore.selectedDeviceID == presentationDeviceID {
+                if shouldHydrateEditable(for: presentationDevice) {
+                    editorController.hydrateEditable(from: merged)
+                } else {
+                    editorController.hydrateLiveDpiPresentation(from: merged)
+                }
             }
 
             if targetsSelectedDevice {

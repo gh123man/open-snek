@@ -601,6 +601,7 @@ final class AppStateDeviceController {
         return hydratedPersistedSnapshot && pendingSettingsRestoreDeviceIDs.contains(device.id)
     }
 
+    @discardableResult
     private func hydrateSelectedEditorPresentation(
         from state: MouseState,
         device: MouseDevice,
@@ -608,17 +609,21 @@ final class AppStateDeviceController {
         applyController: AppStateApplyController,
         editorController: AppStateEditorController,
         scheduleButtonHydration: Bool
-    ) {
-        guard applyController.shouldHydrateEditable(for: device) else { return }
+    ) -> Bool {
+        guard applyController.shouldHydrateEditable(for: device) else {
+            editorController.hydrateLiveDpiPresentation(from: state)
+            return false
+        }
         if holdsPersistedConnectPresentation {
             editorController.hydrateLiveDpiPresentation(from: state)
-            return
+            return false
         }
 
         editorController.hydrateEditable(from: state)
         if scheduleButtonHydration {
             scheduleSelectedDeviceButtonBindingHydration(device: device)
         }
+        return true
     }
 
     private func scheduleSelectedDeviceButtonBindingHydration(device: MouseDevice) {
@@ -1227,12 +1232,17 @@ final class AppStateDeviceController {
                             applyController: applyController,
                             editorController: editorController
                         )
-                        if applyController.shouldHydrateEditable(for: presentationDevice), !holdsPersistedConnectPresentation {
-                            editorController.hydrateEditable(from: merged)
+                        let hydratedEditable = hydrateSelectedEditorPresentation(
+                            from: merged,
+                            device: presentationDevice,
+                            holdsPersistedConnectPresentation: holdsPersistedConnectPresentation,
+                            applyController: applyController,
+                            editorController: editorController,
+                            scheduleButtonHydration: false
+                        )
+                        if hydratedEditable {
                             await editorController.hydrateLightingStateIfNeeded(device: presentationDevice)
                             await editorController.hydrateButtonBindingsIfNeeded(device: presentationDevice)
-                        } else if holdsPersistedConnectPresentation {
-                            editorController.hydrateLiveDpiPresentation(from: merged)
                         }
                         deviceStore.errorMessage = nil
                         setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
@@ -1275,12 +1285,17 @@ final class AppStateDeviceController {
                         applyController: applyController,
                         editorController: editorController
                     )
-                    if applyController.shouldHydrateEditable(for: presentationDevice), !holdsPersistedConnectPresentation {
-                        editorController.hydrateEditable(from: merged)
+                    let hydratedEditable = hydrateSelectedEditorPresentation(
+                        from: merged,
+                        device: presentationDevice,
+                        holdsPersistedConnectPresentation: holdsPersistedConnectPresentation,
+                        applyController: applyController,
+                        editorController: editorController,
+                        scheduleButtonHydration: false
+                    )
+                    if hydratedEditable {
                         await editorController.hydrateLightingStateIfNeeded(device: presentationDevice)
                         await editorController.hydrateButtonBindingsIfNeeded(device: presentationDevice)
-                    } else if holdsPersistedConnectPresentation {
-                        editorController.hydrateLiveDpiPresentation(from: merged)
                     }
                     deviceStore.errorMessage = nil
                     setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)
@@ -1323,12 +1338,17 @@ final class AppStateDeviceController {
                     applyController: applyController,
                     editorController: editorController
                 )
-                if applyController.shouldHydrateEditable(for: presentationDevice), !holdsPersistedConnectPresentation {
-                    editorController.hydrateEditable(from: merged)
+                let hydratedEditable = hydrateSelectedEditorPresentation(
+                    from: merged,
+                    device: presentationDevice,
+                    holdsPersistedConnectPresentation: holdsPersistedConnectPresentation,
+                    applyController: applyController,
+                    editorController: editorController,
+                    scheduleButtonHydration: false
+                )
+                if hydratedEditable {
                     await editorController.hydrateLightingStateIfNeeded(device: presentationDevice)
                     await editorController.hydrateButtonBindingsIfNeeded(device: presentationDevice)
-                } else if holdsPersistedConnectPresentation {
-                    editorController.hydrateLiveDpiPresentation(from: merged)
                 }
                 deviceStore.errorMessage = nil
                 setTelemetryWarning(editorController.telemetryWarning(for: merged, device: presentationDevice), device: presentationDevice)

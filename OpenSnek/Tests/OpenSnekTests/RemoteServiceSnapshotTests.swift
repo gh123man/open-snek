@@ -181,6 +181,64 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(activeStage, 3)
     }
 
+    func testRemoteServiceSnapshotsPreservePendingLocalEditsWhileUpdatingLiveDpiPresentation() async {
+        let device = makeSnapshotDevice(
+            id: "snapshot-pending-live-dpi-device",
+            productName: "Snapshot Pending Live DPI Mouse",
+            transport: .usb,
+            serial: "SNAPSHOT-PENDING-LIVE-DPI",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
+        }
+
+        let initialState = makeSnapshotState(
+            device: device,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let laterState = makeSnapshotState(
+            device: device,
+            connection: "usb",
+            batteryPercent: 81,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 2,
+            dpiValue: 3200
+        )
+
+        await MainActor.run {
+            appState.deviceStore.applyRemoteServiceSnapshot(
+                SharedServiceSnapshot(
+                    devices: [device],
+                    stateByDeviceID: [device.id: initialState],
+                    lastUpdatedByDeviceID: [device.id: Date(timeIntervalSince1970: 1_773_320_010)]
+                )
+            )
+            appState.editorStore.editablePollRate = 500
+            appState.applyController.markLocalEditsPending()
+            appState.deviceStore.applyRemoteServiceSnapshot(
+                SharedServiceSnapshot(
+                    devices: [device],
+                    stateByDeviceID: [device.id: laterState],
+                    lastUpdatedByDeviceID: [device.id: Date(timeIntervalSince1970: 1_773_320_011)]
+                )
+            )
+        }
+
+        let selectedDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+        let activeStage = await MainActor.run { appState.editorStore.editableActiveStage }
+        let editablePollRate = await MainActor.run { appState.editorStore.editablePollRate }
+
+        XCTAssertEqual(selectedDpi, 3200)
+        XCTAssertEqual(activeStage, 3)
+        XCTAssertEqual(editablePollRate, 500)
+    }
+
     func testRemoteServiceAppDoesNotAutoRestorePersistedLightingOnRefreshForV3Pro() async throws {
         let device = makeSnapshotDevice(
             id: "remote-lighting-restore-device",
