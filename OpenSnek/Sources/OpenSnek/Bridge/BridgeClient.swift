@@ -756,6 +756,53 @@ actor BridgeClient {
                 return nil
             }
 
+            func verifyUSBSleepTimeoutWrite(requestedSeconds: Int, attempts: Int = 4) async throws -> Bool {
+                let totalAttempts = max(1, attempts)
+                var firstError: Error?
+                for attempt in 0..<totalAttempts {
+                    do {
+                        let state = try await readState(device: device)
+                        if Self.usbSleepTimeoutWriteSucceeded(
+                            writeAcknowledged: false,
+                            requestedSeconds: requestedSeconds,
+                            readbackSeconds: state.sleep_timeout
+                        ) {
+                            AppLog.debug(
+                                "Bridge",
+                                "usb sleep-timeout write verified via readback " +
+                                "device=\(device.id) value=\(max(60, min(900, requestedSeconds))) " +
+                                "attempt=\(attempt + 1)"
+                            )
+                            return true
+                        }
+                        AppLog.debug(
+                            "Bridge",
+                            "usb sleep-timeout readback mismatch device=\(device.id) " +
+                            "expected=\(max(60, min(900, requestedSeconds))) " +
+                            "got=\(state.sleep_timeout.map(String.init) ?? "nil") " +
+                            "attempt=\(attempt + 1)/\(totalAttempts)"
+                        )
+                    } catch {
+                        if firstError == nil {
+                            firstError = error
+                        }
+                        AppLog.debug(
+                            "Bridge",
+                            "usb sleep-timeout verification attempt \(attempt + 1)/\(totalAttempts) " +
+                            "failed device=\(device.id): \(error.localizedDescription)"
+                        )
+                    }
+                    if attempt + 1 < totalAttempts {
+                        let backoffMs = UInt64(200 + (attempt * 200))
+                        try? await Task.sleep(nanoseconds: backoffMs * 1_000_000)
+                    }
+                }
+                if let firstError {
+                    throw firstError
+                }
+                return false
+            }
+
             if let mode = patch.deviceMode {
                 guard try runUSBWrite({ try setDeviceMode($0, device, mode: mode.mode, param: mode.param) }) else {
                     throw BridgeError.commandFailed("Failed to set device mode")
@@ -793,7 +840,25 @@ actor BridgeClient {
             }
 
             if let timeout = patch.sleepTimeout {
-                guard try runUSBWrite({ try setIdleTime($0, device, seconds: timeout) }) else {
+                let wroteSleepTimeout = try runUSBWrite({ try setIdleTime($0, device, seconds: timeout) })
+                if !wroteSleepTimeout {
+                    AppLog.debug(
+                        "Bridge",
+                        "usb sleep-timeout write missing success ack; attempting readback verification " +
+                        "device=\(device.id) value=\(max(60, min(900, timeout)))"
+                    )
+                }
+                let sleepTimeoutApplied: Bool
+                if Self.usbSleepTimeoutWriteSucceeded(
+                    writeAcknowledged: wroteSleepTimeout,
+                    requestedSeconds: timeout,
+                    readbackSeconds: nil
+                ) {
+                    sleepTimeoutApplied = true
+                } else {
+                    sleepTimeoutApplied = try await verifyUSBSleepTimeoutWrite(requestedSeconds: timeout)
+                }
+                guard sleepTimeoutApplied else {
                     throw BridgeError.commandFailed("Failed to set sleep timeout")
                 }
             }

@@ -45,4 +45,34 @@ final class BridgeClientUSBWriteSemanticsTests: XCTestCase {
             )
         )
     }
+
+    func testUSBSleepTimeoutWriteSucceedsWhenAcked() {
+        XCTAssertTrue(
+            BridgeClient.usbSleepTimeoutWriteSucceeded(
+                writeAcknowledged: true,
+                requestedSeconds: 135,
+                readbackSeconds: nil
+            )
+        )
+    }
+
+    func testUSBSleepTimeoutWriteSucceedsWhenReadbackMatchesClampedValue() {
+        XCTAssertTrue(
+            BridgeClient.usbSleepTimeoutWriteSucceeded(
+                writeAcknowledged: false,
+                requestedSeconds: 30,
+                readbackSeconds: 60
+            )
+        )
+    }
+
+    func testUSBSleepTimeoutWriteFailsWhenAckMissingAndReadbackMismatches() {
+        XCTAssertFalse(
+            BridgeClient.usbSleepTimeoutWriteSucceeded(
+                writeAcknowledged: false,
+                requestedSeconds: 135,
+                readbackSeconds: 120
+            )
+        )
+    }
 }

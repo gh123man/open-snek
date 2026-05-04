@@ -20,6 +20,18 @@ extension BridgeClient {
         return writePersistentLayer || writeDirectLayer
     }
 
+    static func usbSleepTimeoutWriteSucceeded(
+        writeAcknowledged: Bool,
+        requestedSeconds: Int,
+        readbackSeconds: Int?
+    ) -> Bool {
+        if writeAcknowledged {
+            return true
+        }
+        let clamped = max(60, min(900, requestedSeconds))
+        return readbackSeconds == clamped
+    }
+
     func resolvedUSBStateCapabilities(
         device _: MouseDevice,
         profile: DeviceProfile?,

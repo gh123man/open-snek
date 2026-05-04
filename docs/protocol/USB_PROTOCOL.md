@@ -392,6 +392,9 @@ OpenRazer bounds:
   60..900 seconds
 ```
 
+Client note:
+- On the attached Basilisk V3 35K (`0x00CB`) on macOS, `0x07:0x03` sleep-time writes can occasionally drop the success ACK even though a later readback reports the requested value. OpenSnek now treats a matching post-write readback as success for that path instead of failing immediately on the missing ACK alone.
+
 #### Get/Set Low Battery Threshold
 ```
 Command:  Class 0x07, ID 0x81 (get) / 0x01 (set), Size 0x01
