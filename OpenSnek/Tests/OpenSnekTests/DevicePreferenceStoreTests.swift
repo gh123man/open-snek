@@ -179,4 +179,97 @@ final class DevicePreferenceStoreTests: XCTestCase {
 
         XCTAssertEqual(store.loadPersistedDeviceSettingsSnapshot(device: device), snapshot)
     }
+
+    func testDisabledSettingStoragePreservesPreviouslyStoredDeviceState() {
+        let suiteName = "DevicePreferenceStoreTests.SettingStorageDisabled.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = DevicePreferenceStore(defaults: defaults)
+        let device = MouseDevice(
+            id: "usb-storage-gated-device",
+            vendor_id: 0x1532,
+            product_id: 0x00AB,
+            product_name: "Basilisk V3 Pro",
+            transport: .usb,
+            path_b64: "",
+            serial: "STORAGE-GATED",
+            firmware: nil,
+            profile_id: .basiliskV3Pro,
+            button_layout: DeviceProfiles.resolve(
+                vendorID: 0x1532,
+                productID: 0x00AB,
+                transport: .usb
+            )?.buttonLayout
+        )
+
+        let storedSnapshot = PersistedDeviceSettingsSnapshot(
+            stageCount: 3,
+            stageValues: [800, 1600, 3200],
+            stagePairs: [DpiPair(x: 800, y: 800), DpiPair(x: 1600, y: 1600), DpiPair(x: 3200, y: 3200)],
+            activeStage: 2,
+            pollRate: 500,
+            sleepTimeout: 420,
+            lowBatteryThresholdRaw: 0x24,
+            scrollMode: 1,
+            scrollAcceleration: true,
+            scrollSmartReel: false,
+            ledBrightness: 77,
+            primaryLightingColor: RGBColor(r: 10, g: 20, b: 30),
+            lightingEffect: nil,
+            usbLightingZoneID: "logo",
+            buttonBindings: [
+                5: ButtonBindingDraft(kind: .keyboardSimple, hidKey: 80, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        store.persistDeviceSettingsSnapshot(storedSnapshot, device: device)
+        store.persistLightingColor(RGBColor(r: 12, g: 34, b: 56), device: device, zoneID: "logo")
+        store.savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                5: ButtonBindingDraft(kind: .keyboardSimple, hidKey: 80, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ],
+            profile: 1
+        )
+
+        defaults.set(false, forKey: DeveloperRuntimeOptions.settingStorageEnabledDefaultsKey)
+
+        let newSnapshot = PersistedDeviceSettingsSnapshot(
+            stageCount: 2,
+            stageValues: [400, 6400],
+            stagePairs: [DpiPair(x: 400, y: 400), DpiPair(x: 6400, y: 6400)],
+            activeStage: 1,
+            pollRate: 1000,
+            sleepTimeout: 300,
+            lowBatteryThresholdRaw: 0x18,
+            scrollMode: 0,
+            scrollAcceleration: false,
+            scrollSmartReel: true,
+            ledBrightness: 20,
+            primaryLightingColor: RGBColor(r: 200, g: 210, b: 220),
+            lightingEffect: LightingEffectPatch(
+                kind: .wave,
+                primary: RGBPatch(r: 200, g: 210, b: 220),
+                waveDirection: .right
+            ),
+            usbLightingZoneID: "scroll_wheel",
+            buttonBindings: [
+                5: ButtonBindingDraft(kind: .mouseForward, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ]
+        )
+        store.persistDeviceSettingsSnapshot(newSnapshot, device: device)
+        store.persistLightingColor(RGBColor(r: 99, g: 88, b: 77), device: device, zoneID: "logo")
+        store.savePersistedButtonBindings(
+            device: device,
+            bindings: [
+                5: ButtonBindingDraft(kind: .mouseForward, hidKey: 4, turboEnabled: false, turboRate: 0x8E, clutchDPI: nil)
+            ],
+            profile: 1
+        )
+
+        XCTAssertEqual(store.loadPersistedDeviceSettingsSnapshot(device: device), storedSnapshot)
+        XCTAssertEqual(store.loadPersistedLightingColor(device: device, zoneID: "logo"), RGBColor(r: 12, g: 34, b: 56))
+        XCTAssertEqual(store.loadPersistedButtonBindings(device: device, profile: 1)[5]?.kind, .keyboardSimple)
+    }
 }

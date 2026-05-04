@@ -565,6 +565,75 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertTrue(showsCard)
     }
 
+    func testDisabledSettingStorageKeepsReconnectRehydrationSourceAtLastStoredSnapshot() async throws {
+        let device = makeRefactorTestDevice(
+            id: "usb-storage-gated-restore-device",
+            transport: .usb,
+            serial: "USB-STORAGE-GATED-RESTORE-\(UUID().uuidString)",
+            onboardProfileCount: 1,
+            profileID: .basiliskV3Pro
+        )
+        let storedSnapshot = makeRefactorSettingsSnapshot(
+            color: RGBColor(r: 20, g: 30, b: 40),
+            zoneID: "scroll_wheel"
+        )
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistConnectBehavior(.restoreOpenSnekSettings, device: device)
+        preferenceStore.persistDeviceSettingsSnapshot(storedSnapshot, device: device)
+        UserDefaults.standard.set(false, forKey: DeveloperRuntimeOptions.settingStorageEnabledDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: DeveloperRuntimeOptions.settingStorageEnabledDefaultsKey)
+            clearRefactorPreferences(for: device)
+        }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 71,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            appState.deviceStore.devices = [device]
+            appState.deviceStore.selectedDeviceID = device.id
+            appState.deviceController.syncSelectedDevicePresentation(deviceID: device.id)
+        }
+
+        await MainActor.run {
+            appState.editorStore.editableActiveStage = 1
+        }
+        await appState.editorStore.applyDpiStages()
+        try await waitForRefactorCondition {
+            await backend.applyCount() >= 1
+        }
+
+        let snapshotAfterUnstoredEdit = preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device)
+        XCTAssertEqual(snapshotAfterUnstoredEdit, storedSnapshot)
+        let rehydrationAppState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+        await MainActor.run {
+            rehydrationAppState.deviceStore.devices = [device]
+            rehydrationAppState.deviceStore.selectedDeviceID = device.id
+            rehydrationAppState.deviceController.syncSelectedDevicePresentation(deviceID: device.id)
+        }
+
+        let restoredActiveStage = await MainActor.run { rehydrationAppState.editorStore.editableActiveStage }
+        XCTAssertEqual(restoredActiveStage, storedSnapshot.activeStage)
+    }
+
     func testUSBV3ProUsesRememberedLightingStateWithoutAutoApply() async throws {
         let device = MouseDevice(
             id: "usb-v3-pro-lighting-zone",

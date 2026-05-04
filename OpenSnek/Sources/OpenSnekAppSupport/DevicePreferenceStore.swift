@@ -151,6 +151,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistDeviceSettingsSnapshot(_ snapshot: PersistedDeviceSettingsSnapshot, device: MouseDevice) {
+        guard settingStorageEnabled else { return }
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         defaults.set(data, forKey: settingsSnapshotKey(device: device))
     }
@@ -168,6 +169,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
+        guard settingStorageEnabled else { return }
         let key = lightingColorKey(device: device, zoneID: zoneID)
         defaults.set([color.r, color.g, color.b], forKey: key)
     }
@@ -186,6 +188,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistLightingZoneID(_ zoneID: String, device: MouseDevice) {
+        guard settingStorageEnabled else { return }
         let key = "lightingZone.\(DevicePersistenceKeys.key(for: device))"
         defaults.set(zoneID, forKey: key)
     }
@@ -201,6 +204,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistLightingEffect(_ effect: LightingEffectPatch, device: MouseDevice) {
+        guard settingStorageEnabled else { return }
         let key = "lightingEffect.\(DevicePersistenceKeys.key(for: device))"
         let persisted = PersistedLightingEffect(
             kindRaw: effect.kind.rawValue,
@@ -247,6 +251,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistButtonBinding(_ binding: ButtonBindingPatch, device: MouseDevice, profile: Int? = nil) {
+        guard settingStorageEnabled else { return }
         var persisted = loadPersistedButtonBindings(device: device, profile: profile)
         persisted[binding.slot] = ButtonBindingSupport.normalizedDefaultRepresentation(
             for: binding.slot,
@@ -263,6 +268,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func savePersistedButtonBindings(device: MouseDevice, bindings: [Int: ButtonBindingDraft], profile: Int? = nil) {
+        guard settingStorageEnabled else { return }
         let key = buttonBindingsKey(device: device, profile: profile)
         let encoded = bindings.reduce(into: [String: PersistedButtonBinding]()) { partialResult, pair in
             partialResult[String(pair.key)] = PersistedButtonBinding(
@@ -276,6 +282,10 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         guard let data = try? JSONEncoder().encode(encoded) else { return }
         defaults.set(data, forKey: key)
         defaults.synchronize()
+    }
+
+    private var settingStorageEnabled: Bool {
+        DeveloperRuntimeOptions.settingStorageEnabled(defaults: defaults)
     }
 
     public func loadPersistedButtonBindings(device: MouseDevice, profile: Int? = nil) -> [Int: ButtonBindingDraft] {
