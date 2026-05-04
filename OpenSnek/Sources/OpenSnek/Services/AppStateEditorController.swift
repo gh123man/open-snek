@@ -50,9 +50,17 @@ final class AppStateEditorController {
         editorStore.usbButtonProfilesRevision &+= 1
     }
 
+    private func bumpConnectBehaviorRevision() {
+        editorStore.connectBehaviorRevision &+= 1
+    }
+
     private func normalizedButtonProfileName(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Profile" : trimmed
+    }
+
+    private func forcesRestoreOpenSnekSettingsOnConnect(for device: MouseDevice) -> Bool {
+        device.transport == .bluetooth && device.profile_id == .basiliskV3XHyperspeed
     }
 
     private func buttonProfileSource(for device: MouseDevice) -> ButtonProfileSource {
@@ -191,6 +199,12 @@ final class AppStateEditorController {
         let usbLightingZoneID: String
     }
 
+    struct PersistedSettingsRestorePlan {
+        let snapshot: PersistedDeviceSettingsSnapshot
+        let patch: DevicePatch
+        let buttonBindings: [Int: ButtonBindingDraft]
+    }
+
     func removeHydratedState(for removedDeviceIDs: Set<String>) {
         guard !removedDeviceIDs.isEmpty else { return }
         hydratedLightingStateByDeviceID.subtract(removedDeviceIDs)
@@ -236,6 +250,98 @@ final class AppStateEditorController {
         guard !missing.isEmpty else { return nil }
         return "USB telemetry is incomplete (missing \(missing.joined(separator: ", "))). " +
             "Controls stay visible, but values may be stale until readback succeeds."
+    }
+
+    func connectBehavior(for device: MouseDevice) -> DeviceConnectBehavior {
+        if forcesRestoreOpenSnekSettingsOnConnect(for: device) {
+            return .restoreOpenSnekSettings
+        }
+        return preferenceStore.loadConnectBehavior(device: device) ?? .useMouseSettings
+    }
+
+    func showsConnectBehaviorCard(for device: MouseDevice) -> Bool {
+        !forcesRestoreOpenSnekSettingsOnConnect(for: device)
+    }
+
+    func updateConnectBehavior(_ behavior: DeviceConnectBehavior) {
+        guard let selectedDevice = deviceStore.selectedDevice else { return }
+        guard !forcesRestoreOpenSnekSettingsOnConnect(for: selectedDevice) else { return }
+        preferenceStore.persistConnectBehavior(behavior, device: selectedDevice)
+        bumpConnectBehaviorRevision()
+    }
+
+    func shouldRestorePersistedSettingsOnConnect(for device: MouseDevice) -> Bool {
+        connectBehavior(for: device) == .restoreOpenSnekSettings
+    }
+
+    func buildCurrentSettingsSnapshot(
+        for device: MouseDevice,
+        preservingStoredLighting: Bool = false,
+        lightingZoneOverride: String? = nil
+    ) -> PersistedDeviceSettingsSnapshot? {
+        guard deviceStore.selectedDevice?.id == device.id else { return nil }
+        let count = max(1, min(5, editorStore.editableStageCount))
+        let stageValues = Array(editorStore.editableStageValues.prefix(count)).map {
+            DeviceProfiles.clampDPI($0, profileID: device.profile_id)
+        }
+        let stagePairs = Array(editorStore.editableStagePairs.prefix(count)).map { pair in
+            DpiPair(
+                x: DeviceProfiles.clampDPI(pair.x, profileID: device.profile_id),
+                y: DeviceProfiles.clampDPI(pair.y, profileID: device.profile_id)
+            )
+        }
+        let storedSnapshot = preservingStoredLighting ? loadPersistedSettingsSnapshot(device: device) : nil
+        let primaryLightingColor: RGBColor
+        let lightingEffect: LightingEffectPatch?
+        let lightingZoneID: String
+        if let storedSnapshot {
+            primaryLightingColor = storedSnapshot.primaryLightingColor ?? editorStore.editableColor
+            lightingEffect = storedSnapshot.lightingEffect
+            lightingZoneID = lightingZoneOverride ?? storedSnapshot.usbLightingZoneID
+        } else {
+            primaryLightingColor = editorStore.editableColor
+            lightingEffect = device.supports_advanced_lighting_effects ? currentLightingEffectPatch() : nil
+            lightingZoneID = lightingZoneOverride ??
+                (lightingEffect?.kind == .staticColor ? editorStore.editableUSBLightingZoneID : "all")
+        }
+        return PersistedDeviceSettingsSnapshot(
+            stageCount: count,
+            stageValues: stageValues,
+            stagePairs: stagePairs,
+            activeStage: max(1, min(count, editorStore.editableActiveStage)),
+            pollRate: editorStore.editablePollRate,
+            sleepTimeout: editorStore.editableSleepTimeout,
+            lowBatteryThresholdRaw: editorStore.editableLowBatteryThresholdRaw,
+            scrollMode: editorStore.editableScrollMode,
+            scrollAcceleration: editorStore.editableScrollAcceleration,
+            scrollSmartReel: editorStore.editableScrollSmartReel,
+            ledBrightness: editorStore.editableLedBrightness,
+            primaryLightingColor: primaryLightingColor,
+            lightingEffect: lightingEffect,
+            usbLightingZoneID: lightingZoneID,
+            buttonBindings: editorStore.editableButtonBindings
+        )
+    }
+
+    func persistCurrentSettingsSnapshot(
+        for device: MouseDevice,
+        preservingStoredLighting: Bool = false,
+        lightingZoneOverride: String? = nil
+    ) {
+        guard let snapshot = buildCurrentSettingsSnapshot(
+            for: device,
+            preservingStoredLighting: preservingStoredLighting,
+            lightingZoneOverride: lightingZoneOverride
+        ) else { return }
+        persistSettingsSnapshot(snapshot, device: device)
+    }
+
+    func persistSettingsSnapshot(_ snapshot: PersistedDeviceSettingsSnapshot, device: MouseDevice) {
+        preferenceStore.persistDeviceSettingsSnapshot(snapshot, device: device)
+    }
+
+    func loadPersistedSettingsSnapshot(device: MouseDevice) -> PersistedDeviceSettingsSnapshot? {
+        preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device)
     }
 
     func hydrateEditable(from state: MouseState) {
@@ -312,6 +418,27 @@ final class AppStateEditorController {
         syncUSBButtonProfileSelection(from: state)
     }
 
+    func hydrateLiveDpiPresentation(from state: MouseState) {
+        guard !isTearingDown else { return }
+        isHydrating = true
+        defer { isHydrating = false }
+
+        if let active = state.dpi_stages.active_stage {
+            let maxStage = max(1, editorStore.editableStageCount)
+            editorStore.editableActiveStage = max(1, min(maxStage, active + 1))
+        } else {
+            editorStore.editableActiveStage = 1
+        }
+
+        if editorStore.editableStageCount == 1, let dpi = state.dpi?.x {
+            let clampedX = DeviceProfiles.clampDPI(dpi, profileID: deviceStore.selectedDevice?.profile_id)
+            let clampedY = DeviceProfiles.clampDPI(state.dpi?.y ?? dpi, profileID: deviceStore.selectedDevice?.profile_id)
+            editorStore.editableStagePairs[0] = DpiPair(x: clampedX, y: clampedY)
+        }
+
+        editorStore.normalizeExpandedXYStages()
+    }
+
     func hydrateLightingStateIfNeeded(device: MouseDevice) async {
         guard !isTearingDown else { return }
         guard device.showsLightingControls else {
@@ -353,12 +480,7 @@ final class AppStateEditorController {
     func hydratePersistedLightingStateIfNeeded(device: MouseDevice) -> Bool {
         guard !isTearingDown else { return false }
         guard !hydratedLightingStateByDeviceID.contains(device.id) else { return false }
-        let plan: PersistedLightingRestorePlan?
-        if device.transport == .usb {
-            plan = persistedLightingPresentationPlan(device: device)
-        } else {
-            plan = persistedLightingRestorePlan(device: device)
-        }
+        let plan = persistedLightingPresentationPlan(device: device)
         guard let plan else { return false }
 
         applyPersistedLightingRestorePlanToEditor(plan)
@@ -369,6 +491,80 @@ final class AppStateEditorController {
         )
         hydratedLightingStateByDeviceID.insert(device.id)
         return true
+    }
+
+    @discardableResult
+    func hydrateConnectPresentationIfNeeded(device: MouseDevice) -> Bool {
+        guard !isTearingDown else { return false }
+        guard shouldRestorePersistedSettingsOnConnect(for: device),
+              let snapshot = loadPersistedSettingsSnapshot(device: device) else {
+            _ = hydratePersistedLightingStateIfNeeded(device: device)
+            return false
+        }
+        applyPersistedSettingsSnapshotToEditor(snapshot, device: device)
+        return true
+    }
+
+    func applyPersistedSettingsSnapshotToEditor(_ snapshot: PersistedDeviceSettingsSnapshot, device: MouseDevice) {
+        let count = max(1, min(5, snapshot.stageCount))
+        editorStore.editableStageCount = count
+        for index in 0..<editorStore.editableStagePairs.count {
+            if index < snapshot.stagePairs.count {
+                let pair = snapshot.stagePairs[index]
+                editorStore.editableStagePairs[index] = DpiPair(
+                    x: DeviceProfiles.clampDPI(pair.x, profileID: device.profile_id),
+                    y: DeviceProfiles.clampDPI(pair.y, profileID: device.profile_id)
+                )
+            } else if index < snapshot.stageValues.count {
+                let value = DeviceProfiles.clampDPI(snapshot.stageValues[index], profileID: device.profile_id)
+                editorStore.editableStagePairs[index] = DpiPair(x: value, y: value)
+            }
+        }
+        editorStore.editableActiveStage = max(1, min(count, snapshot.activeStage))
+        editorStore.normalizeExpandedXYStages()
+
+        if let pollRate = snapshot.pollRate {
+            editorStore.editablePollRate = pollRate
+        }
+        if let sleepTimeout = snapshot.sleepTimeout {
+            editorStore.editableSleepTimeout = max(60, min(900, sleepTimeout))
+        }
+        if let lowBatteryThresholdRaw = snapshot.lowBatteryThresholdRaw {
+            editorStore.editableLowBatteryThresholdRaw = max(0x0C, min(0x3F, lowBatteryThresholdRaw))
+        }
+        if let scrollMode = snapshot.scrollMode {
+            editorStore.editableScrollMode = max(0, min(1, scrollMode))
+        }
+        if let scrollAcceleration = snapshot.scrollAcceleration {
+            editorStore.editableScrollAcceleration = scrollAcceleration
+        }
+        if let scrollSmartReel = snapshot.scrollSmartReel {
+            editorStore.editableScrollSmartReel = scrollSmartReel
+        }
+        if let ledBrightness = snapshot.ledBrightness {
+            editorStore.editableLedBrightness = ledBrightness
+        }
+        if let primaryColor = snapshot.primaryLightingColor {
+            editorStore.editableColor = primaryColor
+        }
+        editorStore.editableUSBLightingZoneID = snapshot.usbLightingZoneID
+        if let lightingEffect = snapshot.lightingEffect {
+            editorStore.editableLightingEffect = lightingEffect.kind
+            editorStore.editableLightingWaveDirection = lightingEffect.waveDirection
+            editorStore.editableLightingReactiveSpeed = lightingEffect.reactiveSpeed
+            editorStore.editableSecondaryColor = RGBColor(
+                r: lightingEffect.secondary.r,
+                g: lightingEffect.secondary.g,
+                b: lightingEffect.secondary.b
+            )
+        } else {
+            editorStore.editableLightingEffect = .staticColor
+        }
+        ensureEditableStaticLightingZoneSelection()
+
+        editorStore.editableButtonBindings = snapshot.buttonBindings
+        hydratedButtonBindingsKey = nil
+        hydratedLightingStateByDeviceID.insert(device.id)
     }
 
     func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
@@ -902,9 +1098,56 @@ final class AppStateEditorController {
         )
     }
 
-    func persistedLightingRestorePlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
-        guard shouldRestorePersistedLightingOnConnect(for: device) else { return nil }
-        return persistedLightingPresentationPlan(device: device)
+    func persistedSettingsRestorePlan(device: MouseDevice) -> PersistedSettingsRestorePlan? {
+        guard shouldRestorePersistedSettingsOnConnect(for: device),
+              let snapshot = loadPersistedSettingsSnapshot(device: device) else {
+            return nil
+        }
+
+        let normalizedZoneID = normalizedLightingZoneID(
+            for: device,
+            preferredZoneID: snapshot.usbLightingZoneID
+        )
+        let lightingEffect: LightingEffectPatch?
+        if let persistedLightingEffect = snapshot.lightingEffect {
+            let supportedEffects = DeviceProfiles
+                .resolve(vendorID: device.vendor_id, productID: device.product_id, transport: device.transport)?
+                .supportedLightingEffects ?? LightingEffectKind.allCases
+            lightingEffect = supportedEffects.contains(persistedLightingEffect.kind) ? persistedLightingEffect : nil
+        } else {
+            lightingEffect = nil
+        }
+
+        let patch = DevicePatch(
+            pollRate: snapshot.pollRate,
+            sleepTimeout: snapshot.sleepTimeout,
+            lowBatteryThresholdRaw: snapshot.lowBatteryThresholdRaw,
+            scrollMode: snapshot.scrollMode,
+            scrollAcceleration: snapshot.scrollAcceleration,
+            scrollSmartReel: snapshot.scrollSmartReel,
+            dpiStages: Array(snapshot.stageValues.prefix(snapshot.stageCount)),
+            dpiStagePairs: Array(snapshot.stagePairs.prefix(snapshot.stageCount)),
+            activeStage: max(0, min(snapshot.stageCount - 1, snapshot.activeStage - 1)),
+            ledBrightness: snapshot.ledBrightness,
+            ledRGB: lightingEffect == nil
+                ? snapshot.primaryLightingColor.map { RGBPatch(r: $0.r, g: $0.g, b: $0.b) }
+                : nil,
+            lightingEffect: lightingEffect,
+            usbLightingZoneLEDIDs: {
+                if let lightingEffect, lightingEffect.kind == .staticColor {
+                    return usbLightingZoneLEDIDs(for: device, zoneID: normalizedZoneID)
+                }
+                if lightingEffect == nil {
+                    return usbLightingZoneLEDIDs(for: device, zoneID: normalizedZoneID)
+                }
+                return nil
+            }()
+        )
+        return PersistedSettingsRestorePlan(
+            snapshot: snapshot,
+            patch: patch,
+            buttonBindings: snapshot.buttonBindings
+        )
     }
 
     private func persistedLightingPresentationPlan(device: MouseDevice) -> PersistedLightingRestorePlan? {
@@ -995,10 +1238,6 @@ final class AppStateEditorController {
             editorStore.editableLightingEffect = .staticColor
         }
         ensureEditableStaticLightingZoneSelection()
-    }
-
-    private func shouldRestorePersistedLightingOnConnect(for device: MouseDevice) -> Bool {
-        device.profile_id == .basiliskV3XHyperspeed
     }
 
     func currentUSBLightingZoneLEDIDs() -> [UInt8]? {

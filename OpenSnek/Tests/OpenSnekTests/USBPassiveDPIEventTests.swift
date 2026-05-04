@@ -994,6 +994,40 @@ final class USBPassiveDPIEventTests: XCTestCase {
         XCTAssertNotNil(lastUpdated)
         XCTAssertEqual(lastUpdated!.timeIntervalSince1970, passiveObservedAt.timeIntervalSince1970, accuracy: 0.2)
     }
+
+    func testRefreshStateDoesNotOverwriteNewerFastDpiUpdateWithStaleRead() async {
+        let device = makePassiveTestDevice(id: "usb-fast-race", transport: .usb)
+        let staleState = makePassiveTestState(
+            device: device,
+            dpiValues: [800, 900, 1000, 1100, 1200],
+            activeStage: 4,
+            dpiValue: 1200
+        )
+        let backend = RacingPassiveUpdateStubBackend(
+            devices: [device],
+            staleStateByDeviceID: [device.id: staleState],
+            fastSnapshotByDeviceID: [device.id: DpiFastSnapshot(active: 4, values: [800, 900, 1000, 1100, 1200])],
+            shouldUseFastPolling: true,
+            blockReadState: false
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.setFastSnapshot(
+            DpiFastSnapshot(active: 2, values: [800, 900, 1000, 1100, 1200]),
+            for: device.id
+        )
+        await appState.deviceStore.refreshDpiFast()
+        await appState.deviceStore.refreshState()
+
+        let liveDpi = await MainActor.run { appState.deviceStore.state?.dpi?.x }
+        let activeStage = await MainActor.run { appState.editorStore.editableActiveStage }
+
+        XCTAssertEqual(liveDpi, 1000)
+        XCTAssertEqual(activeStage, 3)
+    }
 }
 
 private struct AsyncTimeoutError: Error {}
@@ -1121,15 +1155,28 @@ private actor RacingPassiveUpdateStubBackend: DeviceBackend {
 
     private let devices: [MouseDevice]
     private var staleStateByDeviceID: [String: MouseState]
+    private var fastSnapshotByDeviceID: [String: DpiFastSnapshot]
+    private let shouldUseFastPollingValue: Bool
     private let stateUpdateStreamPair = AsyncStream.makeStream(of: BackendStateUpdate.self)
     private var readStateStarted = false
     private var readStateStartedContinuations: [CheckedContinuation<Void, Never>] = []
     private var readStateResumeContinuation: CheckedContinuation<Void, Never>?
 
-    init(devices: [MouseDevice], staleStateByDeviceID: [String: MouseState]) {
+    init(
+        devices: [MouseDevice],
+        staleStateByDeviceID: [String: MouseState],
+        fastSnapshotByDeviceID: [String: DpiFastSnapshot] = [:],
+        shouldUseFastPolling: Bool = false,
+        blockReadState: Bool = true
+    ) {
         self.devices = devices
         self.staleStateByDeviceID = staleStateByDeviceID
+        self.fastSnapshotByDeviceID = fastSnapshotByDeviceID
+        self.shouldUseFastPollingValue = shouldUseFastPolling
+        self.blockReadState = blockReadState
     }
+
+    private let blockReadState: Bool
 
     func listDevices() async throws -> [MouseDevice] {
         devices
@@ -1143,8 +1190,10 @@ private actor RacingPassiveUpdateStubBackend: DeviceBackend {
             continuation.resume()
         }
 
-        await withCheckedContinuation { continuation in
-            readStateResumeContinuation = continuation
+        if blockReadState {
+            await withCheckedContinuation { continuation in
+                readStateResumeContinuation = continuation
+            }
         }
 
         guard let state = staleStateByDeviceID[device.id] else {
@@ -1155,12 +1204,12 @@ private actor RacingPassiveUpdateStubBackend: DeviceBackend {
         return state
     }
 
-    func readDpiStagesFast(device _: MouseDevice) async throws -> DpiFastSnapshot? {
-        nil
+    func readDpiStagesFast(device: MouseDevice) async throws -> DpiFastSnapshot? {
+        fastSnapshotByDeviceID[device.id]
     }
 
     func shouldUseFastDPIPolling(device _: MouseDevice) async -> Bool {
-        false
+        shouldUseFastPollingValue
     }
 
     func hidAccessStatus() async -> HIDAccessStatus {
@@ -1203,6 +1252,10 @@ private actor RacingPassiveUpdateStubBackend: DeviceBackend {
     func resumeReadState() {
         readStateResumeContinuation?.resume()
         readStateResumeContinuation = nil
+    }
+
+    func setFastSnapshot(_ snapshot: DpiFastSnapshot, for deviceID: String) {
+        fastSnapshotByDeviceID[deviceID] = snapshot
     }
 
     func emitStateUpdate(deviceID: String, state: MouseState, updatedAt: Date) {

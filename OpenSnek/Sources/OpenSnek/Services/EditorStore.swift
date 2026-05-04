@@ -51,6 +51,7 @@ final class EditorStore {
     var isButtonProfileOperationInFlight = false
     var buttonProfileOperationStatusText: String?
     var usbButtonProfilesRevision = 0
+    var connectBehaviorRevision = 0
 
     @ObservationIgnored private weak var editorControllerStorage: AppStateEditorController?
     @ObservationIgnored private weak var applyControllerStorage: AppStateApplyController?
@@ -170,6 +171,18 @@ final class EditorStore {
     var currentButtonProfileSource: ButtonProfileSource? {
         _ = usbButtonProfilesRevision
         return editorController.currentButtonProfileSource()
+    }
+
+    var connectBehavior: DeviceConnectBehavior {
+        _ = connectBehaviorRevision
+        guard let selectedDevice = deviceStore.selectedDevice else { return .useMouseSettings }
+        return editorController.connectBehavior(for: selectedDevice)
+    }
+
+    var showsConnectBehaviorCard: Bool {
+        _ = connectBehaviorRevision
+        guard let selectedDevice = deviceStore.selectedDevice else { return false }
+        return editorController.showsConnectBehaviorCard(for: selectedDevice)
     }
 
     var currentButtonProfileDisplayName: String {
@@ -419,6 +432,10 @@ final class EditorStore {
 
     func updateLightingEffect(_ kind: LightingEffectKind) {
         editorController.updateLightingEffect(kind)
+    }
+
+    func updateConnectBehavior(_ behavior: DeviceConnectBehavior) {
+        editorController.updateConnectBehavior(behavior)
     }
 
     func updateUSBLightingZoneID(_ zoneID: String) {

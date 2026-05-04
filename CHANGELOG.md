@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [2026-05-03]
+
+### Added
+- Device detail views now include a per-mouse `On Connect` setting that lets you either read the current live settings from the mouse or restore the last full OpenSnek-owned setup when that mouse reconnects. The restore mode is intended for shared-device and Synapse workflows where vendor software can overwrite DPI, lighting, and button mappings on reconnect.
+- Dev builds now expose a debug-only `Enable setting storage` switch in Settings. Turning it off lets you apply live mouse changes without updating OpenSnek's saved reconnect snapshot, which makes it possible to verify restart and reconnect rehydration locally without involving Synapse on another machine.
+
+### Fixed
+- Reconnect restores now reapply the full last OpenSnek-owned device snapshot instead of only remembered lighting state. When enabled, reconnects restore DPI stages, active DPI, poll rate, power settings, scroll settings, lighting, and button bindings without replacing that snapshot from passive device readback, and foreground refresh polls now stay paused until that restore finishes so reconnects do not briefly snap back to stale DPI state mid-apply.
+- Unrelated applies such as DPI or button changes no longer overwrite the saved reconnect lighting snapshot with stale editor lighting state. Reconnect restore now preserves the last stored lighting color/effect/zone until you actually change lighting, which prevents reconnects from unexpectedly reverting to an older color.
+- USB reconnect restores no longer force a full state read after every restored button slot. OpenSnek now replays the button restore writes first and performs one final verification read at the end, which cuts the worst reconnect lag substantially on multi-button restores.
+- The main window now keeps following live DPI-stage changes after reconnect restore is enabled. Recent fast DPI updates are treated as newer than stale full-state reads, so the status item and the selected-device editor stay in sync instead of the editor snapping back to an older stage.
+- Basilisk V3 X HyperSpeed now always uses the local restore-on-connect path internally, because OpenSnek cannot fully read its live settings back from the mouse after reconnect.
+
+## [2026-04-06]
+
+### Fixed
+- Basilisk V3 35K USB sleep-timeout writes now fall back to readback verification when the initial `0x07:0x03` feature-report write does not return a success ACK. This keeps the setting usable on the 35K's transient reconnect path instead of surfacing a false failure as soon as the write response goes missing.
+
 ## [2026-04-04]
 
 ### Fixed

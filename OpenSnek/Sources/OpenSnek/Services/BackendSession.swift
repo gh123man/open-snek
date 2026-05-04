@@ -35,6 +35,12 @@ protocol HIDAccessRefreshControllingBackend: DeviceBackend {
     func hidAccessStatus(forceRefresh: Bool) async -> HIDAccessStatus
 }
 
+extension ApplyOptionsSupportingBackend {
+    func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
+        try await apply(device: device, patch: patch, options: ApplyOptions())
+    }
+}
+
 final actor BootstrapPendingBackend: DeviceBackend {
     nonisolated static let shared = BootstrapPendingBackend()
 
@@ -215,7 +221,7 @@ func mergedStateFromPassiveDpiEvent(
     )
 }
 
-final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
+final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend, ApplyOptionsSupportingBackend {
     static let shared = LocalBridgeBackend()
 
     private let client = BridgeClient()
@@ -368,8 +374,8 @@ final actor LocalBridgeBackend: HIDAccessRefreshControllingBackend {
         stateUpdatesStream.makeStream()
     }
 
-    func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
-        let state = try await client.apply(device: device, patch: patch)
+    func apply(device: MouseDevice, patch: DevicePatch, options: ApplyOptions) async throws -> MouseState {
+        let state = try await client.apply(device: device, patch: patch, options: options)
         let merged = Self.mergedApplyState(
             state,
             previous: cachedStateByDeviceID[device.id] ?? reconnectSeedStateByDeviceID[device.id]
@@ -798,7 +804,19 @@ private actor BackgroundServiceRequestHandler {
             }
         case .apply:
             let applyRequest = try decodePayload(ApplyRequest.self, from: request.payload)
-            payload = try BackendCodec.encode(try await backend.apply(device: applyRequest.device, patch: applyRequest.patch))
+            if let backend = backend as? any ApplyOptionsSupportingBackend {
+                payload = try BackendCodec.encode(
+                    try await backend.apply(
+                        device: applyRequest.device,
+                        patch: applyRequest.patch,
+                        options: applyRequest.options
+                    )
+                )
+            } else {
+                payload = try BackendCodec.encode(
+                    try await backend.apply(device: applyRequest.device, patch: applyRequest.patch)
+                )
+            }
         case .readLightingColor:
             let device = try decodePayload(MouseDevice.self, from: request.payload)
             payload = try BackendCodec.encode(try await backend.readLightingColor(device: device))
@@ -826,7 +844,7 @@ private actor BackgroundServiceRequestHandler {
     }
 }
 
-final actor IPCDeviceBackend: HIDAccessRefreshControllingBackend {
+final actor IPCDeviceBackend: HIDAccessRefreshControllingBackend, ApplyOptionsSupportingBackend {
     private let host: NWEndpoint.Host = .ipv4(.loopback)
     private let port: NWEndpoint.Port
     private var latestRemoteClientPresence: CrossProcessClientPresence
@@ -917,10 +935,10 @@ final actor IPCDeviceBackend: HIDAccessRefreshControllingBackend {
         await remoteSubscription.updatePresence(presence)
     }
 
-    func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
+    func apply(device: MouseDevice, patch: DevicePatch, options: ApplyOptions) async throws -> MouseState {
         try await request(
             method: .apply,
-            payload: try BackendCodec.encode(ApplyRequest(device: device, patch: patch)),
+            payload: try BackendCodec.encode(ApplyRequest(device: device, patch: patch, options: options)),
             responseType: MouseState.self
         )
     }

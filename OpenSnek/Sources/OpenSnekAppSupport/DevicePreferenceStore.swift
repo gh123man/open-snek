@@ -13,6 +13,77 @@ public struct OpenSnekButtonProfile: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public enum DeviceConnectBehavior: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+    case useMouseSettings = "use_mouse_settings"
+    case restoreOpenSnekSettings = "restore_open_snek_settings"
+
+    public var id: String { rawValue }
+}
+
+public struct PersistedDeviceSettingsSnapshot: Codable, Hashable, Sendable {
+    public var stageCount: Int
+    public var stageValues: [Int]
+    public var stagePairs: [DpiPair]
+    public var activeStage: Int
+    public var pollRate: Int?
+    public var sleepTimeout: Int?
+    public var lowBatteryThresholdRaw: Int?
+    public var scrollMode: Int?
+    public var scrollAcceleration: Bool?
+    public var scrollSmartReel: Bool?
+    public var ledBrightness: Int?
+    public var primaryLightingColor: RGBColor?
+    public var lightingEffect: LightingEffectPatch?
+    public var usbLightingZoneID: String
+    public var buttonBindings: [Int: ButtonBindingDraft]
+
+    public init(
+        stageCount: Int,
+        stageValues: [Int],
+        stagePairs: [DpiPair],
+        activeStage: Int,
+        pollRate: Int?,
+        sleepTimeout: Int?,
+        lowBatteryThresholdRaw: Int?,
+        scrollMode: Int?,
+        scrollAcceleration: Bool?,
+        scrollSmartReel: Bool?,
+        ledBrightness: Int?,
+        primaryLightingColor: RGBColor?,
+        lightingEffect: LightingEffectPatch?,
+        usbLightingZoneID: String,
+        buttonBindings: [Int: ButtonBindingDraft]
+    ) {
+        let normalizedPairs = Array(stagePairs.prefix(5))
+        let fallbackValues = normalizedPairs.map(\.x)
+        let normalizedValues = Array((stageValues.isEmpty ? fallbackValues : stageValues).prefix(5))
+        let resolvedCount = max(
+            1,
+            min(
+                5,
+                max(stageCount, normalizedPairs.count, normalizedValues.count)
+            )
+        )
+        self.stageCount = resolvedCount
+        self.stageValues = normalizedValues
+        self.stagePairs = normalizedPairs
+        self.activeStage = max(1, min(resolvedCount, activeStage))
+        self.pollRate = pollRate
+        self.sleepTimeout = sleepTimeout
+        self.lowBatteryThresholdRaw = lowBatteryThresholdRaw
+        self.scrollMode = scrollMode
+        self.scrollAcceleration = scrollAcceleration
+        self.scrollSmartReel = scrollSmartReel
+        self.ledBrightness = ledBrightness
+        self.primaryLightingColor = primaryLightingColor
+        self.lightingEffect = lightingEffect
+        self.usbLightingZoneID = usbLightingZoneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "all"
+            : usbLightingZoneID
+        self.buttonBindings = buttonBindings
+    }
+}
+
 public final class DevicePreferenceStore: @unchecked Sendable {
     private let defaults: UserDefaults
     private let openSnekButtonProfilesKey = "openSnekButtonProfiles"
@@ -68,7 +139,37 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         persistOpenSnekButtonProfiles(filtered)
     }
 
+    public func persistConnectBehavior(_ behavior: DeviceConnectBehavior, device: MouseDevice) {
+        defaults.set(behavior.rawValue, forKey: connectBehaviorKey(device: device))
+    }
+
+    public func loadConnectBehavior(device: MouseDevice) -> DeviceConnectBehavior? {
+        let rawValue = defaults.string(forKey: connectBehaviorKey(device: device))
+            ?? defaults.string(forKey: connectBehaviorLegacyKey(device: device))
+        guard let rawValue else { return nil }
+        return DeviceConnectBehavior(rawValue: rawValue)
+    }
+
+    public func persistDeviceSettingsSnapshot(_ snapshot: PersistedDeviceSettingsSnapshot, device: MouseDevice) {
+        guard settingStorageEnabled else { return }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        defaults.set(data, forKey: settingsSnapshotKey(device: device))
+    }
+
+    public func loadPersistedDeviceSettingsSnapshot(device: MouseDevice) -> PersistedDeviceSettingsSnapshot? {
+        let data = defaults.data(forKey: settingsSnapshotKey(device: device))
+            ?? defaults.data(forKey: settingsSnapshotLegacyKey(device: device))
+        guard
+            let data,
+            let decoded = try? JSONDecoder().decode(PersistedDeviceSettingsSnapshot.self, from: data)
+        else {
+            return nil
+        }
+        return decoded
+    }
+
     public func persistLightingColor(_ color: RGBColor, device: MouseDevice, zoneID: String? = nil) {
+        guard settingStorageEnabled else { return }
         let key = lightingColorKey(device: device, zoneID: zoneID)
         defaults.set([color.r, color.g, color.b], forKey: key)
     }
@@ -87,6 +188,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistLightingZoneID(_ zoneID: String, device: MouseDevice) {
+        guard settingStorageEnabled else { return }
         let key = "lightingZone.\(DevicePersistenceKeys.key(for: device))"
         defaults.set(zoneID, forKey: key)
     }
@@ -102,6 +204,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistLightingEffect(_ effect: LightingEffectPatch, device: MouseDevice) {
+        guard settingStorageEnabled else { return }
         let key = "lightingEffect.\(DevicePersistenceKeys.key(for: device))"
         let persisted = PersistedLightingEffect(
             kindRaw: effect.kind.rawValue,
@@ -148,6 +251,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func persistButtonBinding(_ binding: ButtonBindingPatch, device: MouseDevice, profile: Int? = nil) {
+        guard settingStorageEnabled else { return }
         var persisted = loadPersistedButtonBindings(device: device, profile: profile)
         persisted[binding.slot] = ButtonBindingSupport.normalizedDefaultRepresentation(
             for: binding.slot,
@@ -164,6 +268,7 @@ public final class DevicePreferenceStore: @unchecked Sendable {
     }
 
     public func savePersistedButtonBindings(device: MouseDevice, bindings: [Int: ButtonBindingDraft], profile: Int? = nil) {
+        guard settingStorageEnabled else { return }
         let key = buttonBindingsKey(device: device, profile: profile)
         let encoded = bindings.reduce(into: [String: PersistedButtonBinding]()) { partialResult, pair in
             partialResult[String(pair.key)] = PersistedButtonBinding(
@@ -177,6 +282,10 @@ public final class DevicePreferenceStore: @unchecked Sendable {
         guard let data = try? JSONEncoder().encode(encoded) else { return }
         defaults.set(data, forKey: key)
         defaults.synchronize()
+    }
+
+    private var settingStorageEnabled: Bool {
+        DeveloperRuntimeOptions.settingStorageEnabled(defaults: defaults)
     }
 
     public func loadPersistedButtonBindings(device: MouseDevice, profile: Int? = nil) -> [Int: ButtonBindingDraft] {
@@ -226,6 +335,22 @@ public final class DevicePreferenceStore: @unchecked Sendable {
             return nil
         }
         return defaults.data(forKey: currentBase) == nil ? legacyBase : currentBase
+    }
+
+    private func connectBehaviorKey(device: MouseDevice) -> String {
+        "connectBehavior.\(DevicePersistenceKeys.key(for: device))"
+    }
+
+    private func connectBehaviorLegacyKey(device: MouseDevice) -> String {
+        "connectBehavior.\(DevicePersistenceKeys.legacyKey(for: device))"
+    }
+
+    private func settingsSnapshotKey(device: MouseDevice) -> String {
+        "settingsSnapshot.\(DevicePersistenceKeys.key(for: device))"
+    }
+
+    private func settingsSnapshotLegacyKey(device: MouseDevice) -> String {
+        "settingsSnapshot.\(DevicePersistenceKeys.legacyKey(for: device))"
     }
 
     private func lightingColorKeys(device: MouseDevice, zoneID: String?) -> [String] {

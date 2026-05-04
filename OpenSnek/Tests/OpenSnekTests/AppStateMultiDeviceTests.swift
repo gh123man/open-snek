@@ -706,7 +706,7 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(seededDpi, 800)
     }
 
-    func testBackendDeviceListUpdateRearmsLightingRestoreForStableReconnect() async throws {
+    func testBackendDeviceListUpdateRearmsSettingsRestoreForStableReconnect() async throws {
         let usbDevice = makeTestDevice(
             id: "usb-lighting-reconnect",
             productName: "Alpha Mouse",
@@ -717,8 +717,8 @@ final class AppStateMultiDeviceTests: XCTestCase {
         )
         let persistedColor = RGBColor(r: 11, g: 22, b: 33)
         let preferenceStore = DevicePreferenceStore()
-        preferenceStore.persistLightingColor(persistedColor, device: usbDevice)
-        preferenceStore.persistLightingZoneID("scroll_wheel", device: usbDevice)
+        preferenceStore.persistConnectBehavior(.restoreOpenSnekSettings, device: usbDevice)
+        preferenceStore.persistDeviceSettingsSnapshot(makeMultiDeviceSettingsSnapshot(color: persistedColor), device: usbDevice)
         defer { clearMultiDeviceLightingPreferences(for: usbDevice) }
 
         let backend = DeviceListUpdatingStubBackend(
@@ -741,22 +741,30 @@ final class AppStateMultiDeviceTests: XCTestCase {
         await appState.deviceStore.refreshDevices()
 
         try await waitForAppStateCondition {
-            await backend.applyCount() == 1
+            let patches = await backend.recordedPatches()
+            return patches.filter { $0.pollRate == 500 && $0.ledRGB?.r == persistedColor.r }.count >= 1
         }
 
         await backend.emitDeviceListUpdate([usbDevice])
 
+        let initialApplyCount = await backend.applyCount()
+
         try await waitForAppStateCondition {
-            await backend.applyCount() == 2
+            await backend.applyCount() >= initialApplyCount + 1
         }
 
         let patches = await backend.recordedPatches()
-        XCTAssertEqual(patches.count, 2)
-        XCTAssertEqual(patches[0].ledRGB?.r, persistedColor.r)
-        XCTAssertEqual(patches[1].ledRGB?.r, persistedColor.r)
+        let restorePatches = patches.filter { $0.pollRate == 500 }
+        let restoredPrimaryRs = restorePatches.compactMap { patch in
+            patch.ledRGB?.r ?? patch.lightingEffect?.primary.r
+        }
+        XCTAssertGreaterThanOrEqual(restorePatches.count, 2)
+        XCTAssertGreaterThanOrEqual(restoredPrimaryRs.count, 2)
+        XCTAssertEqual(restoredPrimaryRs[0], persistedColor.r)
+        XCTAssertEqual(restoredPrimaryRs[1], persistedColor.r)
     }
 
-    func testNonSelectedReconnectLightingRestoreDoesNotChangeSelection() async throws {
+    func testNonSelectedReconnectSettingsRestoreDoesNotChangeSelection() async throws {
         let alphaDevice = makeTestDevice(
             id: "alpha-selected",
             productName: "Alpha Mouse",
@@ -775,8 +783,8 @@ final class AppStateMultiDeviceTests: XCTestCase {
         )
         let persistedColor = RGBColor(r: 21, g: 31, b: 41)
         let preferenceStore = DevicePreferenceStore()
-        preferenceStore.persistLightingColor(persistedColor, device: betaDevice)
-        preferenceStore.persistLightingZoneID("scroll_wheel", device: betaDevice)
+        preferenceStore.persistConnectBehavior(.restoreOpenSnekSettings, device: betaDevice)
+        preferenceStore.persistDeviceSettingsSnapshot(makeMultiDeviceSettingsSnapshot(color: persistedColor), device: betaDevice)
         defer {
             clearMultiDeviceLightingPreferences(for: alphaDevice)
             clearMultiDeviceLightingPreferences(for: betaDevice)
@@ -810,25 +818,28 @@ final class AppStateMultiDeviceTests: XCTestCase {
         await appState.deviceStore.refreshDevices()
 
         try await waitForAppStateCondition {
-            await backend.applyCount() == 1
+            let applyDeviceIDs = await backend.recordedApplyDeviceIDs()
+            return !applyDeviceIDs.isEmpty
         }
 
         let initialSelectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
         let initialApplyDevices = await backend.recordedApplyDeviceIDs()
         XCTAssertEqual(initialSelectedDeviceID, alphaDevice.id)
-        XCTAssertEqual(initialApplyDevices, [betaDevice.id])
+        XCTAssertTrue(initialApplyDevices.allSatisfy { $0 == betaDevice.id })
 
         await backend.emitDeviceListUpdate([betaDevice, alphaDevice])
 
         try await waitForAppStateCondition {
-            await backend.applyCount() == 2
+            let applyDeviceIDs = await backend.recordedApplyDeviceIDs()
+            return applyDeviceIDs.count >= initialApplyDevices.count + 1
         }
 
         let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
         let applyDeviceIDs = await backend.recordedApplyDeviceIDs()
 
         XCTAssertEqual(selectedDeviceID, alphaDevice.id)
-        XCTAssertEqual(applyDeviceIDs, [betaDevice.id, betaDevice.id])
+        XCTAssertTrue(applyDeviceIDs.allSatisfy { $0 == betaDevice.id })
+        XCTAssertGreaterThanOrEqual(applyDeviceIDs.count, initialApplyDevices.count + 1)
     }
 
     func testBackendDeviceListUpdateRecoversSelectionToMatchingBluetoothTransportWhenUSBHasNoTelemetry() async throws {
@@ -1729,6 +1740,30 @@ private func makeTestState(
     )
 }
 
+private func makeMultiDeviceSettingsSnapshot(color: OpenSnekCore.RGBColor) -> PersistedDeviceSettingsSnapshot {
+    PersistedDeviceSettingsSnapshot(
+        stageCount: 3,
+        stageValues: [900, 1800, 3600],
+        stagePairs: [
+            DpiPair(x: 900, y: 900),
+            DpiPair(x: 1800, y: 1800),
+            DpiPair(x: 3600, y: 3600),
+        ],
+        activeStage: 3,
+        pollRate: 500,
+        sleepTimeout: 420,
+        lowBatteryThresholdRaw: 0x20,
+        scrollMode: 1,
+        scrollAcceleration: true,
+        scrollSmartReel: false,
+        ledBrightness: 77,
+        primaryLightingColor: color,
+        lightingEffect: nil,
+        usbLightingZoneID: "scroll_wheel",
+        buttonBindings: [:]
+    )
+}
+
 private func clearMultiDeviceLightingPreferences(for device: MouseDevice) {
     let defaults = UserDefaults.standard
     let key = DevicePersistenceKeys.key(for: device)
@@ -1740,6 +1775,10 @@ private func clearMultiDeviceLightingPreferences(for device: MouseDevice) {
         "lightingZone.\(legacyKey)",
         "lightingEffect.\(key)",
         "lightingEffect.\(legacyKey)",
+        "connectBehavior.\(key)",
+        "connectBehavior.\(legacyKey)",
+        "settingsSnapshot.\(key)",
+        "settingsSnapshot.\(legacyKey)",
     ]
     for storedKey in defaults.dictionaryRepresentation().keys {
         if prefixes.contains(where: { storedKey.hasPrefix($0) }) {

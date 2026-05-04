@@ -187,6 +187,25 @@ enum RuntimeWakeSchedule {
 }
 
 extension DevicePatch {
+    var isEmpty: Bool {
+        pollRate == nil &&
+            sleepTimeout == nil &&
+            deviceMode == nil &&
+            lowBatteryThresholdRaw == nil &&
+            scrollMode == nil &&
+            scrollAcceleration == nil &&
+            scrollSmartReel == nil &&
+            dpiStages == nil &&
+            dpiStagePairs == nil &&
+            activeStage == nil &&
+            ledBrightness == nil &&
+            ledRGB == nil &&
+            lightingEffect == nil &&
+            usbLightingZoneLEDIDs == nil &&
+            buttonBinding == nil &&
+            usbButtonProfileAction == nil
+    }
+
     var describe: String {
         var parts: [String] = []
         if let deviceMode { parts.append("mode=(\(deviceMode.mode),\(deviceMode.param))") }

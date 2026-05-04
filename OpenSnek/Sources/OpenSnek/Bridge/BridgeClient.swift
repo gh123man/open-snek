@@ -584,7 +584,7 @@ actor BridgeClient {
         return try await btReadLightingColor(device: device, ledID: 0x01)
     }
 
-    func apply(device: MouseDevice, patch: DevicePatch) async throws -> MouseState {
+    func apply(device: MouseDevice, patch: DevicePatch, options: ApplyOptions = ApplyOptions()) async throws -> MouseState {
         if device.transport == .bluetooth {
             let changedDpi = patch.dpiStages != nil || patch.dpiStagePairs != nil || patch.activeStage != nil
             let changedLighting = patch.ledBrightness != nil || patch.ledRGB != nil || patch.lightingEffect != nil
@@ -1068,6 +1068,13 @@ actor BridgeClient {
                 }) else {
                     throw BridgeError.commandFailed("Failed to set button binding")
                 }
+            }
+
+            if options.readbackPolicy == .skipStateReadback,
+               let cached = lastStateByDeviceID[device.id] {
+                let projected = projectedState(from: cached, applying: patch, device: device)
+                lastStateByDeviceID[device.id] = projected
+                return projected
             }
 
             do {

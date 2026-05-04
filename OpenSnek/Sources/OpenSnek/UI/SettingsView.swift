@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(DeveloperRuntimeOptions.pollingEnabledDefaultsKey) private var developerPollingEnabled = true
     @AppStorage(DeveloperRuntimeOptions.passiveHIDUpdatesEnabledDefaultsKey) private var developerPassiveHIDUpdatesEnabled = true
     @AppStorage(DeveloperRuntimeOptions.rememberWindowSizeEnabledDefaultsKey) private var developerRememberWindowSizeEnabled = true
+    @AppStorage(DeveloperRuntimeOptions.settingStorageEnabledDefaultsKey) private var developerSettingStorageEnabled = true
     @State private var showsDiagnosticsSheet = false
     @State private var showsLocalStorageResetConfirmation = false
 
@@ -152,9 +153,15 @@ struct SettingsView: View {
                         }
                     ))
 
+                    Toggle("Enable setting storage", isOn: $developerSettingStorageEnabled)
+
                     Toggle("Remember window size", isOn: $developerRememberWindowSizeEnabled)
 
-                    Text("Use these switches to isolate polling from passive HID DPI callbacks during debugging, or temporarily disable window-frame restore while testing launch behavior.")
+                    Text("Turn off Enable setting storage to apply mouse changes without updating OpenSnek's saved reconnect state. Re-enable it, then reconnect the mouse or relaunch OpenSnek to verify the last stored state rehydrates.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    Text("Use the transport switches to isolate polling from passive HID DPI callbacks during debugging, or temporarily disable window-frame restore while testing launch behavior.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -199,6 +206,7 @@ struct SettingsView: View {
                     developerPollingEnabled = true
                     developerPassiveHIDUpdatesEnabled = true
                     developerRememberWindowSizeEnabled = true
+                    developerSettingStorageEnabled = true
                 }
             }
         } message: {

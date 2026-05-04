@@ -1,9 +1,27 @@
 import Foundation
 import OpenSnekCore
 
+enum ApplyReadbackPolicy: String, Codable, Sendable {
+    case immediateStateReadback
+    case skipStateReadback
+}
+
+struct ApplyOptions: Codable, Sendable {
+    let readbackPolicy: ApplyReadbackPolicy
+
+    init(readbackPolicy: ApplyReadbackPolicy = .immediateStateReadback) {
+        self.readbackPolicy = readbackPolicy
+    }
+}
+
+protocol ApplyOptionsSupportingBackend: DeviceBackend {
+    func apply(device: MouseDevice, patch: DevicePatch, options: ApplyOptions) async throws -> MouseState
+}
+
 struct ApplyRequest: Codable, Sendable {
     let device: MouseDevice
     let patch: DevicePatch
+    let options: ApplyOptions
 }
 
 struct ButtonBindingReadRequest: Codable, Sendable {
