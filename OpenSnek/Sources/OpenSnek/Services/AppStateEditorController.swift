@@ -274,7 +274,10 @@ final class AppStateEditorController {
         connectBehavior(for: device) == .restoreOpenSnekSettings
     }
 
-    func buildCurrentSettingsSnapshot(for device: MouseDevice) -> PersistedDeviceSettingsSnapshot? {
+    func buildCurrentSettingsSnapshot(
+        for device: MouseDevice,
+        preservingStoredLighting: Bool = false
+    ) -> PersistedDeviceSettingsSnapshot? {
         guard deviceStore.selectedDevice?.id == device.id else { return nil }
         let count = max(1, min(5, editorStore.editableStageCount))
         let stageValues = Array(editorStore.editableStageValues.prefix(count)).map {
@@ -286,10 +289,19 @@ final class AppStateEditorController {
                 y: DeviceProfiles.clampDPI(pair.y, profileID: device.profile_id)
             )
         }
-        let lightingEffect = device.supports_advanced_lighting_effects ? currentLightingEffectPatch() : nil
-        let lightingZoneID = lightingEffect?.kind == .staticColor
-            ? editorStore.editableUSBLightingZoneID
-            : "all"
+        let storedSnapshot = preservingStoredLighting ? loadPersistedSettingsSnapshot(device: device) : nil
+        let primaryLightingColor: RGBColor
+        let lightingEffect: LightingEffectPatch?
+        let lightingZoneID: String
+        if let storedSnapshot {
+            primaryLightingColor = storedSnapshot.primaryLightingColor ?? editorStore.editableColor
+            lightingEffect = storedSnapshot.lightingEffect
+            lightingZoneID = storedSnapshot.usbLightingZoneID
+        } else {
+            primaryLightingColor = editorStore.editableColor
+            lightingEffect = device.supports_advanced_lighting_effects ? currentLightingEffectPatch() : nil
+            lightingZoneID = lightingEffect?.kind == .staticColor ? editorStore.editableUSBLightingZoneID : "all"
+        }
         return PersistedDeviceSettingsSnapshot(
             stageCount: count,
             stageValues: stageValues,
@@ -302,15 +314,21 @@ final class AppStateEditorController {
             scrollAcceleration: editorStore.editableScrollAcceleration,
             scrollSmartReel: editorStore.editableScrollSmartReel,
             ledBrightness: editorStore.editableLedBrightness,
-            primaryLightingColor: editorStore.editableColor,
+            primaryLightingColor: primaryLightingColor,
             lightingEffect: lightingEffect,
             usbLightingZoneID: lightingZoneID,
             buttonBindings: editorStore.editableButtonBindings
         )
     }
 
-    func persistCurrentSettingsSnapshot(for device: MouseDevice) {
-        guard let snapshot = buildCurrentSettingsSnapshot(for: device) else { return }
+    func persistCurrentSettingsSnapshot(
+        for device: MouseDevice,
+        preservingStoredLighting: Bool = false
+    ) {
+        guard let snapshot = buildCurrentSettingsSnapshot(
+            for: device,
+            preservingStoredLighting: preservingStoredLighting
+        ) else { return }
         persistSettingsSnapshot(snapshot, device: device)
     }
 

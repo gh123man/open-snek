@@ -634,6 +634,74 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(restoredActiveStage, storedSnapshot.activeStage)
     }
 
+    func testNonLightingApplyDoesNotOverwriteStoredSnapshotLightingFromStaleEditorState() async throws {
+        let device = makeRefactorUSBLightingRestoreDevice(
+            id: "usb-stale-lighting-snapshot-device",
+            serial: "USB-STALE-LIGHT-\(UUID().uuidString)"
+        )
+        let storedSnapshot = makeRefactorSettingsSnapshot(
+            color: RGBColor(r: 255, g: 255, b: 255),
+            zoneID: "scroll_wheel"
+        )
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistConnectBehavior(.restoreOpenSnekSettings, device: device)
+        preferenceStore.persistDeviceSettingsSnapshot(storedSnapshot, device: device)
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "usb",
+                    batteryPercent: 73,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            appState.deviceStore.devices = [device]
+            appState.deviceStore.selectedDeviceID = device.id
+            appState.deviceController.syncSelectedDevicePresentation(deviceID: device.id)
+            appState.editorStore.editableColor = RGBColor(r: 0, g: 255, b: 0)
+            appState.editorStore.editableUSBLightingZoneID = "logo"
+            appState.editorStore.editableActiveStage = 1
+        }
+
+        await appState.editorStore.applyDpiStages()
+        try await waitForRefactorCondition {
+            await backend.applyCount() >= 1
+        }
+
+        let snapshotAfterApply = try XCTUnwrap(
+            preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device)
+        )
+        XCTAssertEqual(snapshotAfterApply.primaryLightingColor, storedSnapshot.primaryLightingColor)
+        XCTAssertEqual(snapshotAfterApply.usbLightingZoneID, storedSnapshot.usbLightingZoneID)
+        XCTAssertEqual(snapshotAfterApply.lightingEffect, storedSnapshot.lightingEffect)
+
+        let rehydrationAppState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+        await rehydrationAppState.deviceStore.refreshDevices()
+        try await waitForRefactorCondition {
+            await backend.recordedPatches().contains(where: { patch in
+                patch.ledRGB?.r == storedSnapshot.primaryLightingColor?.r &&
+                    patch.ledRGB?.g == storedSnapshot.primaryLightingColor?.g &&
+                    patch.ledRGB?.b == storedSnapshot.primaryLightingColor?.b &&
+                    patch.usbLightingZoneLEDIDs == [0x01]
+            })
+        }
+    }
+
     func testUSBV3ProUsesRememberedLightingStateWithoutAutoApply() async throws {
         let device = MouseDevice(
             id: "usb-v3-pro-lighting-zone",

@@ -827,7 +827,11 @@ final class AppStateApplyController {
                 editorController.cachePersistedButtonBinding(buttonBinding, device: presentationDevice, profile: buttonBinding.persistentProfile)
             }
             if deviceStore.selectedDeviceID == presentationDeviceID {
-                editorController.persistCurrentSettingsSnapshot(for: presentationDevice)
+                let preserveStoredLighting = patch.ledRGB == nil && patch.lightingEffect == nil
+                editorController.persistCurrentSettingsSnapshot(
+                    for: presentationDevice,
+                    preservingStoredLighting: preserveStoredLighting
+                )
             }
 
             if deviceStore.selectedDeviceID == presentationDeviceID {
