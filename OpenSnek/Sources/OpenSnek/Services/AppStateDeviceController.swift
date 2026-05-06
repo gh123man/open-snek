@@ -323,7 +323,7 @@ final class AppStateDeviceController {
             deviceStore.errorMessage = error.localizedDescription
         }
 
-        await refreshAllDeviceStates()
+        await refreshVisibleDeviceStatesForCurrentRuntimeContext()
         await refreshDpiUpdateTransportStatuses(for: deviceStore.devices)
         AppLog.event("AppState", "refreshDevices end elapsed=\(String(format: "%.3f", Date().timeIntervalSince(start)))s")
     }
@@ -339,7 +339,7 @@ final class AppStateDeviceController {
             let changed = applyDeviceList(listed, source: "poll")
             if changed {
                 deviceStore.errorMessage = nil
-                await refreshAllDeviceStates()
+                await refreshVisibleDeviceStatesForCurrentRuntimeContext()
                 await refreshDpiUpdateTransportStatuses(for: listed)
             } else if deviceStore.selectedDevice != nil, deviceStore.state == nil {
                 await refreshState()
@@ -417,6 +417,12 @@ final class AppStateDeviceController {
         deviceStore.devices = sorted
         if let previousSelectedID, newIDs.contains(previousSelectedID) {
             deviceStore.selectedDeviceID = previousSelectedID
+        } else if shouldPreserveMissingBluetoothSelection(
+            previousSelectedID: previousSelectedID,
+            previousSelectedDevice: previousSelectedDevice,
+            devices: sorted
+        ) {
+            deviceStore.selectedDeviceID = previousSelectedID
         } else if let previousSelectedIdentity,
                   let match = sorted.first(where: { deviceIdentityKey($0) == previousSelectedIdentity }) {
             deviceStore.selectedDeviceID = match.id
@@ -434,6 +440,13 @@ final class AppStateDeviceController {
                 "AppState",
                 "applyDeviceList recovery-select previous=\(previousSelectedDevice?.id ?? "nil") replacement=\(recoverySelection.id)"
             )
+        }
+
+        if let preferredServiceSelection = runtimeController.preferredServiceSelectedDeviceID(
+            availableDeviceIDs: newIDs,
+            currentSelectedDeviceID: deviceStore.selectedDeviceID
+        ) {
+            deviceStore.selectedDeviceID = preferredServiceSelection
         }
 
         if previousSelectedID != deviceStore.selectedDeviceID {
@@ -507,6 +520,28 @@ final class AppStateDeviceController {
         }
 
         return nil
+    }
+
+    private func shouldPreserveMissingBluetoothSelection(
+        previousSelectedID: String?,
+        previousSelectedDevice: MouseDevice?,
+        devices: [MouseDevice]
+    ) -> Bool {
+        guard let previousSelectedID,
+              let previousSelectedDevice,
+              previousSelectedDevice.transport == .bluetooth else {
+            return false
+        }
+        guard !devices.contains(where: { $0.id == previousSelectedID }) else {
+            return false
+        }
+
+        let identity = deviceIdentityKey(previousSelectedDevice)
+        let sameIdentityDevices = devices.filter { deviceIdentityKey($0) == identity }
+        guard sameIdentityDevices.contains(where: { $0.transport == .usb }) else {
+            return false
+        }
+        return !sameIdentityDevices.contains(where: { $0.transport == .bluetooth })
     }
 
     func selectDevice(_ deviceID: String) {
@@ -748,6 +783,7 @@ final class AppStateDeviceController {
     func focusServiceSelectionOnActivity(deviceID: String) {
         guard !isTearingDown else { return }
         guard environment.launchRole.isService else { return }
+        guard runtimeController.shouldAllowServiceSelectionFocusOnActivity(deviceID: deviceID) else { return }
         guard deviceStore.selectedDeviceID != deviceID else { return }
         guard deviceStore.devices.contains(where: { $0.id == deviceID }) else { return }
         deviceStore.selectedDeviceID = deviceID
@@ -1062,6 +1098,17 @@ final class AppStateDeviceController {
         return latestCachedMutationAt > latestCachedStableUpdateAt
     }
 
+    private func refreshVisibleDeviceStatesForCurrentRuntimeContext(now: Date = Date()) async {
+        if environment.launchRole.isService,
+           runtimeController.pollingProfile(at: now) == .serviceInteractive {
+            let priorityDeviceIDs = runtimeController.serviceInteractivePriorityDeviceIDs(at: now)
+            await refreshDeviceStates(deviceIDs: priorityDeviceIDs)
+            return
+        }
+
+        await refreshAllDeviceStates()
+    }
+
     static func isDeviceAvailabilityMessage(_ message: String) -> Bool {
         let lowered = message.lowercased()
         return lowered.contains("no device") ||
@@ -1131,6 +1178,29 @@ final class AppStateDeviceController {
                 deviceStore.errorMessage = nil
                 deviceStore.lastUpdated = nil
                 deviceStore.isRefreshingState = false
+            }
+            return
+        }
+
+        for device in devicesToRefresh {
+            _ = await refreshState(for: device)
+        }
+
+        if let selectedDeviceID = deviceStore.selectedDeviceID {
+            syncSelectedDevicePresentation(deviceID: selectedDeviceID)
+        }
+    }
+
+    func refreshDeviceStates(deviceIDs: [String]) async {
+        guard !isTearingDown else { return }
+
+        let targetDeviceIDs = Set(deviceIDs)
+        let devicesToRefresh = refreshableDevicesInPriorityOrder(prioritizing: deviceIDs)
+            .filter { targetDeviceIDs.contains($0.id) }
+
+        guard !devicesToRefresh.isEmpty else {
+            if let selectedDeviceID = deviceStore.selectedDeviceID {
+                syncSelectedDevicePresentation(deviceID: selectedDeviceID)
             }
             return
         }

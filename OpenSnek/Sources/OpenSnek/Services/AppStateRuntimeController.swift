@@ -230,6 +230,53 @@ final class AppStateRuntimeController {
         return ordered
     }
 
+    func serviceInteractivePriorityDeviceIDs(at now: Date = Date()) -> [String] {
+        guard environment.launchRole.isService else { return [] }
+        guard pollingProfile(at: now) == .serviceInteractive else { return [] }
+
+        let liveIDs = Set(deviceStore.devices.map(\.id))
+        let remoteSelectedDeviceIDs = uniqueDeviceIDs(activeRemoteSelectedDeviceIDs(at: now))
+        if !remoteSelectedDeviceIDs.isEmpty {
+            return remoteSelectedDeviceIDs.filter { liveIDs.contains($0) }
+        }
+
+        if let selectedDeviceID = deviceStore.selectedDeviceID,
+           liveIDs.contains(selectedDeviceID) {
+            return [selectedDeviceID]
+        }
+
+        return Array(deviceStore.devices.prefix(1)).map(\.id)
+    }
+
+    func preferredServiceSelectedDeviceID(
+        availableDeviceIDs: Set<String>,
+        currentSelectedDeviceID: String?,
+        now: Date = Date()
+    ) -> String? {
+        guard environment.launchRole.isService else { return nil }
+
+        let remoteSelectedDeviceIDs = uniqueDeviceIDs(activeRemoteSelectedDeviceIDs(at: now))
+        guard !remoteSelectedDeviceIDs.isEmpty else { return nil }
+
+        if let currentSelectedDeviceID,
+           remoteSelectedDeviceIDs.contains(currentSelectedDeviceID) {
+            return currentSelectedDeviceID
+        }
+
+        if let firstLiveRemoteSelection = remoteSelectedDeviceIDs.first(where: availableDeviceIDs.contains) {
+            return firstLiveRemoteSelection
+        }
+
+        return remoteSelectedDeviceIDs.first
+    }
+
+    func shouldAllowServiceSelectionFocusOnActivity(deviceID: String, now: Date = Date()) -> Bool {
+        guard environment.launchRole.isService else { return true }
+        let remoteSelectedDeviceIDs = Set(activeRemoteSelectedDeviceIDs(at: now))
+        guard !remoteSelectedDeviceIDs.isEmpty else { return true }
+        return remoteSelectedDeviceIDs.contains(deviceID)
+    }
+
     func recordRemoteClientPresence(_ presence: CrossProcessClientPresence, now: Date = Date()) {
         guard environment.launchRole.isService else { return }
         guard presence.sourceProcessID > 0 else { return }
@@ -669,7 +716,18 @@ final class AppStateRuntimeController {
 
             if now.timeIntervalSince(lastRefreshStatePollAt) >= effectiveRefreshStateInterval {
                 lastRefreshStatePollAt = now
-                await deviceController.refreshAllDeviceStates()
+                if environment.launchRole.isService {
+                    if profile == .serviceInteractive {
+                        let priorityDeviceIDs = serviceInteractivePriorityDeviceIDs(at: now)
+                        if !priorityDeviceIDs.isEmpty {
+                            await deviceController.refreshDeviceStates(deviceIDs: priorityDeviceIDs)
+                        }
+                    } else {
+                        await deviceController.refreshAllDeviceStates()
+                    }
+                } else {
+                    await deviceController.refreshState()
+                }
             }
 
             if let fastInterval = effectiveFastDpiInterval(at: now),
@@ -782,8 +840,10 @@ final class AppStateRuntimeController {
         guard !orderedDevices.isEmpty else { return [] }
         if environment.launchRole.isService {
             if pollingProfile(at: now) == .serviceInteractive {
+                let priorityDeviceIDs = Set(serviceInteractivePriorityDeviceIDs(at: now))
                 return orderedDevices.compactMap { device in
-                    shouldFastPollSelectedDevice(device) ? device.id : nil
+                    guard priorityDeviceIDs.contains(device.id) else { return nil }
+                    return shouldFastPollSelectedDevice(device) ? device.id : nil
                 }
             }
 
@@ -799,7 +859,11 @@ final class AppStateRuntimeController {
             }
         }
         guard !environment.usesRemoteServiceTransport else { return [] }
-        return orderedDevices.map(\.id)
+        if let selectedDeviceID = deviceStore.selectedDeviceID,
+           orderedDevices.contains(where: { $0.id == selectedDeviceID }) {
+            return [selectedDeviceID]
+        }
+        return Array(orderedDevices.prefix(1)).map(\.id)
     }
 
     private func shouldFastPollSelectedDevice(_ device: MouseDevice) -> Bool {
@@ -821,6 +885,15 @@ final class AppStateRuntimeController {
             return false
         }
         return true
+    }
+
+    private func uniqueDeviceIDs(_ deviceIDs: [String]) -> [String] {
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        for deviceID in deviceIDs where seen.insert(deviceID).inserted {
+            ordered.append(deviceID)
+        }
+        return ordered
     }
 
     private func isLocallyInteractive(at now: Date) -> Bool {
