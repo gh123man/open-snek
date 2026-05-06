@@ -827,19 +827,24 @@ final class AppStateApplyController {
                 editorController.persistButtonBinding(buttonBinding, device: presentationDevice, profile: buttonBinding.persistentProfile)
                 editorController.cachePersistedButtonBinding(buttonBinding, device: presentationDevice, profile: buttonBinding.persistentProfile)
             }
+            let preserveStoredLighting = patch.ledRGB == nil && patch.lightingEffect == nil
+            let snapshotLightingZoneOverride = snapshotLightingZoneOverride(
+                for: patch,
+                device: presentationDevice,
+                defaultZoneID: persistLightingZoneID
+            )
             if deviceStore.selectedDeviceID == presentationDeviceID {
-                let preserveStoredLighting = patch.ledRGB == nil && patch.lightingEffect == nil
-                let snapshotLightingZoneOverride = snapshotLightingZoneOverride(
-                    for: patch,
-                    device: presentationDevice,
-                    defaultZoneID: persistLightingZoneID
-                )
                 editorController.persistCurrentSettingsSnapshot(
                     for: presentationDevice,
                     preservingStoredLighting: preserveStoredLighting,
                     lightingZoneOverride: snapshotLightingZoneOverride
                 )
             }
+            editorController.persistSuccessfulPatchFieldsInSettingsSnapshot(
+                patch: patch,
+                device: presentationDevice,
+                lightingZoneID: snapshotLightingZoneOverride ?? persistLightingZoneID
+            )
 
             if deviceStore.selectedDeviceID == presentationDeviceID {
                 deviceStore.errorMessage = nil

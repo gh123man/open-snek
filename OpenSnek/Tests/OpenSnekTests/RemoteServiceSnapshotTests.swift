@@ -375,6 +375,53 @@ final class RemoteServiceSnapshotTests: XCTestCase {
         XCTAssertEqual(hidKey, 80)
     }
 
+    func testApplyRemoteServiceSnapshotHydratesPersistedLightingForSelectedDevice() async throws {
+        let device = makeSnapshotDevice(
+            id: "snapshot-lighting-device",
+            productName: "Snapshot Lighting Mouse",
+            transport: .bluetooth,
+            serial: "SNAPSHOT-LIGHT-\(UUID().uuidString)",
+            locationID: 5,
+            profile: .basiliskV3XHyperspeed
+        )
+        let persistedColor = RGBColor(r: 255, g: 255, b: 255)
+        let preferenceStore = DevicePreferenceStore()
+        preferenceStore.persistLightingColor(persistedColor, device: device)
+        preferenceStore.persistLightingZoneID("all", device: device)
+        defer { clearSnapshotPreferences(for: device) }
+
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)
+        }
+
+        let state = makeSnapshotState(
+            device: device,
+            connection: "bluetooth",
+            batteryPercent: 79,
+            dpiValues: [800, 1600, 3200],
+            activeStage: 1,
+            dpiValue: 1600
+        )
+        let snapshot = SharedServiceSnapshot(
+            devices: [device],
+            stateByDeviceID: [device.id: state],
+            lastUpdatedByDeviceID: [device.id: Date(timeIntervalSince1970: 1_773_320_101)]
+        )
+
+        await MainActor.run {
+            appState.deviceStore.applyRemoteServiceSnapshot(snapshot)
+        }
+
+        try await waitUntil {
+            await MainActor.run {
+                appState.editorStore.editableColor == persistedColor
+            }
+        }
+
+        let editableColor = await MainActor.run { appState.editorStore.editableColor }
+        XCTAssertEqual(editableColor, persistedColor)
+    }
+
     func testApplyingLaterSnapshotKeepsExistingLocalSelection() async {
         let appState = await MainActor.run {
             AppState(launchRole: .app, backend: SnapshotTestRemoteBackend(), autoStart: false)

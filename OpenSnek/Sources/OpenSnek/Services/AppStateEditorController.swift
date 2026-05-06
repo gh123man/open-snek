@@ -344,6 +344,45 @@ final class AppStateEditorController {
         preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device)
     }
 
+    func persistSuccessfulPatchFieldsInSettingsSnapshot(
+        patch: DevicePatch,
+        device: MouseDevice,
+        lightingZoneID: String
+    ) {
+        guard patch.ledBrightness != nil || patch.ledRGB != nil || patch.lightingEffect != nil else { return }
+
+        var snapshot = loadPersistedSettingsSnapshot(device: device)
+        if snapshot == nil, deviceStore.selectedDevice?.id == device.id {
+            persistCurrentSettingsSnapshot(for: device)
+            snapshot = loadPersistedSettingsSnapshot(device: device)
+        }
+        guard var snapshot else { return }
+
+        if let ledBrightness = patch.ledBrightness {
+            snapshot.ledBrightness = ledBrightness
+        }
+
+        if let lightingEffect = patch.lightingEffect {
+            snapshot.primaryLightingColor = RGBColor(
+                r: lightingEffect.primary.r,
+                g: lightingEffect.primary.g,
+                b: lightingEffect.primary.b
+            )
+            snapshot.lightingEffect = lightingEffect
+            snapshot.usbLightingZoneID = lightingEffect.kind == .staticColor
+                ? normalizedLightingZoneID(for: device, preferredZoneID: lightingZoneID)
+                : "all"
+        } else if let ledRGB = patch.ledRGB {
+            snapshot.primaryLightingColor = RGBColor(r: ledRGB.r, g: ledRGB.g, b: ledRGB.b)
+            snapshot.lightingEffect = device.supports_advanced_lighting_effects
+                ? LightingEffectPatch(kind: .staticColor, primary: ledRGB)
+                : nil
+            snapshot.usbLightingZoneID = normalizedLightingZoneID(for: device, preferredZoneID: lightingZoneID)
+        }
+
+        persistSettingsSnapshot(snapshot, device: device)
+    }
+
     func hydrateEditable(from state: MouseState) {
         guard !isTearingDown else { return }
         isHydrating = true

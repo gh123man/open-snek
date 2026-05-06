@@ -200,6 +200,7 @@ final class AppStateDeviceController {
                 editorController: editorController,
                 scheduleButtonHydration: true
             )
+            scheduleSelectedDeviceLightingHydration(device: selectedDevice)
             deviceStore.errorMessage = nil
             setTelemetryWarning(editorController.telemetryWarning(for: selectedState, device: selectedDevice), device: selectedDevice)
         } else if let selectedDeviceID = deviceStore.selectedDeviceID {
@@ -559,7 +560,7 @@ final class AppStateDeviceController {
             deviceStore.state = cached
             deviceStore.lastUpdated = lastUpdatedByDeviceID[deviceID]
             deviceStore.warningMessage = editorController.telemetryWarning(for: cached, device: device)
-            hydrateSelectedEditorPresentation(
+            let hydratedEditable = hydrateSelectedEditorPresentation(
                 from: cached,
                 device: device,
                 holdsPersistedConnectPresentation: holdsPersistedConnectPresentation,
@@ -567,12 +568,15 @@ final class AppStateDeviceController {
                 editorController: editorController,
                 scheduleButtonHydration: true
             )
+            if hydratedEditable {
+                scheduleSelectedDeviceLightingHydration(device: device)
+            }
         } else if let state = deviceStore.state, stateSummaryMatchesDevice(state, device: device) {
             if state.device.id != device.id {
                 deviceStore.state = stateForPresentation(state, device: device)
             }
             deviceStore.warningMessage = editorController.telemetryWarning(for: state, device: device)
-            hydrateSelectedEditorPresentation(
+            let hydratedEditable = hydrateSelectedEditorPresentation(
                 from: deviceStore.state ?? state,
                 device: device,
                 holdsPersistedConnectPresentation: holdsPersistedConnectPresentation,
@@ -580,6 +584,9 @@ final class AppStateDeviceController {
                 editorController: editorController,
                 scheduleButtonHydration: true
             )
+            if hydratedEditable {
+                scheduleSelectedDeviceLightingHydration(device: device)
+            }
         } else {
             deviceStore.state = nil
             deviceStore.lastUpdated = nil
@@ -633,6 +640,16 @@ final class AppStateDeviceController {
                 return
             }
             await editorController.hydrateButtonBindingsIfNeeded(device: device)
+        }
+    }
+
+    private func scheduleSelectedDeviceLightingHydration(device: MouseDevice) {
+        Task { [weak self] in
+            guard let self, !self.isTearingDown,
+                  let editorController = self._editorController.optionalValue else {
+                return
+            }
+            await editorController.hydrateLightingStateIfNeeded(device: device)
         }
     }
 

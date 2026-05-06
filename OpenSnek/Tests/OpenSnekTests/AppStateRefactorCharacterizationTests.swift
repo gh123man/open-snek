@@ -302,6 +302,70 @@ final class AppStateRefactorCharacterizationTests: XCTestCase {
         XCTAssertEqual(editableActiveStage, 3)
     }
 
+    func testBluetoothHyperspeedLightingApplyPersistsSnapshotFromAppliedPatch() async throws {
+        let device = makeRefactorTestDevice(
+            id: "bt-hyperspeed-lighting-snapshot",
+            transport: .bluetooth,
+            serial: "BT-HS-LIGHT-\(UUID().uuidString)",
+            onboardProfileCount: 1
+        )
+        defer { clearRefactorPreferences(for: device) }
+
+        let backend = AppStateRefactorStubBackend(
+            devices: [device],
+            stateByDeviceID: [
+                device.id: makeRefactorTestState(
+                    device: device,
+                    connection: "bluetooth",
+                    batteryPercent: 67,
+                    dpiValues: [800, 1600, 3200],
+                    activeStage: 1,
+                    dpiValue: 1600,
+                    pollRate: 1000,
+                    sleepTimeout: 300
+                )
+            ],
+            holdFirstApply: true
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+
+        let appliedColor = RGBColor(r: 12, g: 34, b: 56)
+        let staleEditorColor = RGBColor(r: 200, g: 210, b: 220)
+        await MainActor.run {
+            appState.editorStore.editableColor = appliedColor
+        }
+
+        await MainActor.run {
+            appState.editorStore.scheduleAutoApplyLedColor()
+        }
+        await backend.waitForFirstApplyToStart()
+
+        await MainActor.run {
+            appState.editorStore.editableColor = staleEditorColor
+        }
+        await backend.releaseFirstApply()
+
+        let preferenceStore = DevicePreferenceStore()
+        try await waitForRefactorCondition {
+            await backend.applyCount() == 1 &&
+                preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device) != nil
+        }
+
+        let patches = await backend.recordedPatches()
+        let patch = try XCTUnwrap(patches.first)
+        let snapshot = try XCTUnwrap(preferenceStore.loadPersistedDeviceSettingsSnapshot(device: device))
+
+        XCTAssertEqual(patch.ledRGB?.r, appliedColor.r)
+        XCTAssertEqual(patch.ledRGB?.g, appliedColor.g)
+        XCTAssertEqual(patch.ledRGB?.b, appliedColor.b)
+        XCTAssertEqual(preferenceStore.loadPersistedLightingColor(device: device), appliedColor)
+        XCTAssertEqual(snapshot.primaryLightingColor, appliedColor)
+    }
+
     func testUseMouseConnectBehaviorDoesNotAutoRestorePersistedSettingsSnapshot() async throws {
         let device = MouseDevice(
             id: "bt-v3-pro-lighting-zone",
