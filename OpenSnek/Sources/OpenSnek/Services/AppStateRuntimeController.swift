@@ -669,7 +669,11 @@ final class AppStateRuntimeController {
 
             if now.timeIntervalSince(lastRefreshStatePollAt) >= effectiveRefreshStateInterval {
                 lastRefreshStatePollAt = now
-                await deviceController.refreshAllDeviceStates()
+                if environment.launchRole.isService {
+                    await deviceController.refreshAllDeviceStates()
+                } else {
+                    await deviceController.refreshState()
+                }
             }
 
             if let fastInterval = effectiveFastDpiInterval(at: now),

@@ -417,6 +417,12 @@ final class AppStateDeviceController {
         deviceStore.devices = sorted
         if let previousSelectedID, newIDs.contains(previousSelectedID) {
             deviceStore.selectedDeviceID = previousSelectedID
+        } else if shouldPreserveMissingBluetoothSelection(
+            previousSelectedID: previousSelectedID,
+            previousSelectedDevice: previousSelectedDevice,
+            devices: sorted
+        ) {
+            deviceStore.selectedDeviceID = previousSelectedID
         } else if let previousSelectedIdentity,
                   let match = sorted.first(where: { deviceIdentityKey($0) == previousSelectedIdentity }) {
             deviceStore.selectedDeviceID = match.id
@@ -507,6 +513,28 @@ final class AppStateDeviceController {
         }
 
         return nil
+    }
+
+    private func shouldPreserveMissingBluetoothSelection(
+        previousSelectedID: String?,
+        previousSelectedDevice: MouseDevice?,
+        devices: [MouseDevice]
+    ) -> Bool {
+        guard let previousSelectedID,
+              let previousSelectedDevice,
+              previousSelectedDevice.transport == .bluetooth else {
+            return false
+        }
+        guard !devices.contains(where: { $0.id == previousSelectedID }) else {
+            return false
+        }
+
+        let identity = deviceIdentityKey(previousSelectedDevice)
+        let sameIdentityDevices = devices.filter { deviceIdentityKey($0) == identity }
+        guard sameIdentityDevices.contains(where: { $0.transport == .usb }) else {
+            return false
+        }
+        return !sameIdentityDevices.contains(where: { $0.transport == .bluetooth })
     }
 
     func selectDevice(_ deviceID: String) {

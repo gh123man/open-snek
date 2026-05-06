@@ -1137,6 +1137,108 @@ final class AppStateMultiDeviceTests: XCTestCase {
         XCTAssertEqual(activeDeviceIDs, [betaDevice.id])
     }
 
+    func testWindowedAppRuntimeFullRefreshTracksOnlySelectedDevice() async {
+        let alphaDevice = makeTestDevice(
+            id: "alpha-device",
+            productName: "Alpha Mouse",
+            transport: .usb,
+            serial: "ALPHA",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let betaDevice = makeTestDevice(
+            id: "beta-device",
+            productName: "Beta Mouse",
+            transport: .bluetooth,
+            serial: "BETA",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let backend = MultiDeviceStubBackend(
+            devices: [alphaDevice, betaDevice],
+            stateByDeviceID: [
+                alphaDevice.id: makeTestState(
+                    device: alphaDevice,
+                    connection: "usb",
+                    batteryPercent: 81,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 0,
+                    dpiValue: 1200
+                ),
+                betaDevice.id: makeTestState(
+                    device: betaDevice,
+                    connection: "bluetooth",
+                    batteryPercent: 72,
+                    dpiValues: [3200, 4800, 6400],
+                    activeStage: 1,
+                    dpiValue: 4800
+                ),
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await appState.deviceStore.refreshDevices()
+        await backend.resetReadOrder()
+
+        await MainActor.run {
+            appState.deviceStore.selectDevice(betaDevice.id)
+        }
+
+        await appState.runtimeController.pollRuntimeOnce(now: Date(timeIntervalSince1970: 1_773_400_100))
+
+        let readOrder = await backend.recordedReadOrder()
+        XCTAssertEqual(readOrder, [betaDevice.id])
+    }
+
+    func testBackendDeviceListUpdatePreservesSelectedBluetoothIdentityWhenOnlyTwinUSBRemains() async {
+        let usbDevice = makeTestDevice(
+            id: "usb-shared",
+            productName: "Shared Mouse",
+            transport: .usb,
+            serial: "MATCHED-DEVICE",
+            locationID: 1,
+            profile: .basiliskV3Pro
+        )
+        let bluetoothDevice = makeTestDevice(
+            id: "bt-shared",
+            productName: "Shared Mouse",
+            transport: .bluetooth,
+            serial: "MATCHED-DEVICE",
+            locationID: 2,
+            profile: .basiliskV3XHyperspeed
+        )
+        let backend = MultiDeviceStubBackend(
+            devices: [usbDevice, bluetoothDevice],
+            stateByDeviceID: [
+                bluetoothDevice.id: makeTestState(
+                    device: bluetoothDevice,
+                    connection: "bluetooth",
+                    batteryPercent: 74,
+                    dpiValues: [1200, 2400, 3600],
+                    activeStage: 1,
+                    dpiValue: 2400
+                )
+            ]
+        )
+        let appState = await MainActor.run {
+            AppState(launchRole: .app, backend: backend, autoStart: false)
+        }
+
+        await MainActor.run {
+            appState.deviceStore.devices = [usbDevice, bluetoothDevice]
+            appState.deviceStore.selectedDeviceID = bluetoothDevice.id
+        }
+
+        await MainActor.run {
+            _ = appState.deviceController.applyDeviceList([usbDevice], source: "subscription")
+        }
+
+        let selectedDeviceID = await MainActor.run { appState.deviceStore.selectedDeviceID }
+        XCTAssertEqual(selectedDeviceID, bluetoothDevice.id)
+    }
+
     func testServiceSelectionFollowsDeviceWithMeaningfulRefreshChange() async {
         let alphaDevice = makeTestDevice(
             id: "alpha-device",
@@ -1349,6 +1451,10 @@ private actor MultiDeviceStubBackend: DeviceBackend {
 
     func readCount() -> Int {
         readOrder.count
+    }
+
+    func resetReadOrder() {
+        readOrder = []
     }
 
     func setState(_ state: MouseState, for deviceID: String) {
